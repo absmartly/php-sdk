@@ -40,6 +40,13 @@ final class VariantAssigner {
 		$this->unitHash = $this->digest($hash);
 	}
 
+	/**
+	 * Calculates the murmur3a hash. On PHP 8.1, this uses the native implementation, and on older versions, a user-land
+	 * polyfill.
+	 * @codeCoverageIgnore Because this snippet is version-dependent.
+	 * @param string $seed
+	 * @return int
+	 */
 	private function digest(string $seed): int {
 		if (PHP_VERSION_ID >= 80100) {
 			return hexdec(hash('murmur3a', $seed));
