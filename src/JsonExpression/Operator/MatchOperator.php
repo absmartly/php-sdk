@@ -4,6 +4,12 @@ namespace Absmartly\SDK\JsonExpression\Operator;
 
 use Absmartly\SDK\JsonExpression\Evaluator;
 
+use function preg_last_error;
+use function preg_match;
+use function trim;
+
+use const PREG_NO_ERROR;
+
 class MatchOperator extends BinaryOperator {
 
 	public function binary(Evaluator $evaluator, $text, $pattern): ?bool {

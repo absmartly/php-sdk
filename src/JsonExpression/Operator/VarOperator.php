@@ -4,6 +4,10 @@ namespace Absmartly\SDK\JsonExpression\Operator;
 
 use Absmartly\SDK\JsonExpression\Evaluator;
 
+use function is_array;
+use function is_object;
+use function is_string;
+
 class VarOperator implements OperatorInterface {
 
 	public function evaluate(Evaluator $evaluator, $path = null) {

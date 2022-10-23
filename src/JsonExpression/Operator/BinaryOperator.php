@@ -4,6 +4,9 @@ namespace Absmartly\SDK\JsonExpression\Operator;
 
 use Absmartly\SDK\JsonExpression\Evaluator;
 
+use function count;
+use function is_array;
+
 abstract class BinaryOperator implements OperatorInterface {
 	abstract public function binary(Evaluator $evaluator, $lhs, $rhs): ?bool;
 

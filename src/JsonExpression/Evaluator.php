@@ -5,6 +5,23 @@ namespace Absmartly\SDK\JsonExpression;
 use Absmartly\SDK\JsonExpression\Operator\OperatorCollection;
 use Absmartly\SDK\JsonExpression\Operator\OperatorInterface;
 
+use function array_key_exists;
+use function count;
+use function explode;
+use function floatval;
+use function get_object_vars;
+use function gettype;
+use function is_array;
+use function is_bool;
+use function is_nan;
+use function is_numeric;
+use function is_object;
+use function is_resource;
+use function is_scalar;
+use function property_exists;
+use function serialize;
+use function strcmp;
+
 class Evaluator {
 	private OperatorCollection $operators;
 	private object $values;

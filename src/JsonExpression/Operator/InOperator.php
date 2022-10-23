@@ -4,6 +4,15 @@ namespace Absmartly\SDK\JsonExpression\Operator;
 
 use Absmartly\SDK\JsonExpression\Evaluator;
 
+use function function_exists;
+use function in_array;
+use function is_array;
+use function is_object;
+use function is_string;
+use function property_exists;
+use function str_contains;
+use function strpos;
+
 class InOperator extends BinaryOperator {
 
 	public function binary(Evaluator $evaluator, $haystack, $needle): ?bool {

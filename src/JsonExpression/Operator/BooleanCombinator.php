@@ -4,6 +4,8 @@ namespace Absmartly\SDK\JsonExpression\Operator;
 
 use Absmartly\SDK\JsonExpression\Evaluator;
 
+use function is_array;
+
 abstract class BooleanCombinator implements OperatorInterface {
 	public function evaluate(Evaluator $evaluator, $args = null): ?bool {
 		if (!is_array($args)) {
