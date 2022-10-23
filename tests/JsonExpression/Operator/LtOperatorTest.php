@@ -3,8 +3,6 @@
 namespace Absmartly\SDK\Tests\JsonExpression\Operator;
 
 use Absmartly\SDK\JsonExpression\Evaluator;
-use Absmartly\SDK\JsonExpression\Operator\GtOperator;
-use Absmartly\SDK\JsonExpression\Operator\LteOperator;
 use Absmartly\SDK\JsonExpression\Operator\LtOperator;
 use Absmartly\SDK\JsonExpression\Operator\OperatorCollection;
 use Absmartly\SDK\JsonExpression\Operator\OperatorInterface;

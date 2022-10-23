@@ -1,5 +1,5 @@
 <?php
-
+declare(strict_types=1);
 namespace Absmartly\SDK\JsonExpression;
 
 use Absmartly\SDK\JsonExpression\Operator\OperatorCollection;

@@ -1,5 +1,5 @@
 <?php
-
+declare(strict_types=1);
 namespace Absmartly\SDK\JsonExpression\Operator;
 
 use Absmartly\SDK\JsonExpression\Evaluator;
@@ -7,7 +7,7 @@ use Absmartly\SDK\JsonExpression\Evaluator;
 class MatchOperator extends BinaryOperator {
 
 	public function binary(Evaluator $evaluator, $text, $pattern): ?bool {
-		if ($text === 'null') {
+		if ($text === null) {
 			return false;
 		}
 		$pattern = $evaluator::stringConvert($pattern);

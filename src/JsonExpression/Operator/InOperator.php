@@ -1,5 +1,5 @@
 <?php
-
+declare(strict_types=1);
 namespace Absmartly\SDK\JsonExpression\Operator;
 
 use Absmartly\SDK\JsonExpression\Evaluator;
@@ -26,7 +26,7 @@ class InOperator extends BinaryOperator {
 		}
 
 		if (is_object($haystack)) {
-			return property_exists($haystack, $needle); // Not using isset() to account for possible null values.
+			return property_exists($haystack, (string) $needle); // Not using isset() to account for possible null values.
 		}
 
 		return null;

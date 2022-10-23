@@ -2,7 +2,6 @@
 
 namespace Absmartly\SDK\Tests\JsonExpression\Operator;
 
-use Absmartly\SDK\JsonExpression\Evaluator;
 use Absmartly\SDK\JsonExpression\Operator\NullOperator;
 use Absmartly\SDK\JsonExpression\Operator\OperatorCollection;
 use Absmartly\SDK\Tests\JsonExpression\MockEvaluator;

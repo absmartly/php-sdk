@@ -4,7 +4,6 @@ namespace Absmartly\SDK\Tests\JsonExpression\Operator;
 
 use Absmartly\SDK\JsonExpression\Evaluator;
 use Absmartly\SDK\JsonExpression\Operator\OperatorCollection;
-use Absmartly\SDK\JsonExpression\Operator\ValueOperator;
 use PHPUnit\Framework\TestCase;
 
 class ValueOperatorTest extends TestCase {

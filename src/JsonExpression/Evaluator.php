@@ -1,5 +1,5 @@
 <?php
-
+declare(strict_types=1);
 namespace Absmartly\SDK\JsonExpression;
 
 use Absmartly\SDK\JsonExpression\Operator\OperatorCollection;
@@ -214,7 +214,7 @@ class Evaluator {
 					return false;
 				}
 				return serialize($a) === serialize($b);
-			case "NULL":
+			case "NULL": // Making this clause visible.
 				return false;
 			case 'object':
 				return serialize($a) === serialize($b);
