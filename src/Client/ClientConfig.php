@@ -1,14 +1,12 @@
 <?php
-
+declare(strict_types=1);
 namespace Absmartly\SDK;
 
-use SensitiveParameter;
-
 class ClientConfig {
-	public string $apiKey;
-	public string $application;
-	public string $endpoint;
-	public string $environment;
+	protected string $apiKey;
+	protected string $application;
+	protected string $endpoint;
+	protected string $environment;
 
 	public function __construct(
 		string $apiKey,
@@ -33,5 +31,21 @@ class ClientConfig {
 			'endpoint' => $this->endpoint,
 			'environment' => $this->environment,
 		];
+	}
+
+	public function getEndpoint(): string {
+		return $this->endpoint;
+	}
+
+	public function getApplication(): string {
+		return $this->application;
+	}
+
+	public function getEnvironment(): string {
+		return $this->environment;
+	}
+
+	public function getApiKey(): string {
+		return $this->apiKey;
 	}
 }
