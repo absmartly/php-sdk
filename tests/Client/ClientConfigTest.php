@@ -1,6 +1,6 @@
 <?php
 
-namespace Absmartly\SDK\Tests;
+namespace Absmartly\SDK\Tests\Client;
 
 use Absmartly\SDK\Client\ClientConfig;
 use PHPUnit\Framework\TestCase;

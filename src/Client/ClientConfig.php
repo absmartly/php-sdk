@@ -1,6 +1,6 @@
 <?php
 declare(strict_types=1);
-namespace Absmartly\SDK;
+namespace Absmartly\SDK\Client;
 
 class ClientConfig {
 	protected string $apiKey;
