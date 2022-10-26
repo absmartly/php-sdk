@@ -11,6 +11,27 @@ composer require absmartly/php-sdk
 
 ## Getting Started
 
+```php
+$clientConfig = new \Absmartly\SDK\Client\ClientConfig(
+    $apiKey,
+    $application,
+    $endpoint,
+    $environment
+);
+
+$client = new \Absmartly\SDK\\Absmartly\SDK\DefaultClient();
+$sdk = new \Absmartly\SDK\SDK();
+```
+
+
+```php
+$sdk = new \Absmartly\SDK\SDK();
+
+
+$contextConfig = new \Absmartly\SDK\Context\ContextConfig();
+$context = $sdk->createContext($params, $options, $requestOptions);
+```
+
 ## Contributing, Security, and License
 
 ## About A/B Smartly
