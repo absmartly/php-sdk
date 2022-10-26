@@ -2,7 +2,7 @@
 
 namespace Absmartly\SDK\Tests;
 
-use Absmartly\SDK\ClientConfig;
+use Absmartly\SDK\Client\ClientConfig;
 use PHPUnit\Framework\TestCase;
 
 class ClientConfigTest extends TestCase {
