@@ -2,7 +2,7 @@
 
 namespace Absmartly\SDK\Context;
 
-use Absmartly\SDK\ContextEventLogger;
+use InvalidArgumentException;
 
 class ContextConfig {
 	private array $units = [];
@@ -35,8 +35,8 @@ class ContextConfig {
 		return $this->refreshInterval;
 	}
 
-	public function getEventLogger(): ContextEventLogger {
-		return $this->eventLogger;
+	public function getEventLogger(): ?ContextEventLogger {
+		return $this->eventLogger ?? null;
 	}
 
 	public function setEventLogger(ContextEventLogger $eventLogger): ContextConfig {
@@ -47,6 +47,10 @@ class ContextConfig {
 
 
 	public function setUnit(string $unitType, string $uid): ContextConfig {
+		if ($uid === '') {
+			throw new InvalidArgumentException(sprintf('Unit "%s" UID must not be blank', $unitType));
+		}
+
 		$this->units[$unitType] = $uid;
 		return $this;
 	}
@@ -54,12 +58,12 @@ class ContextConfig {
 	public function setUnits(array $units): ContextConfig {
 		// It could have been possible to simply array_merge here, but we need
 		// to verify strict-types, hence the foreach loop.
-		foreach ($units as $key => $value) {
-			if (!is_scalar($value)) {
-				throw new \InvalidArgumentException(sprintf('Unit set value with key "%s" must be of type string, %s passed', $key, gettype($value)));
+		foreach ($units as $unitType => $uid) {
+			if (!is_scalar($uid)) {
+				throw new InvalidArgumentException(sprintf('Unit set value with key "%s" must be of type string, %s passed', $unitType, gettype($uid)));
 			}
 
-			$this->units[$key] = (string) $value;
+			$this->setUnit($unitType, (string) $uid);
 		}
 
 		return $this;
@@ -88,7 +92,7 @@ class ContextConfig {
 		// See note in ContextConfig::setUnits
 		foreach ($attributes as $key => $value) {
 			if (!is_object($value)) {
-				throw new \InvalidArgumentException(sprintf('Attribute set value with key "%s" must be of type object, %s passed', $key, gettype($value)));
+				throw new InvalidArgumentException(sprintf('Attribute set value with key "%s" must be of type object, %s passed', $key, gettype($value)));
 			}
 
 			$this->attributes[$key] = $value;
@@ -120,12 +124,11 @@ class ContextConfig {
 
 	public function setOverrides(array $overrides): ContextConfig {
 		// See note in ContextConfig::setUnits
-		foreach ($overrides as $key => $value) {
-			if (!is_integer($value)) {
-				throw new \InvalidArgumentException(sprintf('Override set value with key "%s" must be of type integer, %s passed', $key, gettype($value)));
+		foreach ($overrides as $experimentName => $variant) {
+			if (!is_int($variant)) {
+				throw new InvalidArgumentException(sprintf('Override set value with key "%s" must be of type integer, %s passed', $experimentName, gettype($variant)));
 			}
-
-			$this->overrides[$key] = $value;
+			$this->setOverride($experimentName, $variant);
 		}
 
 		return $this;
@@ -155,11 +158,11 @@ class ContextConfig {
 	public function setCustomAssignments(array $customAssignments): ContextConfig {
 		// See note in ContextConfig::setUnits
 		foreach ($customAssignments as $key => $value) {
-			if (!is_integer($value)) {
-				throw new \InvalidArgumentException(sprintf('Custom assignment set value with key "%s" must be of type integer, %s passed', $key, gettype($value)));
+			if (!is_int($value)) {
+				throw new InvalidArgumentException(sprintf('Custom assignment set value with key "%s" must be of type integer, %s passed', $key, gettype($value)));
 			}
 
-			$this->assignments[$key] = (int) $value;
+			$this->assignments[$key] = $value;
 		}
 
 		return $this;

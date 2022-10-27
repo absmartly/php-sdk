@@ -4,3 +4,4 @@ composer.lock
 /build/
 coverage.xml
 .phpunit.cache
+phpunit.xml

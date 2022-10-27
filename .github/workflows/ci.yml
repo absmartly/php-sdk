@@ -36,5 +36,11 @@ jobs:
       - name: Install composer dependencies
         run: composer update --no-interaction --prefer-dist
 
-      - name: Run tests with phpunit
-        run: vendor/bin/phpunit --coverage-text
+      - name: List available test suites
+        run: vendor/bin/phpunit --list-suites
+
+      - name: Run unit tests
+        run: vendor/bin/phpunit --coverage-text --testsuite default
+
+      - name: Run integration tests
+        run: vendor/bin/phpunit --coverage-text --testsuite integration

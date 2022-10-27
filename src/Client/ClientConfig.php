@@ -2,11 +2,15 @@
 declare(strict_types=1);
 namespace Absmartly\SDK\Client;
 
+use Absmartly\SDK\Context\ContextEventLogger;
+
 class ClientConfig {
-	protected string $apiKey;
-	protected string $application;
-	protected string $endpoint;
-	protected string $environment;
+	private string $apiKey;
+	private string $application;
+	private string $endpoint;
+	private string $environment;
+
+	private ContextEventLogger $eventLogger;
 
 	public function __construct(
 		string $apiKey,
@@ -30,6 +34,7 @@ class ClientConfig {
 			'application' => $this->application,
 			'endpoint' => $this->endpoint,
 			'environment' => $this->environment,
+			'eventLogger' => isset($this->eventLogger) ? get_class($this->eventLogger) : null,
 		];
 	}
 
@@ -47,5 +52,13 @@ class ClientConfig {
 
 	public function getApiKey(): string {
 		return $this->apiKey;
+	}
+
+	public function setContextEventLogger(ContextEventLogger $eventLogger): ClientConfig {
+		$this->eventLogger = $eventLogger;
+	}
+
+	public function getEventLogger(): ContextEventLogger {
+		return $this->eventLogger;
 	}
 }
