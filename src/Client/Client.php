@@ -6,6 +6,12 @@ use Absmartly\SDK\Context\ContextData;
 use Absmartly\SDK\Http\HTTPClient;
 use Absmartly\SDK\PublishEvent;
 
+use function json_decode;
+use function json_encode;
+use function rtrim;
+
+use const JSON_THROW_ON_ERROR;
+
 class Client {
 	protected const VERSION = '1.0';
 	private HTTPClient $httpClient;
@@ -23,19 +29,19 @@ class Client {
 		}
 		$this->httpClient = $HTTPClient;
 
-		$this->url = rtrim($clientConfig->getEndpoint(), '/') . "/context";
+		$this->url = rtrim($clientConfig->getEndpoint(), '/') .'/context';
 		$this->query = [
-			"application" => $clientConfig->getApplication(),
-			"environment" => $clientConfig->getEnvironment(),
+			'application' => $clientConfig->getApplication(),
+			'environment' => $clientConfig->getEnvironment(),
 		];
 
 		$this->headers = [
-			"Content-Type" => "application/json; charset=utf-8",
-			"X-Agent" => "absmartly-php-sdk/v" . static::VERSION,
-			"X-API-Key" => $clientConfig->getApiKey(),
-			"X-Environment" => $clientConfig->getEnvironment(),
-			"X-Application" => $clientConfig->getApplication(),
-			"X-Application-Version" => "0",
+			'Content-Type' => 'application/json; charset=utf-8',
+			'X-Agent' => 'absmartly-php-sdk/v'. static::VERSION,
+			'X-API-Key' => $clientConfig->getApiKey(),
+			'X-Environment' => $clientConfig->getEnvironment(),
+			'X-Application' => $clientConfig->getApplication(),
+			'X-Application-Version' => '0',
 		];
 	}
 

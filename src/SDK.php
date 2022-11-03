@@ -8,6 +8,7 @@ use Absmartly\SDK\Context\Context;
 use Absmartly\SDK\Context\ContextConfig;
 use Absmartly\SDK\Context\ContextData;
 use Absmartly\SDK\Context\ContextDataProvider;
+use Absmartly\SDK\Context\ContextEventLogger;
 use Absmartly\SDK\Context\ContextPublisher;
 use Absmartly\SDK\Http\HTTPClient;
 

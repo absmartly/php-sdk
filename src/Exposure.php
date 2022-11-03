@@ -2,7 +2,7 @@
 
 namespace Absmartly\SDK;
 
-use Absmartly\SDK\Context\ContextEventLogger;
+use function time;
 
 class Exposure {
 	public int $id;

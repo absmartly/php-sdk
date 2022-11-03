@@ -12,6 +12,17 @@ use Absmartly\SDK\VariableParser;
 use Absmartly\SDK\VariantAssigner;
 use InvalidArgumentException;
 
+use function array_keys;
+use function base64_encode;
+use function count;
+use function get_object_vars;
+use function gettype;
+use function hash;
+use function is_int;
+use function is_scalar;
+use function sprintf;
+use function trim;
+
 class Context {
 
 	protected SDK $sdk;
@@ -140,10 +151,7 @@ class Context {
 	}
 
 	public function getExperiment(string $experimentName): ?ExperimentVariables {
-		if (isset($this->index[$experimentName])) {
-			return $this->index[$experimentName];
-		}
-		return null;
+		return $this->index[$experimentName] ?? null;
 	}
 
 	public function getExperiments(): array {
@@ -153,12 +161,38 @@ class Context {
 		return [];
 	}
 
+	private function experimentMatches(Experiment $experiment, Assignment $assignment): bool {
+		return $experiment->id === $assignment->id &&
+			$experiment->unitType === $assignment->unitType &&
+			$experiment->iteration === $assignment->iteration &&
+			$experiment->fullOnVariant === $assignment->fullOnVariant &&
+			$experiment->trafficSplit === $assignment->trafficSplit;
+	}
+
 	protected function getAssignment(string $experimentName): Assignment {
 		$experiment = $this->getExperiment($experimentName);
 
 		if (isset($this->assignmentCache[$experimentName])) {
-			//return $this->assignmentCache[$experimentName] = $this->refreshAssignmentCache($this->assignmentCache[$experimentName]);
+			$assignment = $this->assignmentCache[$experimentName];
+			if ($override = $this->overrides[$experimentName] ?? false) {
+				if ($assignment->overridden && $assignment->variant === $override) {
+					// override up-to-date
+					return $assignment;
+				}
+			}
+			else if ($experiment === null) {
+				if (!$assignment->assigned) {
+					// previously not-running experiment
+					return $assignment;
+				}
+			} else if (!isset($this->cassignments[$experimentName]) || $this->cassignments[$experimentName] === $assignment->variant) {
+				if ($this->experimentMatches($experiment->data, $assignment)) {
+					// assignment up-to-date
+					return $assignment;
+				}
+			}
 		}
+
 		$this->assignmentCache[$experimentName] = $assignment = new Assignment();
 
 		$assignment->name = $experimentName;
@@ -243,8 +277,13 @@ class Context {
 		$this->checkReady();
 		$assignment = $this->getVariableAssignment($key);
 
-		// if ($assignment->exposed) // TODO
-		//
+		if ($assignment === null) {
+			return $defaultValue;
+		}
+
+		if (empty($assignment->exposed)) {
+			$this->queueExposure($assignment);
+		}
 
 		return $assignment->variables->{$key} ?? $defaultValue;
 	}
@@ -264,10 +303,6 @@ class Context {
 	}
 
 
-
-	private function refreshAssignmentCache(Assignment $assignment): Assignment {
-
-	}
 
 
 
@@ -417,7 +452,7 @@ class Context {
 			return $this->hashedUnits[$unitType];
 		}
 
-		$this->hashedUnits[$unitType] = hash("md5", $unitUID, true);
+		$this->hashedUnits[$unitType] = hash('md5', $unitUID, true);
 		$this->hashedUnits[$unitType] = strtr(base64_encode($this->hashedUnits[$unitType]), [
 			'+' => '-',
 			'/' => '_',
@@ -502,7 +537,8 @@ class Context {
 		// to verify strict-types, hence the foreach loop.
 		foreach ($units as $key => $value) {
 			if (!is_scalar($value)) {
-				throw new InvalidArgumentException(sprintf('Unit set value with key "%s" must be of type string, %s passed', $key, gettype($value)));
+				throw new InvalidArgumentException(
+					sprintf('Unit set value with key "%s" must be of type string, %s passed', $key, gettype($value)));
 			}
 
 			$this->setUnit($key, $value);
@@ -514,8 +550,9 @@ class Context {
 	public function setOverrides(array $overrides): Context {
 		// See note in ContextConfig::setUnits
 		foreach ($overrides as $experimentName => $variant) {
-			if (!is_integer($variant)) {
-				throw new InvalidArgumentException(sprintf('Override set value with key "%s" must be of type integer, %s passed', $experimentName, gettype($variant)));
+			if (!is_int($variant)) {
+				throw new InvalidArgumentException(
+					sprintf('Override set value with key "%s" must be of type integer, %s passed', $experimentName, gettype($variant)));
 			}
 			$this->setOverride($experimentName, $variant);
 		}
@@ -531,11 +568,12 @@ class Context {
 	public function setCustomAssignments(array $customAssignments): Context {
 		// See note in ContextConfig::setUnits
 		foreach ($customAssignments as $experimentName => $variant) {
-			if (!is_integer($variant)) {
-				throw new InvalidArgumentException(sprintf('Custom assignment set value with key "%s" must be of type integer, %s passed', $experimentName, gettype($variant)));
+			if (!is_int($variant)) {
+				throw new InvalidArgumentException(
+					sprintf('Custom assignment set value with key "%s" must be of type integer, %s passed', $experimentName, gettype($variant)));
 			}
 
-			$this->setCustomAssignment($experimentName, (int) $variant);
+			$this->setCustomAssignment($experimentName, $variant);
 		}
 
 		return $this;

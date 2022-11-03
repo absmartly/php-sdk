@@ -1,9 +1,41 @@
-<?php
+<?php /** @noinspection PhpElementIsNotAvailableInCurrentPhpVersionInspection */
 
 namespace Absmartly\SDK\Http;
 
 use Absmartly\SDK\Exception\HttpClientError;
 use CurlHandle;
+
+use function curl_close;
+use function curl_errno;
+use function curl_exec;
+use function curl_getinfo;
+use function curl_init;
+use function curl_setopt;
+use function curl_setopt_array;
+use function curl_strerror;
+use function http_build_query;
+use function rtrim;
+use function sprintf;
+use function strpos;
+
+use const CURL_SSLVERSION_TLSv1_2;
+use const CURLE_HTTP_RETURNED_ERROR;
+use const CURLINFO_EFFECTIVE_URL;
+use const CURLINFO_HTTP_CODE;
+use const CURLOPT_CUSTOMREQUEST;
+use const CURLOPT_FAILONERROR;
+use const CURLOPT_HTTPHEADER;
+use const CURLOPT_MAXREDIRS;
+use const CURLOPT_POSTFIELDS;
+use const CURLOPT_PROTOCOLS;
+use const CURLOPT_REDIR_PROTOCOLS;
+use const CURLOPT_RETURNTRANSFER;
+use const CURLOPT_SSL_VERIFYHOST;
+use const CURLOPT_SSL_VERIFYPEER;
+use const CURLOPT_SSLVERSION;
+use const CURLOPT_TIMEOUT;
+use const CURLOPT_URL;
+use const CURLPROTO_HTTPS;
 
 class HTTPClient {
 	/**
@@ -67,8 +99,8 @@ class HTTPClient {
 			if ($error === CURLE_HTTP_RETURNED_ERROR) {
 				throw new HttpClientError(
 					sprintf('HTTP Client returned an HTTP error %d for URL %s',
-				        curl_getinfo($this->curlHandle, CURLINFO_HTTP_CODE),
-				        curl_getinfo($this->curlHandle,  CURLINFO_EFFECTIVE_URL))
+					        curl_getinfo($this->curlHandle, CURLINFO_HTTP_CODE),
+					        curl_getinfo($this->curlHandle, CURLINFO_EFFECTIVE_URL))
 				);
 			}
 

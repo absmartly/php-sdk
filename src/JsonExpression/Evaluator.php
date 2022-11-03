@@ -100,7 +100,7 @@ class Evaluator {
 			return true;
 		}
 
-		if ($value === "false") {
+		if ($value === 'false') {
 			return false;
 		}
 		return !empty($value);
@@ -136,11 +136,11 @@ class Evaluator {
 		}
 
 		if ($value === true) {
-			return "true";
+			return 'true';
 		}
 
 		if ($value === false) {
-			return "false";
+			return 'false';
 		}
 
 		return (string) $value;
@@ -231,7 +231,7 @@ class Evaluator {
 					return false;
 				}
 				return serialize($a) === serialize($b);
-			case "NULL": // Making this clause visible.
+			case 'NULL': // Making this clause visible.
 				return false;
 			case 'object':
 				return serialize($a) === serialize($b);

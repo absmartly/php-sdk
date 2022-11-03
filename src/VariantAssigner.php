@@ -28,7 +28,7 @@ final class VariantAssigner {
 	private int $unitHash;
 
 	public function __construct(string $unit) {
-		$hash = hash("md5", $unit, true);
+		$hash = hash('md5', $unit, true);
 
 		// Removing padding and +/ characters in the base64 encoded string.
 		$hash = strtr(base64_encode($hash), [
@@ -89,6 +89,6 @@ final class VariantAssigner {
 
 	private function probability(int $seedHi, int $seedLo): float {
 		$buffer = [$seedLo, $seedHi, $this->unitHash];
-		return $this->digest(pack("V*", ...$buffer)) * (1.0 / 0xFFFFFFFF);
+		return $this->digest(pack('V*', ...$buffer)) * (1.0 / 0xFFFFFFFF);
 	}
 }

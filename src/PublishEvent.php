@@ -4,6 +4,8 @@ namespace Absmartly\SDK;
 
 use JsonSerializable;
 
+use function time;
+
 class PublishEvent implements JsonSerializable {
 	public bool $hashed;
 	public array $units;

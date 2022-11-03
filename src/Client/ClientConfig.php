@@ -4,6 +4,10 @@ namespace Absmartly\SDK\Client;
 
 use Absmartly\SDK\Context\ContextEventLogger;
 
+use function get_class;
+use function str_repeat;
+use function strlen;
+
 class ClientConfig {
 	private string $apiKey;
 	private string $application;

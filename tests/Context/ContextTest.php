@@ -114,9 +114,15 @@ class ContextTest extends TestCase {
 		return (new SDK($config))->createContext($contextConfig);
 	}
 
+	private function getExperimentsList(Context $context): array {
+		$experimentObjects = $context->getData()->experiments;
+		$experiments = [];
+		foreach ($experimentObjects as $experiment) {
+			$experiments[] = $experiment->name;
+		}
 
-
-
+		return $experiments;
+	}
 
 
 	/*
@@ -240,10 +246,25 @@ class ContextTest extends TestCase {
 			$context->setOverride($experimentName, $variant);
 			self::assertSame($variant, $context->getTreatment($experimentName));
 		}
+		self::assertSame(count($overrides), $context->getPendingCount());
 
-		//self::assertSame(count($overrides), $context->getPendingCount());
+		// overriding with the different variant should clear assignment cache
+		foreach ($overrides as $experimentName => $variant) {
+			$context->setOverride($experimentName, $variant + 11);
+			self::assertSame($variant + 11, $context->getTreatment($experimentName));
+		}
+		self::assertSame(2 * count($overrides), $context->getPendingCount());
+
+		// overriding a computed assignment should clear assignment cache
+		self::assertSame($this->expectedVariants['exp_test_ab'], $context->getTreatment('exp_test_ab'));
+		self::assertSame(1 + (2 * count($overrides)), $context->getPendingCount());
+
+		$context->setOverride('exp_test_ab', 9);
+		self::assertSame(9, $context->getTreatment('exp_test_ab'));
+		self::assertSame(2 + (2 * count($overrides)), $context->getPendingCount());
 	}
 
+	// Additional test
 	public function testSetUnitEmpty(): void {;
 		$context = $this->createReadyContext();
 
@@ -252,6 +273,7 @@ class ContextTest extends TestCase {
 		$context->setUnit('db_user_id', '');
 	}
 
+	// Additional test
 	public function testSetUnitThrowsOnAlreadySet(): void {
 		$context = $this->createReadyContext();
 
@@ -262,9 +284,6 @@ class ContextTest extends TestCase {
 		$context->setUnit('session_id', 'new-uid');
 	}
 
-
-
-	// TODO: setOverrideClearsAssignmentCache
 	// TODO: setOverridesBeforeReady
 
 	public function testSetCustomAssignment(): void {
@@ -292,11 +311,62 @@ class ContextTest extends TestCase {
 		self::assertSame(5, $context->getCustomAssignment('exp_test_new_2'));
 
 		self::assertNull($context->getCustomAssignment('exp_test_not_found'));
+
+		// TODO: Rest
 	}
 
-	// TODO:  setCustomAssignmentDoesNotOverrideFullOnOrNotEligibleAssignments
-	// TODO:  setCustomAssignmentClearsAssignmentCache
-	// TODO:  setCustomAssignmentsBeforeReady
+	public function testSetCustomAssignmentDoesNotOverrideFullOnOrNotEligibleAssignments(): void {
+		$context = $this->createReadyContext();
+
+		$cassignments = [
+			'exp_test_not_eligible' => 3,
+			'exp_test_fullon' => 3,
+		];
+
+		$context->setCustomAssignments($cassignments);
+		self::assertSame(0, $context->getTreatment("exp_test_not_eligible"));
+		self::assertSame(2, $context->getTreatment("exp_test_fullon"));
+	}
+
+	public function testSetCustomAssignmentClearsAssignmentCache(): void {
+		$context = $this->createReadyContext();
+
+		$cassignments = [
+			'exp_test_ab' => 2,
+			'exp_test_abc' => 3,
+		];
+
+		foreach ($cassignments as $experimentName => $variant) {
+			self::assertSame($this->expectedVariants[$experimentName], $context->getTreatment($experimentName));
+		}
+
+		self::assertSame(count($cassignments), $context->getPendingCount());
+
+		$context->setCustomAssignments($cassignments);
+
+		foreach ($cassignments as $experimentName => $variant) {
+			$context->setCustomAssignment($experimentName, $variant);
+			self::assertSame($variant, $context->getTreatment($experimentName));
+		}
+
+		self::assertSame(2 * count($cassignments), $context->getPendingCount());
+
+		// overriding with the same variant shouldn't clear assignment cache
+		foreach ($cassignments as $experimentName => $variant) {
+			$context->setCustomAssignment($experimentName, $variant);
+			self::assertSame($variant, $context->getTreatment($experimentName));
+		}
+
+		self::assertSame(2 * count($cassignments), $context->getPendingCount());
+
+		// overriding with the different variant should clear assignment cache
+		foreach ($cassignments as $experimentName => $variant) {
+			$context->setCustomAssignment($experimentName, $variant + 11);
+			self::assertSame($variant + 11, $context->getTreatment($experimentName));
+		}
+
+		self::assertSame(3 * count($cassignments), $context->getPendingCount());
+	}
 
 	public function testPeekTreatment(): void {
 		$context = $this->createReadyContext();
@@ -327,6 +397,8 @@ class ContextTest extends TestCase {
 
 			self::assertSame(17, $actual);
 		}
+
+		self::assertSame(0, $context->getPendingCount());
 	}
 
 	public function testPeekVariableValueReturnsAssignedVariantOnAudienceMismatchNonStrictMode(): void {
@@ -355,16 +427,8 @@ class ContextTest extends TestCase {
 
 			self::assertSame(17, $actual);
 		}
-	}
 
-	private function getExperimentsList(Context $context): array {
-		$experimentObjects = $context->getData()->experiments;
-		$experiments = [];
-		foreach ($experimentObjects as $experiment) {
-			$experiments[] = $experiment->name;
-		}
-
-		return $experiments;
+		self::assertSame(count($context->getData()->experiments), $context->getPendingCount());
 	}
 
 	// TODO testGetVariableValueQueuesExposureWithAudienceMismatchFalseOnAudienceMatch
@@ -408,6 +472,7 @@ class ContextTest extends TestCase {
 		}
 
 		self::assertSame(3, $context->peekTreatment('not_found'));
+		self::assertSame(0, $context->getPendingCount());
 	}
 
 	public function testPeekTreatmentReturnsAssignedVariantOnAudienceMismatchNonStrictMode(): void {
@@ -443,6 +508,7 @@ class ContextTest extends TestCase {
 
 		// TODO: Rest
 	}
+
 
 	public function testGetTreatmentReturnsOverrideVariant(): void {
 		$context = $this->createReadyContext();
@@ -497,5 +563,39 @@ class ContextTest extends TestCase {
 		// TODO: Rest
 	}
 
-	// Todo: testGetTreatmentQueuesExposureWithAudienceMismatchTrueAndControlVariantOnAudienceMismatchInStrictMode
+	// TODO: testGetTreatmentQueuesExposureWithAudienceMismatchTrueAndControlVariantOnAudienceMismatchInStrictMode
+	// TODO: testGetTreatmentCallsEventLogger
+	// TODO: testTrack
+	// TODO: testTrackCallsEventLogger
+	// TODO: testTrackStartsPublishTimeoutAfterAchievement
+	// TODO: testTrackQueuesWhenNotReady
+	// TODO: testPublishDoesNotCallEventHandlerWhenQueueIsEmpty
+	// TODO: testPublishCallsEventLogger
+	// TODO: testPublishCallsEventLoggerOnError
+	// TODO: testPublishResetsInternalQueuesAndKeepsAttributesOverridesAndCustomAssignments
+	// TODO: testPublishDoesNotCallEventHandlerWhenFailed
+	// TODO: testPublishExceptionally
+	// TODO: testClose
+	// TODO: testCloseCallsEventLogger
+	// TODO: testCloseCallsEventLoggerWithPendingEvents
+	// TODO: testCloseCallsEventLoggerOnError
+	// TODO: testCloseExceptionally
+	// TODO: testCloseStopsRefreshTimer
+	// TODO: testRefresh
+	// TODO: testRefreshCallsEventLogger
+	// TODO: testRefreshCallsEventLoggerOnError
+	// TODO: testRefreshExceptionally
+	// TODO: testRefreshKeepsAssignmentCacheWhenNotChanged
+	// TODO: testRefreshKeepsAssignmentCacheWhenNotChangedOnAudienceMismatch
+	// TODO: testRefreshKeepsAssignmentCacheWhenNotChangedWithOverride
+	// TODO: testRefreshClearsAssignmentCacheForStoppedExperiment
+	// TODO: testRefreshClearsAssignmentCacheForStartedExperiment
+	// TODO: testRefreshClearsAssignmentCacheForFullOnExperiment
+	// TODO: testRefreshClearsAssignmentCacheForTrafficSplitChange
+	// TODO: testRefreshClearsAssignmentCacheForExperimentIdChange
+
+
+	// TODO:  setCustomAssignmentsBeforeReady
+
+
 }
