@@ -15,20 +15,20 @@
     <testsuites>
         <testsuite name="default">
             <directory>tests</directory>
-            <exclude>tests/Http/HttpClientIntegrationTest.php</exclude>
+            <exclude>tests/Http/HTTPClientIntegrationTest.php</exclude>
         </testsuite>
         <testsuite name="integration">
-            <file>tests/Http/HttpClientIntegrationTest.php</file>
+            <file>tests/Http/HTTPClientIntegrationTest.php</file>
         </testsuite>
     </testsuites>
     <coverage cacheDirectory=".phpunit.cache/code-coverage"
-              processUncoveredFiles="true">
+            processUncoveredFiles="true">
         <include>
             <directory suffix=".php">src</directory>
         </include>
         <report>
             <html outputDirectory="build/coverage-html"/>
-            <text outputFile="php://stdout" showUncoveredFiles="false"/>
+            <text outputFile="php://stdout" showUncoveredFiles="false" showOnlySummary="true"/>
         </report>
     </coverage>
 </phpunit>

@@ -9,6 +9,7 @@ class PublishEventTest extends TestCase {
 	public function testPublishEventSerializes(): void {
 		$event = new PublishEvent();
 		$event->units = [];
+		$event->publishedAt = (int) (microtime(true) * 1000);
 
 		$json = json_encode($event, JSON_THROW_ON_ERROR);
 		self::assertJson($json);

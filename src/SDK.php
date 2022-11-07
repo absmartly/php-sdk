@@ -8,39 +8,48 @@ use Absmartly\SDK\Context\Context;
 use Absmartly\SDK\Context\ContextConfig;
 use Absmartly\SDK\Context\ContextData;
 use Absmartly\SDK\Context\ContextDataProvider;
-use Absmartly\SDK\Context\ContextEventLogger;
-use Absmartly\SDK\Context\ContextPublisher;
+use Absmartly\SDK\Context\ContextEventHandler;
 use Absmartly\SDK\Http\HTTPClient;
 
 final class SDK {
-	private $clientOptions;
+
 	private Client $client;
-	private ContextPublisher $publisher;
+	private ContextEventHandler $handler;
 	private ContextDataProvider $provider;
-	private ?ContextDataProvider $contextDataProvider = null;
-	private ?Scheduler $scheduler = null;
-	private ?contextEventHandler $contextEventHandler = null;
-	private ?ContextEventLogger $contextEventLogger = null;
-	private ?VariableParser $variableParser = null;
 
 	public function __construct(Config $config) {
 		$this->client = $config->getClient();
-		$this->provider = $config->getContextDataProvider() ?? new ContextDataProvider($this->client);
-		// Todo: Ingest other properties from Config instance
+		$this->provider = $config->getContextDataProvider();
+		$this->handler = $config->getContextEventHandler();
 	}
 
+	/**
+	 * @param string $endpoint URL to your API endpoint. Most commonly "your-company.absmartly.io".
+	 * @param string $apiKey API key which can be found on the Web Console.
+	 * @param string $environment Environment of the platform where the SDK is installed. Environments are created on
+	 *                  the Web Console and should match the available environments in your infrastructure.
+	 * @param string $application Name of the application where the SDK is installed. Applications are created on the
+	 *                  Web Console and should match the applications where your experiments will be running.
+	 * @param int $retries The number of retries before the SDK stops trying to connect.
+	 * @param int $timeout Amount of time, in milliseconds, before the SDK will stop trying to connect.
+	 * @param callable|null $eventLogger A callback function which runs after SDK events.
+	 * @return SDK SDK instance created using the credentials and details above.
+	 */
 	public static function createWithDefaults(
-		string $apiKey,
-		string $application,
 		string $endpoint,
-		string $environment
+		string $apiKey,
+		string $environment,
+		string $application,
+		int $retries = 5,
+		int $timeout = 3000,
+		?callable $eventLogger = null
 	): SDK {
 
 		$clientConfig = new ClientConfig(
+			$endpoint,
 			$apiKey,
 			$application,
-			$endpoint,
-			$environment
+			$environment,
 		);
 
 		$client = new Client($clientConfig, new HTTPClient());
@@ -49,15 +58,11 @@ final class SDK {
 	}
 
 	public function createContext(ContextConfig $contextConfig): Context {
-		return Context::createFromContextConfig($this, $contextConfig, $this->provider->getContextData());
+		return Context::createFromContextConfig($this, $contextConfig, $this->provider, $this->handler);
 	}
 
-	public function createContextWith(ContextConfig $contextConfig, ContextData $contextData): Context {
-		return Context::createFromContextConfig($this, $contextConfig);
-	}
-
-	public function getContextData(): ContextData {
-		return $this->client->getContextData();
+	public function createContextWithData(ContextConfig $contextConfig, ContextData $contextData): Context {
+		return Context::createFromContextConfig($this, $contextConfig, $this->provider, $this->handler, $contextData);
 	}
 
 	public function close(): void {

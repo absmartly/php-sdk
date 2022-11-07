@@ -2,7 +2,6 @@
 
 namespace Absmartly\SDK\Tests\Context;
 
-use Absmartly\SDK\AudienceMatcher;
 use Absmartly\SDK\Client\Client;
 use Absmartly\SDK\Client\ClientConfig;
 use Absmartly\SDK\Config;
@@ -12,34 +11,37 @@ use Absmartly\SDK\Context\ContextData;
 use Absmartly\SDK\Context\ContextDataProvider;
 use Absmartly\SDK\Context\ContextEventHandler;
 use Absmartly\SDK\Context\ContextEventLogger;
+use Absmartly\SDK\Context\ContextEventLoggerEvent;
+use Absmartly\SDK\GoalAchievement;
 use Absmartly\SDK\SDK;
 use Absmartly\SDK\Tests\Mocks\ContextDataProviderMock;
-use Absmartly\SDK\VariableParser;
+use Absmartly\SDK\Tests\Mocks\ContextEventHandlerMock;
+use Absmartly\SDK\Tests\Mocks\MockContextEventLoggerProxy;
 use PHPUnit\Framework\TestCase;
 
 class ContextTest extends TestCase {
 
-	protected array $units = [
+	private array $units = [
 		"session_id" => "e791e240fcd3df7d238cfc285f475e8152fcc0ec",
 		"user_id" => "123456789",
 		"email" => "bleh@absmartly.com",
 	];
 
-	protected array $attributes = [
+	private array $attributes = [
 		"attr1" => "value1",
 		"attr2" => "value2",
 		"attr3" => 5,
 	];
 
-	protected array $expectedVariants = [
+	private array $expectedVariants = [
 		"exp_test_ab" => 1,
 		"exp_test_abc" => 2,
 		"exp_test_not_eligible" => 0,
 		"exp_test_fullon" => 2,
-		//"exp_test_new" => 1, // TODO: Fix this with refreshData
+		"exp_test_new" => 1,
 	];
 
-	protected array $expectedVariables = [
+	private array $expectedVariables = [
 		"banner.border" => 1,
 		"banner.size" => "large",
 		"button.color" => "red",
@@ -48,7 +50,7 @@ class ContextTest extends TestCase {
 		"show-modal" => true,
 	];
 
-	protected array $variableExperiments = [
+	private array $variableExperiments = [
 		"banner.border" => "exp_test_ab",
 		"banner.size" => "exp_test_ab",
 		"button.color" => "exp_test_abc",
@@ -58,55 +60,43 @@ class ContextTest extends TestCase {
 		"show-modal" =>"exp_test_new"
 	];
 
-	/*
-	 *
-	 * final Unit[] publishUnits = new Unit[]{
-			new Unit("user_id", "JfnnlDI7RTiF9RgfG2JNCw"),
-			new Unit("session_id", "pAE3a1i5Drs5mKRNq56adA"),
-			new Unit("email", "IuqYkNRfEx5yClel4j3NbA")
-	};
-	 */
+	private ContextData $data;
+	private ContextData $refreshData;
+	private ContextData $audienceData;
+	private ContextData $audienceStrictData;
 
-
-	protected ContextData $data;
-	protected ContextData $refreshData;
-	protected ContextData $audienceData;
-	protected ContextData $audienceStrictData;
-
-	protected ContextDataProvider $dataProvider;
-	protected ContextEventLogger $eventLogger;
-	protected ContextEventHandler $eventHandler;
-	protected VariableParser $variableParser;
-	protected AudienceMatcher $audienceMatcher;
-	protected ScheduledExecutorService $scheduler;
-
-	// DefaultContextDataDeserializer deser = new DefaultContextDataDeserializer();
-	// Clock clock = Clock.fixed(1_620_000_000_000L);
-
+	private ContextDataProvider $dataProvider;
+	private ContextEventHandler $eventHandler;
 
 	protected function createContext(ContextConfig $contextConfig): Context {
 		$clientConfig = new ClientConfig('', '', '', '');
 		$client = new Client($clientConfig);
 		$config = new Config($client);
 
-		$provider = new ContextDataProviderMock($client);
-		$config->setContextDataProvider($provider);
+		$this->dataProvider = new ContextDataProviderMock($client);
+		$this->eventHandler = new ContextEventHandlerMock($client);
+		$config->setContextDataProvider($this->dataProvider);
+		$config->setContextEventHandler($this->eventHandler);
 
 		return (new SDK($config))->createContext($contextConfig);
 	}
 
-	public function createReadyContext(string $source = 'context.json', bool $setUnits = true): Context {
-		$clientConfig = new ClientConfig('', '', '', '');
+	public function createReadyContext(string $source = 'context.json', bool $setUnits = true, ?ContextEventLogger $logger = null): Context {
+		$clientConfig = new ClientConfig('https://demo.absmartly.io/v1', '', '', '');
 		$client = new Client($clientConfig);
 		$config = new Config($client);
 
-		$provider = new ContextDataProviderMock($client);
-		$provider->setSource($source);
-		$config->setContextDataProvider($provider);
+		$this->dataProvider = new ContextDataProviderMock($client);
+		$this->dataProvider->setSource($source);
+		$config->setContextDataProvider($this->dataProvider);
 
-
+		$this->eventHandler = new ContextEventHandlerMock($client);
+		$config->setContextEventHandler($this->eventHandler);
 
 		$contextConfig = new ContextConfig();
+		if ($logger) {
+			$contextConfig->setEventLogger($logger);
+		}
 		if ($setUnits) {
 			$contextConfig->setUnits($this->units);
 		}
@@ -115,7 +105,7 @@ class ContextTest extends TestCase {
 	}
 
 	private function getExperimentsList(Context $context): array {
-		$experimentObjects = $context->getData()->experiments;
+		$experimentObjects = $context->getContextData()->experiments;
 		$experiments = [];
 		foreach ($experimentObjects as $experiment) {
 			$experiments[] = $experiment->name;
@@ -124,6 +114,22 @@ class ContextTest extends TestCase {
 		return $experiments;
 	}
 
+	private function getContextData(string $source = 'context.json'): ContextData {
+		$this->dataProvider->setSource($source);
+		return $this->dataProvider->getContextData();
+	}
+
+
+	public function tearDown(): void {
+		if (isset($this->eventHandler->submitted)) {
+			$this->eventHandler->submitted = [];
+			$this->eventHandler->prerun = null;
+		}
+
+		if (isset($this->dataProvider->prerun)) {
+			$this->dataProvider->prerun = null;
+		}
+	}
 
 	/*
 	 * =============================================================================
@@ -166,15 +172,19 @@ class ContextTest extends TestCase {
 		}
 	}
 
-	// TODO: testBecomesReadyWithFulfilledPromise
-	// TODO: testBecomesReadyAndFailedWithFulfilledErrorPromise
-	// TODO: testBecomesReadyAndFailedWithErrorPromise
-	// TODO: testCallsEventLoggerWhenReady
-	// TODO: testCallsEventLoggerWithFulfilledPromise
-	// TODO: testCallsEventLoggerWithErrorPromise
-	// TODO: testCallsEventLoggerWithFulfilledErrorPromise
-	// TODO: testWaitUntilReady
-	// TODO: testWaitUntilReadyWithFulfilledPromise
+	public function testBecomesReadyWithFulfilledPromise(): void {
+		$context = $this->createReadyContext();
+		self::assertTrue($context->isReady());
+		self::assertFalse($context->isFailed());
+	}
+
+	public function testCallsEventLoggerWhenReady(): void {
+		$eventHandler = new MockContextEventLoggerProxy();
+
+		$this->createReadyContext('context.json', true, $eventHandler);
+		self::assertSame(1, $eventHandler->called);
+		self::assertSame(ContextEventLoggerEvent::Ready, $eventHandler->events[0]->getEvent());
+	}
 
 	public function testGetExperiments(): void {
 		$contextConfig = new ContextConfig();
@@ -182,21 +192,14 @@ class ContextTest extends TestCase {
 		$context = $this->createContext($contextConfig);
 
 		$experiments = $context->getExperiments();
-		self::assertEquals(array_keys($context->getData()->experiments), $experiments);
+		self::assertEquals($this->getExperimentsList($context), $experiments);
 	}
-
-	// TODO testStartsRefreshTimerWhenReady
-	// TODO testDoesNotStartRefreshTimerWhenFailed
-	// TODO testStartsPublishTimeoutWhenReadyWithQueueNotEmpty
 
 	public function testSetUnit(): void {
 		$config = new ContextConfig();
 		$config->setUnit('session_id', '0ab1e23f4eee');
 		self::assertSame('0ab1e23f4eee', $config->getUnit('session_id'));
 	}
-
-	// TODO testSetUnitsBeforeReady
-	// TODO testSetAttributesBeforeReady
 
 	public function testSetOverride(): void {
 		$context = $this->createReadyContext();
@@ -221,8 +224,12 @@ class ContextTest extends TestCase {
 		self::assertSame(5, $context->getOverride('exp_test_new_2'));
 
 		self::assertNull($context->getOverride('exp_test_not_found'));
+	}
 
-		// TODO Rest
+	public function testSetOverridesGenericsThrows(): void {
+		$context = $this->createReadyContext();
+		$this->expectException(\InvalidArgumentException::class);
+		$context->setOverrides(['test' => '1']);
 	}
 
 	public function testSetOverrideClearsAssignmentCache(): void {
@@ -284,7 +291,12 @@ class ContextTest extends TestCase {
 		$context->setUnit('session_id', 'new-uid');
 	}
 
-	// TODO: setOverridesBeforeReady
+	// Additional test
+	public function testSetUnitThrowsOnGenericError(): void {
+		$context = $this->createReadyContext();
+		$this->expectException(\InvalidArgumentException::class);
+		$context->setUnits(['test' => false]);
+	}
 
 	public function testSetCustomAssignment(): void {
 		$context = $this->createReadyContext();
@@ -311,8 +323,12 @@ class ContextTest extends TestCase {
 		self::assertSame(5, $context->getCustomAssignment('exp_test_new_2'));
 
 		self::assertNull($context->getCustomAssignment('exp_test_not_found'));
+	}
 
-		// TODO: Rest
+	public function testSetCustomAssignmentsGenericsThrows(): void {
+		$context = $this->createReadyContext();
+		$this->expectException(\InvalidArgumentException::class);
+		$context->setCustomAssignments(['test' => false]);
 	}
 
 	public function testSetCustomAssignmentDoesNotOverrideFullOnOrNotEligibleAssignments(): void {
@@ -371,15 +387,12 @@ class ContextTest extends TestCase {
 	public function testPeekTreatment(): void {
 		$context = $this->createReadyContext();
 
-		//self::assertSame(1, $context->peekTreatment('exp_test_new'));
-
-		foreach ($this->expectedVariants as $experimentName => $variant) {
-			self::assertSame($variant, $context->peekTreatment($experimentName), sprintf('Assert experiment %s variant value is %s', $experimentName, $variant));
+		foreach ($context->getContextData()->experiments as $experiment) {
+			self::assertSame($this->expectedVariants[$experiment->name], $context->peekTreatment($experiment->name));
 		}
 
 		self::assertSame(0, $context->peekTreatment('not_found'));
-
-		// TODO: Call again and see the pendingCount does not change.
+		self::assertSame(0, $context->getPendingCount());
 	}
 
 	public function testVariableValue(): void {
@@ -428,13 +441,62 @@ class ContextTest extends TestCase {
 			self::assertSame(17, $actual);
 		}
 
-		self::assertSame(count($context->getData()->experiments), $context->getPendingCount());
+		self::assertSame(count($context->getContextData()->experiments), $context->getPendingCount());
 	}
 
-	// TODO testGetVariableValueQueuesExposureWithAudienceMismatchFalseOnAudienceMatch
-	// TODO testGetVariableValueQueuesExposureWithAudienceMismatchTrueOnAudienceMismatch
-	// TODO testGetVariableValueQueuesExposureWithAudienceMismatchFalseAndControlVariantOnAudienceMismatchInStrictMode
-	// TODO testGetVariableValueCallsEventLogger
+	public function testGetVariableValueQueuesExposureWithAudienceMismatchFalseOnAudienceMatch(): void {
+		$context = $this->createReadyContext('audience_context.json');
+		$context->setAttribute('age', 21);
+
+		self::assertSame("large", $context->getVariableValue('banner.size', 'small'));
+		self::assertSame(1, $context->getPendingCount());
+
+		$context->publish();
+		self::assertArrayHasKey(0, $this->eventHandler->submitted);
+		self::assertSame('21', $this->eventHandler->submitted[0]->attributes->age);
+		self::assertSame('exp_test_ab', $this->eventHandler->submitted[0]->exposures[0]->name);
+		self::assertFalse($this->eventHandler->submitted[0]->exposures[0]->audienceMismatch);
+	}
+
+	public function testGetVariableValueQueuesExposureWithAudienceMismatchTrueOnAudienceMismatch(): void {
+		$context = $this->createReadyContext('audience_context.json');
+
+		self::assertSame("large", $context->getVariableValue('banner.size', 'small'));
+		self::assertSame(1, $context->getPendingCount());
+
+		$context->publish();
+		self::assertArrayHasKey(0, $this->eventHandler->submitted);
+		self::assertSame('exp_test_ab', $this->eventHandler->submitted[0]->exposures[0]->name);
+		self::assertTrue($this->eventHandler->submitted[0]->exposures[0]->audienceMismatch);
+	}
+
+	// Function name yikes!
+	public function testGetVariableValueQueuesExposureWithAudienceMismatchFalseAndControlVariantOnAudienceMismatchInStrictMode(): void {
+		$context = $this->createReadyContext('audience_strict_context.json');
+
+		self::assertSame("small", $context->getVariableValue('banner.size', 'small'));
+		self::assertSame(1, $context->getPendingCount());
+
+		$context->publish();
+		self::assertArrayHasKey(0, $this->eventHandler->submitted);
+		self::assertSame('exp_test_ab', $this->eventHandler->submitted[0]->exposures[0]->name);
+		self::assertTrue($this->eventHandler->submitted[0]->exposures[0]->audienceMismatch);
+	}
+
+	public function testGetVariableValueCallsEventLogger(): void {
+		$eventHandler = new MockContextEventLoggerProxy();
+		$context = $this->createReadyContext('context.json', true, $eventHandler);
+
+		self::assertSame(1, $eventHandler->called);
+		$eventHandler->clear();
+		self::assertSame(0, $eventHandler->called);
+
+		self::assertSame(1, $context->getVariableValue('banner.border'));
+		self::assertSame('large', $context->getVariableValue('banner.size'));
+		self::assertSame(1, $eventHandler->called);
+		self::assertSame('exp_test_ab', $eventHandler->events[0]->getData()->name);
+		self::assertSame(ContextEventLoggerEvent::Exposure, $eventHandler->events[0]->getEvent());
+	}
 
 	public function testGetVariableKeys(): void {
 		$context = $this->createReadyContext('refreshed.json');
@@ -444,13 +506,13 @@ class ContextTest extends TestCase {
 	public function testPeekTreatmentReturnsOverrideVariant(): void {
 		$context = $this->createReadyContext();
 
-		foreach ($context->getData()->experiments as $experiment) {
+		foreach ($context->getContextData()->experiments as $experiment) {
 			$context->setOverride($experiment->name, $this->expectedVariants[$experiment->name] + 11);
 		}
 
 		$context->setOverride('not_found', 3);
 
-		foreach ($context->getData()->experiments as $experiment) {
+		foreach ($context->getContextData()->experiments as $experiment) {
 			if (isset($this->expectedVariants[$experiment->name])) {
 				$this->assertSame(
 					$this->expectedVariants[$experiment->name] + 11,
@@ -462,7 +524,7 @@ class ContextTest extends TestCase {
 		self::assertSame(3, $context->peekTreatment('not_found'));
 
 		// Call again
-		foreach ($context->getData()->experiments as $experiment) {
+		foreach ($context->getContextData()->experiments as $experiment) {
 			if (isset($this->expectedVariants[$experiment->name])) {
 				$this->assertSame(
 					$this->expectedVariants[$experiment->name] + 11,
@@ -488,15 +550,13 @@ class ContextTest extends TestCase {
 	public function testGetTreatment(): void {
 		$context = $this->createReadyContext();
 
-		foreach ($context->getData()->experiments as $experiment) {
+		foreach ($context->getContextData()->experiments as $experiment) {
 			self::assertSame($this->expectedVariants[$experiment->name], $context->getTreatment($experiment->name));
 		}
 
 		self::assertSame(0, $context->getTreatment("not_found"));
 
-		self::assertSame(count($context->getData()->experiments) + 1, $context->getPendingCount()); // TODO
-
-		// TODO: Rest
+		self::assertSame(count($context->getContextData()->experiments) + 1, $context->getPendingCount());
 	}
 
 	public function testGetTreatmentStartsPublishTimeoutAfterExposure(): void {
@@ -505,8 +565,6 @@ class ContextTest extends TestCase {
 		$context->getTreatment('exp_test_abc');
 
 		self::assertSame(2, $context->getPendingCount());
-
-		// TODO: Rest
 	}
 
 
@@ -519,20 +577,18 @@ class ContextTest extends TestCase {
 
 		$context->setOverride('not_found', 3);
 
-		foreach ($context->getData()->experiments as $experiment) {
+		foreach ($context->getContextData()->experiments as $experiment) {
 			if (isset($this->expectedVariants[$experiment->name])) {
 				self::assertSame($this->expectedVariants[$experiment->name] + 11, $context->getTreatment($experiment->name));
 			}
 		}
 
 		self::assertSame(3, $context->getTreatment('not_found'));
-
-		// TODO: Rest
 	}
 
 	public function testGetTreatmentQueuesExposureOnce(): void {
 		$context = $this->createReadyContext();
-		$data = $context->getData();
+		$data = $context->getContextData();
 
 		foreach ($data->experiments as $experiment) {
 			self::assertSame($this->expectedVariants[$experiment->name], $context->getTreatment($experiment->name));
@@ -540,8 +596,6 @@ class ContextTest extends TestCase {
 
 		self::assertSame(0, $context->getTreatment("not_found"));
 		self::assertSame(count($data->experiments) + 1, $context->getPendingCount());
-
-		// TODO: Rest
 	}
 
 	public function testGetTreatmentQueuesExposureWithAudienceMismatchFalseOnAudienceMatch(): void {
@@ -551,7 +605,12 @@ class ContextTest extends TestCase {
 		self::assertSame(1, $context->getTreatment('exp_test_ab'));
 		self::assertSame(1, $context->getPendingCount());
 
-		// TODO: Rest
+		$context->publish();
+
+		$event = $this->eventHandler->submitted[0];
+		self::assertSame('e791e240fcd3df7d238cfc285f475e8152fcc0ec', $event->units->session_id);
+		self::assertSame('21', $event->attributes->age);
+		self::assertFalse($event->exposures[0]->audienceMismatch);
 	}
 
 	public function testGetTreatmentQueuesExposureWithAudienceMismatchTrueOnAudienceMismatch(): void {
@@ -560,42 +619,499 @@ class ContextTest extends TestCase {
 		self::assertSame(1, $context->getTreatment('exp_test_ab'));
 		self::assertSame(1, $context->getPendingCount());
 
-		// TODO: Rest
+		$context->publish();
+
+		$event = $this->eventHandler->submitted[0];
+		self::assertSame('e791e240fcd3df7d238cfc285f475e8152fcc0ec', $event->units->session_id);
+		self::assertTrue($event->exposures[0]->audienceMismatch);
 	}
 
-	// TODO: testGetTreatmentQueuesExposureWithAudienceMismatchTrueAndControlVariantOnAudienceMismatchInStrictMode
-	// TODO: testGetTreatmentCallsEventLogger
-	// TODO: testTrack
-	// TODO: testTrackCallsEventLogger
-	// TODO: testTrackStartsPublishTimeoutAfterAchievement
-	// TODO: testTrackQueuesWhenNotReady
-	// TODO: testPublishDoesNotCallEventHandlerWhenQueueIsEmpty
-	// TODO: testPublishCallsEventLogger
-	// TODO: testPublishCallsEventLoggerOnError
-	// TODO: testPublishResetsInternalQueuesAndKeepsAttributesOverridesAndCustomAssignments
-	// TODO: testPublishDoesNotCallEventHandlerWhenFailed
-	// TODO: testPublishExceptionally
-	// TODO: testClose
-	// TODO: testCloseCallsEventLogger
-	// TODO: testCloseCallsEventLoggerWithPendingEvents
-	// TODO: testCloseCallsEventLoggerOnError
-	// TODO: testCloseExceptionally
-	// TODO: testCloseStopsRefreshTimer
-	// TODO: testRefresh
-	// TODO: testRefreshCallsEventLogger
-	// TODO: testRefreshCallsEventLoggerOnError
-	// TODO: testRefreshExceptionally
-	// TODO: testRefreshKeepsAssignmentCacheWhenNotChanged
-	// TODO: testRefreshKeepsAssignmentCacheWhenNotChangedOnAudienceMismatch
-	// TODO: testRefreshKeepsAssignmentCacheWhenNotChangedWithOverride
-	// TODO: testRefreshClearsAssignmentCacheForStoppedExperiment
-	// TODO: testRefreshClearsAssignmentCacheForStartedExperiment
-	// TODO: testRefreshClearsAssignmentCacheForFullOnExperiment
-	// TODO: testRefreshClearsAssignmentCacheForTrafficSplitChange
-	// TODO: testRefreshClearsAssignmentCacheForExperimentIdChange
+	public function testGetTreatmentQueuesExposureWithAudienceMismatchTrueAndControlVariantOnAudienceMismatchInStrictMode(): void {
+		$context = $this->createReadyContext('audience_strict_context.json');
+
+		self::assertSame(0, $context->getTreatment('exp_test_ab'));
+		self::assertSame(1, $context->getPendingCount());
+	}
 
 
-	// TODO:  setCustomAssignmentsBeforeReady
+	public function testGetTreatmentCallsEventLogger(): void {
+		$logger = new MockContextEventLoggerProxy();
+		$context = $this->createReadyContext('context.json', true, $logger);
+
+		$logger->clear();
+
+		$context->getTreatment('exp_test_ab');
+		$context->getTreatment('not_found');
+
+		self::assertSame(2, $logger->called);
+
+		self::assertSame('exp_test_ab', $logger->events[0]->getData()->name);
+		self::assertSame('not_found', $logger->events[1]->getData()->name);
+
+		// verify not called again with the same exposure
+		$context->getTreatment('exp_test_ab');
+		$context->getTreatment('not_found');
+
+		self::assertSame(2, $logger->called);
+	}
 
 
+	public function testTrack(): void {
+		$context = $this->createReadyContext();
+
+		$context->track('goal1', (object) ['amount' => 125, 'hours' => 245]);
+		$context->track('goal2', (object) ['tries' => 7]);
+
+		self::assertSame(2, $context->getPendingCount());
+
+		$context->track('goal2', (object) ['tests' => 12]);
+		$context->track('goal3');
+
+		self::assertSame(4, $context->getPendingCount());
+
+		$context->publish();
+
+		$publishEvent = $this->eventHandler->submitted[0];
+		self::assertSame('e791e240fcd3df7d238cfc285f475e8152fcc0ec', $publishEvent->units->session_id);
+		self::assertSame('goal1', $publishEvent->goals[0]->name);
+		self::assertSame('goal2', $publishEvent->goals[1]->name);
+		self::assertSame('goal2', $publishEvent->goals[2]->name);
+		self::assertSame('goal3', $publishEvent->goals[3]->name);
+
+		self::assertSame(12, $publishEvent->goals[2]->properties->tests);
+		self::assertNull($publishEvent->goals[3]->properties);
+	}
+
+	public function testTrackCallsEventLogger(): void {
+		$logger = new MockContextEventLoggerProxy();
+		$context = $this->createReadyContext('context.json', true, $logger);
+
+		$logger->clear();
+
+		$context->track('goal1', (object) ['amount' => 125, 'hours' => 245]);
+		$context->track('goal2', (object) ['tries' => 7]);
+
+		self::assertSame(2, $logger->called);
+
+		self::assertSame(ContextEventLoggerEvent::Goal, $logger->events[0]->getEvent());
+		self::assertSame(ContextEventLoggerEvent::Goal, $logger->events[1]->getEvent());
+
+		self::assertInstanceOf(GoalAchievement::class, $logger->events[0]->getData());
+		self::assertInstanceOf(GoalAchievement::class, $logger->events[1]->getData());
+
+		self::assertSame('goal1', $logger->events[0]->getData()->name);
+		self::assertSame(7, $logger->events[1]->getData()->properties->tries);
+	}
+
+	public function testPublishDoesNotCallEventHandlerWhenQueueIsEmpty(): void {
+		$logger = new MockContextEventLoggerProxy();
+		$context = $this->createReadyContext('context.json', true, $logger);
+
+		$logger->clear();
+
+		$context->publish();
+		self::assertEmpty($logger->events);
+	}
+
+	public function testPublishCallsEventLogger(): void {
+		$logger = new MockContextEventLoggerProxy();
+		$context = $this->createReadyContext('context.json', true, $logger);
+
+		$context->track('goal1', (object) ['amount' => 125, 'hours' => 245]);
+		$logger->clear();
+
+		$context->publish();
+		self::assertSame(ContextEventLoggerEvent::Publish, $logger->events[0]->getEvent());
+	}
+
+	public function testPublishCallsEventLoggerOnError(): void {
+		$logger = new MockContextEventLoggerProxy();
+		$context = $this->createReadyContext('context.json', true, $logger);
+		$this->eventHandler->prerun = static function() {
+			throw new \RuntimeException('Trigger failure');
+		};
+
+		$context->track('goal_failure');
+
+		$logger->clear();
+
+		$context->publish();
+
+		self::assertSame(ContextEventLoggerEvent::Error, $logger->events[0]->getEvent());
+	}
+
+	public function testPublishResetsInternalQueuesAndKeepsAttributesOverridesAndCustomAssignments(): void {
+		$context = $this->createReadyContext();
+
+		$context->setAttributes(
+			[
+				'attr1' => 'value1',
+				'attr2' => 2,
+			]
+		);
+		$context->setOverride('not_found', 3);
+		$context->setCustomAssignment('exp_test_abc', 3);
+
+		self::assertSame(0, $context->getPendingCount());
+
+		self::assertSame(1, $context->getTreatment('exp_test_ab'));
+		self::assertSame(3, $context->getTreatment('exp_test_abc'));
+		self::assertSame(3, $context->getTreatment('not_found'));
+
+		$context->track('goal1', (object) ["amount" => 125, "hours" => 245]);
+
+		self::assertSame(4, $context->getPendingCount());
+
+		$context->publish();
+
+		$event = $this->eventHandler->submitted[0];
+
+		self::assertSame('2', $event->attributes->attr2);
+		self::assertSame(245, $event->goals[0]->properties->hours);
+		self::assertSame('not_found', $event->exposures[2]->name);
+
+		self::assertSame(0, $context->getPendingCount());
+
+		self::assertSame(1, $context->getTreatment('exp_test_ab'));
+		self::assertSame(3, $context->getTreatment('exp_test_abc'));
+		self::assertSame(3, $context->getTreatment('not_found'));
+
+		$context->track('goal1', (object) ["amount" => 125, "hours" => 245]);
+
+		self::assertSame(1, $context->getPendingCount());
+
+		$context->publish();
+
+		$event = $this->eventHandler->submitted[1];
+		self::assertSame('2', $event->attributes->attr2);
+		self::assertSame(245, $event->goals[0]->properties->hours);
+		self::assertSame('not_found', $event->exposures[2]->name);
+
+		self::assertSame(0, $context->getPendingCount());
+
+	}
+
+	public function testPublishDoesNotCallEventHandlerWhenFailed(): void {
+		$clientConfig = new ClientConfig('https://demo.absmartly.io/v1', '', '', '');
+		$client = new Client($clientConfig);
+		$config = new Config($client);
+
+		$eventHandler = new ContextEventHandlerMock($client);
+
+		$dataProvider = new ContextDataProviderMock($client);
+		$dataProvider->prerun = static function() {
+			throw new \RuntimeException('Trigger failure');
+		};
+		$config->setContextDataProvider($dataProvider);
+
+		$eventLogger = new MockContextEventLoggerProxy();
+
+		$contextConfig = new ContextConfig();
+		$contextConfig->setEventLogger($eventLogger);
+		$contextConfig->setEventHandler($eventHandler);
+		$context =  (new SDK($config))->createContext($contextConfig);
+
+		self::assertTrue($context->isReady());
+		self::assertTrue($context->isFailed());
+		self::assertSame(0, $context->getPendingCount());
+
+		$context->getTreatment('exp_test_abc');
+		$context->track('goal1', (object) ["amount" => 125, "hours" => 245]);
+
+		self::assertSame(2, $context->getPendingCount());
+
+		$context->publish();
+
+		self::assertEmpty($eventHandler->submitted);
+	}
+
+	public function testClose(): void {
+		$context = $this->createReadyContext();
+		$context->track('goal1', (object) ["amount" => 125, "hours" => 245]);
+
+		self::assertSame(1, $context->getPendingCount());
+
+		$context->close();
+
+		self::assertTrue($context->isClosed());
+	}
+
+	public function testCloseCallsEventLogger(): void {
+		$logger = new MockContextEventLoggerProxy();
+		$context = $this->createReadyContext('context.json', true, $logger);
+		$context->track('goal1', (object) ["amount" => 125, "hours" => 245]);
+		$context->publish();
+		$logger->clear();
+		$context->close();
+
+		self::assertSame(ContextEventLoggerEvent::Close, $logger->events[0]->getEvent());
+	}
+
+	public function testCloseCallsEventLoggerWithPendingEvents(): void {
+		$logger = new MockContextEventLoggerProxy();
+		$context = $this->createReadyContext('context.json', true, $logger);
+		$context->track('goal1', (object) ["amount" => 125, "hours" => 245]);
+		$context->close();
+
+		self::assertSame(ContextEventLoggerEvent::Ready, $logger->events[0]->getEvent());
+		self::assertSame(ContextEventLoggerEvent::Goal, $logger->events[1]->getEvent());
+		self::assertSame(ContextEventLoggerEvent::Publish, $logger->events[2]->getEvent());
+		self::assertSame(ContextEventLoggerEvent::Close, $logger->events[3]->getEvent());
+	}
+
+	public function testCloseCallsEventLoggerOnError(): void {
+		$logger = new MockContextEventLoggerProxy();
+		$context = $this->createReadyContext('context.json', true, $logger);
+		$this->eventHandler->prerun = static function() {
+			throw new \RuntimeException('Trigger failure');
+		};
+
+		$context->track('goal_failure');
+
+		$logger->clear();
+
+		$context->close();
+		self::assertSame(ContextEventLoggerEvent::Error, $logger->events[0]->getEvent());
+	}
+
+	public function testRefresh(): void {
+		$context = $this->createReadyContext();
+		self::assertTrue($context->isReady());
+
+		$refreshedData = $this->getContextData('refreshed.json');
+
+		$context->refresh();
+
+		$experiments = [];
+		foreach ($refreshedData->experiments as $experiment) {
+			$experiments[] = $experiment->name;
+		}
+
+		self::assertSame($experiments, $context->getExperiments());
+	}
+
+	public function testRefreshCallsEventLogger(): void {
+		$logger = new MockContextEventLoggerProxy();
+		$context = $this->createReadyContext('context.json', true, $logger);
+		$context->track('goal1', (object) ["amount" => 125, "hours" => 245]);
+		$context->refresh();
+		$context->close();
+
+		self::assertSame(ContextEventLoggerEvent::Ready, $logger->events[0]->getEvent());
+		self::assertSame(ContextEventLoggerEvent::Goal, $logger->events[1]->getEvent());
+		self::assertSame(ContextEventLoggerEvent::Refresh, $logger->events[2]->getEvent());
+		self::assertSame(ContextEventLoggerEvent::Publish, $logger->events[3]->getEvent());
+		self::assertSame(ContextEventLoggerEvent::Close, $logger->events[4]->getEvent());
+	}
+
+	public function testRefreshCallsEventLoggerOnError(): void {
+		$clientConfig = new ClientConfig('', '', '', '');
+		$client = new Client($clientConfig);
+		$config = new Config($client);
+
+		$eventHandler = new ContextEventHandlerMock($client);
+		$dataProvider = new ContextDataProviderMock($client);
+		$config->setContextDataProvider($dataProvider);
+
+		$eventLogger = new MockContextEventLoggerProxy();
+
+		$contextConfig = new ContextConfig();
+		$contextConfig->setEventLogger($eventLogger);
+		$contextConfig->setEventHandler($eventHandler);
+		$context =  (new SDK($config))->createContext($contextConfig);
+
+		self::assertTrue($context->isReady());
+		self::assertFalse($context->isFailed());
+		self::assertSame(0, $context->getPendingCount());
+
+		$dataProvider->prerun = static function() {
+			throw new \RuntimeException('Trigger failure');
+		};
+
+		$eventLogger->clear();
+
+		$context->refresh();
+
+		self::assertSame(ContextEventLoggerEvent::Error, $eventLogger->events[0]->getEvent());
+	}
+
+	public function testRefreshKeepsAssignmentCacheWhenNotChanged(): void {
+		$context = $this->createReadyContext();
+		self::assertTrue($context->isReady());
+
+		$oldContext = $context->getContextData();
+
+		foreach($context->getContextData()->experiments as $experiment) {
+			$context->getTreatment($experiment->name);
+		}
+
+		$context->getTreatment('not_found');
+
+		self::assertSame(count($context->getContextData()->experiments) + 1, $context->getPendingCount());
+
+		$refreshedData = $this->getContextData('refreshed.json');
+		$context->refresh();
+
+		$experiments = [];
+		foreach ($refreshedData->experiments as $experiment) {
+			$experiments[] = $experiment->name;
+		}
+
+		self::assertSame($experiments, $context->getExperiments());
+
+		foreach ($oldContext->experiments as $experiment) {
+			$context->getTreatment($experiment->name);
+		}
+		$context->getTreatment('not_found');
+
+		self::assertSame(count($oldContext->experiments) + 1, $context->getPendingCount());
+	}
+
+	public function testRefreshKeepsAssignmentCacheWhenNotChangedOnAudienceMismatch(): void {
+		$context = $this->createReadyContext('audience_strict_context.json');
+		self::assertTrue($context->isReady());
+
+		self::assertSame(0, $context->getTreatment('exp_test_ab'));
+		self::assertSame(1, $context->getPendingCount());
+
+		$context->refresh();
+
+		self::assertSame(0, $context->getTreatment('exp_test_ab'));
+		self::assertSame(1, $context->getPendingCount());
+	}
+
+	public function testRefreshKeepsAssignmentCacheWhenNotChangedWithOverride(): void {
+		$context = $this->createReadyContext('audience_strict_context.json');
+		self::assertTrue($context->isReady());
+
+		$context->setOverride('exp_test_ab', 3);
+		self::assertSame(3, $context->getTreatment('exp_test_ab'));
+		self::assertSame(1, $context->getPendingCount());
+
+		$context->refresh();
+
+		self::assertSame(3, $context->getTreatment('exp_test_ab'));
+		self::assertSame(1, $context->getPendingCount());
+	}
+
+
+	public function testRefreshClearsAssignmentCacheForStoppedExperiment(): void {
+		$context = $this->createReadyContext();
+		self::assertTrue($context->isReady());
+
+		$experimentName = "exp_test_abc";
+
+		self::assertSame(2, $context->getTreatment($experimentName));
+		self::assertSame(0, $context->getTreatment('not_found'));
+		self::assertSame(2, $context->getPendingCount());
+
+		$data = $this->getContextData('refreshed_no_exp_test_abc.json');
+		$context->refresh();
+
+		$experiments = [];
+		foreach ($data->experiments as $experiment) {
+			$experiments[] = $experiment->name;
+		}
+		self::assertSame($experiments, $context->getExperiments());
+
+		self::assertSame(0, $context->getTreatment($experimentName));
+		self::assertSame(0, $context->getTreatment('not_found'));
+
+		self::assertSame(3, $context->getPendingCount());
+	}
+
+	public function testRefreshClearsAssignmentCacheForStartedExperiment(): void {
+		$context = $this->createReadyContext();
+		self::assertTrue($context->isReady());
+
+		$experimentName = "exp_test_new";
+
+		self::assertSame(0, $context->getTreatment($experimentName));
+		self::assertSame(0, $context->getTreatment('not_found'));
+		self::assertSame(2, $context->getPendingCount());
+
+		$data = $this->getContextData('refreshed.json');
+		$context->refresh();
+
+		$experiments = [];
+		foreach ($data->experiments as $experiment) {
+			$experiments[] = $experiment->name;
+		}
+		self::assertSame($experiments, $context->getExperiments());
+
+		self::assertSame(1, $context->getTreatment($experimentName));
+		self::assertSame(0, $context->getTreatment('not_found'));
+
+		self::assertSame(3, $context->getPendingCount());
+	}
+
+	public function testRefreshClearsAssignmentCacheForFullOnExperiment(): void {
+		$context = $this->createReadyContext();
+		self::assertTrue($context->isReady());
+
+		$experimentName = "exp_test_abc";
+
+		self::assertSame(2, $context->getTreatment($experimentName));
+		self::assertSame(0, $context->getTreatment('not_found'));
+		self::assertSame(2, $context->getPendingCount());
+
+		$data = $this->getContextData('refreshed_full_on.json');
+		$context->refresh();
+
+		$experiments = [];
+		foreach ($data->experiments as $experiment) {
+			$experiments[] = $experiment->name;
+		}
+		self::assertSame($experiments, $context->getExperiments());
+
+		self::assertSame(1, $context->getTreatment($experimentName));
+		self::assertSame(0, $context->getTreatment('not_found'));
+
+		self::assertSame(3, $context->getPendingCount());
+	}
+
+	public function testRefreshClearsAssignmentCacheForTrafficSplitChange(): void {
+		$context = $this->createReadyContext();
+		self::assertTrue($context->isReady());
+
+		$experimentName = "exp_test_not_eligible";
+
+		self::assertSame(0, $context->getTreatment($experimentName));
+		self::assertSame(0, $context->getTreatment('not_found'));
+		self::assertSame(2, $context->getPendingCount());
+
+		$data = $this->getContextData('refreshed_traffic_split.json');
+		$context->refresh();
+
+		$experiments = [];
+		foreach ($data->experiments as $experiment) {
+			$experiments[] = $experiment->name;
+		}
+		self::assertSame($experiments, $context->getExperiments());
+
+		self::assertSame(2, $context->getTreatment($experimentName));
+		self::assertSame(0, $context->getTreatment('not_found'));
+
+		self::assertSame(3, $context->getPendingCount());
+	}
+
+	public function testRefreshClearsAssignmentCacheForExperimentIdChange(): void {
+		$context = $this->createReadyContext();
+		self::assertTrue($context->isReady());
+
+		$experimentName = "exp_test_abc";
+
+		self::assertSame(2, $context->getTreatment($experimentName));
+		self::assertSame(0, $context->getTreatment('not_found'));
+		self::assertSame(2, $context->getPendingCount());
+
+		$this->getContextData('refreshed_id.json');
+		$context->refresh();
+
+
+		self::assertSame(2, $context->getTreatment($experimentName));
+		self::assertSame(0, $context->getTreatment('not_found'));
+
+		self::assertSame(3, $context->getPendingCount());
+	}
 }

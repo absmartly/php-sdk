@@ -77,16 +77,6 @@ class ContextConfigTest extends TestCase {
 
 		self::assertEquals((object) ['x' => 1, 'y' => 7], $contextConfig->getAttribute('x'));
 		self::assertEquals((object) ['x' => 1, 'y' => 8], $contextConfig->getAttribute('y'));
-
-		$this->expectException(\InvalidArgumentException::class);
-		$this->expectExceptionMessage('Attribute set value with key "x" must be of type object, array passed');
-
-		$contextConfig->setAttributes(
-			[
-				'x' => [],
-			],
-		);
-
 	}
 
 

@@ -19,15 +19,13 @@ class Client {
 	private array $query;
 	private array $headers;
 
-	private $serializer;
-	private $deserializer;
-	private $executor;
-
 	public function __construct(ClientConfig $clientConfig, ?HTTPClient $HTTPClient = null) {
 		if (!$HTTPClient) {
 			$HTTPClient = new HTTPClient();
 		}
 		$this->httpClient = $HTTPClient;
+		$this->httpClient->timeout = $clientConfig->getTimeout();
+		$this->httpClient->retries = $clientConfig->getRetries();
 
 		$this->url = rtrim($clientConfig->getEndpoint(), '/') .'/context';
 		$this->query = [
@@ -47,7 +45,7 @@ class Client {
 
 
 	private function authRequest(): void {
-		// Todo: attach API credentials.
+
 	}
 
 	public function getContextData(): ContextData {

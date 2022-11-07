@@ -2,6 +2,7 @@
 declare(strict_types=1);
 namespace Absmartly\SDK\JsonExpression;
 
+use Absmartly\SDK\Exception\InvalidArgumentException;
 use Absmartly\SDK\JsonExpression\Operator\OperatorCollection;
 use Absmartly\SDK\JsonExpression\Operator\OperatorInterface;
 
@@ -60,7 +61,7 @@ class Evaluator {
 
 		// Safeguard against potential DoS vector on too deeply nested accessors.
 		if (count($accessors) >= 100) {
-			throw new \InvalidArgumentException('Too deeply nested value extraction clause.');
+			throw new InvalidArgumentException('Too deeply nested value extraction clause.');
 		}
 
 		// If values is empty, there is no reason point traversing.
@@ -119,7 +120,7 @@ class Evaluator {
 			return null;
 		}
 
-		return floatval($value);
+		return (float) $value;
 	}
 
 	/**
@@ -218,14 +219,14 @@ class Evaluator {
 		switch (gettype($a)) {
 			case 'boolean':
 			case 'string':
-				return $a === $b;
+				return $a === $b; // Always false
 			case 'integer':
 			case 'double':
 				if (is_nan($a) || is_nan($b)) {
 					return false;
 				}
 
-				return $a === $b;
+				return $a === $b; // Always false.
 			case 'array':
 				if (count($a) !== count($b)) {
 					return false;

@@ -7,8 +7,13 @@ use Absmartly\SDK\Context\ContextDataProvider;
 
 class ContextDataProviderMock extends ContextDataProvider {
 	private string $source = 'context.json';
+	public $prerun = null;
 
 	public function getContextData(): ContextData {
+		if (is_callable($this->prerun)) {
+			($this->prerun)();
+		}
+
 		$data = json_decode(
 			file_get_contents(__DIR__.'/../Fixtures/json/'. $this->source),
 			false,

@@ -2,6 +2,8 @@
 
 namespace Absmartly\SDK\Exception;
 
-class TimeoutException extends \RuntimeException implements AbsmartlyException {
+use RuntimeException;
+
+class TimeoutException extends RuntimeException implements AbsmartlyException {
 
 }

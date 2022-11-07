@@ -32,24 +32,22 @@
                     "name":"B",
                     "config":"{\"banner.border\":1,\"banner.size\":\"large\"}"
                 }
-            ],
-            "audienceStrict": true,
-            "audience": "{\"filter\":[{\"gte\":[{\"var\":\"age\"},{\"value\":20}]}]}"
+            ]
         },
         {
-            "id":2,
+            "id":11,
             "name":"exp_test_abc",
             "iteration":1,
             "unitType":"session_id",
-            "seedHi":55006150,
-            "seedLo":47189152,
+            "seedHi":77498863,
+            "seedLo":34737352,
             "split":[
                 0.34,
                 0.33,
                 0.33
             ],
-            "trafficSeedHi":705671872,
-            "trafficSeedLo":212903484,
+            "trafficSeedHi":54870830,
+            "trafficSeedLo":398724581,
             "trafficSplit":[
                 0.0,
                 1.0
@@ -73,8 +71,7 @@
                     "name":"C",
                     "config":"{\"button.color\":\"red\"}"
                 }
-            ],
-            "audience": ""
+            ]
         },
         {
             "id":3,
@@ -113,8 +110,7 @@
                     "name":"C",
                     "config":"{\"card.width\":\"75%\"}"
                 }
-            ],
-            "audience": "{}"
+            ]
         },
         {
             "id":4,
@@ -158,8 +154,41 @@
                     "name":"D",
                     "config":"{\"submit.color\":\"green\",\"submit.shape\":\"square\"}"
                 }
+            ]
+        },
+        {
+            "id":5,
+            "name":"exp_test_new",
+            "iteration":2,
+            "unitType":"session_id",
+            "seedHi":934590467,
+            "seedLo":714771373,
+            "split":[
+                0.5,
+                0.5
             ],
-            "audience": "null"
+            "trafficSeedHi":940553836,
+            "trafficSeedLo":270705624,
+            "trafficSplit":[
+                0.0,
+                1.0
+            ],
+            "fullOnVariant":1,
+            "applications":[
+                {
+                    "name":"website"
+                }
+            ],
+            "variants":[
+                {
+                    "name":"A",
+                    "config":null
+                },
+                {
+                    "name":"B",
+                    "config":"{\"show-modal\":true}"
+                }
+            ]
         }
     ]
 }

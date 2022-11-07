@@ -6,7 +6,6 @@ use InvalidArgumentException;
 
 use function gettype;
 use function is_int;
-use function is_object;
 use function is_scalar;
 use function sprintf;
 
@@ -18,8 +17,9 @@ class ContextConfig {
 
 	private int $publishDelay = 100;
 	private int $refreshInterval = 0;
-	private ContextEventLogger $eventLogger;
 
+	private ContextEventLogger $eventLogger;
+	private ContextEventHandler $eventHandler;
 
 	public function setPublishDelay(int $publishDelay): ContextConfig {
 		$this->publishDelay = $publishDelay;
@@ -47,6 +47,11 @@ class ContextConfig {
 
 	public function setEventLogger(ContextEventLogger $eventLogger): ContextConfig {
 		$this->eventLogger = $eventLogger;
+		return $this;
+	}
+
+	public function setEventHandler(ContextEventHandler $eventHandler): ContextConfig {
+		$this->eventHandler = $eventHandler;
 		return $this;
 	}
 
@@ -82,20 +87,14 @@ class ContextConfig {
 		return $this->units;
 	}
 
-	public function setAttribute(string $name, object $value): ContextConfig {
+	public function setAttribute(string $name, $value): ContextConfig {
 		$this->attributes[$name] = $value;
 		return $this;
 	}
 
 	public function setAttributes(array $attributes): ContextConfig {
-		// See note in ContextConfig::setUnits
 		foreach ($attributes as $key => $value) {
-			if (!is_object($value)) {
-				throw new InvalidArgumentException(
-					sprintf('Attribute set value with key "%s" must be of type object, %s passed', $key, gettype($value)));
-			}
-
-			$this->attributes[$key] = $value;
+			$this->setAttribute($key, $value);
 		}
 
 		return $this;

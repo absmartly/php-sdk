@@ -22,6 +22,7 @@ use const CURL_SSLVERSION_TLSv1_2;
 use const CURLE_HTTP_RETURNED_ERROR;
 use const CURLINFO_EFFECTIVE_URL;
 use const CURLINFO_HTTP_CODE;
+use const CURLOPT_CONNECTTIMEOUT_MS;
 use const CURLOPT_CUSTOMREQUEST;
 use const CURLOPT_FAILONERROR;
 use const CURLOPT_HTTPHEADER;
@@ -33,7 +34,6 @@ use const CURLOPT_RETURNTRANSFER;
 use const CURLOPT_SSL_VERIFYHOST;
 use const CURLOPT_SSL_VERIFYPEER;
 use const CURLOPT_SSLVERSION;
-use const CURLOPT_TIMEOUT;
 use const CURLOPT_URL;
 use const CURLPROTO_HTTPS;
 
@@ -42,8 +42,10 @@ class HTTPClient {
 	 * @var CurlHandle|resource
 	 */
 	private $curlHandle;
+	public int $retries = 5;
+	public int $timeout = 3000;
 
-	protected function setupRequest(string $url, array $query = [], array $headers = [], string $type = 'GET', string $data = null): void {
+	private function setupRequest(string $url, array $query = [], array $headers = [], string $type = 'GET', string $data = null): void {
 		$this->curlInit();
 		$flatHeaders = [];
 		foreach ($headers as $header => $value) {
@@ -94,7 +96,7 @@ class HTTPClient {
 		return $this->fetchResponse();
 	}
 
-	protected function throwOnError(): void {
+	private function throwOnError(): void {
 		if ($error = curl_errno($this->curlHandle)) {
 			if ($error === CURLE_HTTP_RETURNED_ERROR) {
 				throw new HttpClientError(
@@ -108,7 +110,7 @@ class HTTPClient {
 		}
 	}
 
-	public function curlInit(): void {
+	private function curlInit(): void {
 		if (isset($this->curlHandle)) {
 			return;
 		}
@@ -120,7 +122,7 @@ class HTTPClient {
 			CURLOPT_PROTOCOLS => CURLPROTO_HTTPS, // Always use HTTPS, never HTTP
 			CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTPS,
 			CURLOPT_MAXREDIRS => 3,
-			CURLOPT_TIMEOUT => 10,
+			CURLOPT_CONNECTTIMEOUT_MS => $this->timeout,
 			CURLOPT_SSL_VERIFYHOST => 2,
 			CURLOPT_SSL_VERIFYPEER => true,
 			CURLOPT_SSLVERSION => CURL_SSLVERSION_TLSv1_2,

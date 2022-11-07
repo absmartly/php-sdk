@@ -4,94 +4,83 @@ namespace Absmartly\SDK\Context;
 
 use Absmartly\SDK\Assignment;
 use Absmartly\SDK\AudienceMatcher;
+use Absmartly\SDK\Exception\InvalidArgumentException;
+use Absmartly\SDK\Exception\LogicException;
 use Absmartly\SDK\Experiment;
 use Absmartly\SDK\ExperimentVariables;
 use Absmartly\SDK\Exposure;
+use Absmartly\SDK\GoalAchievement;
+use Absmartly\SDK\PublishEvent;
 use Absmartly\SDK\SDK;
 use Absmartly\SDK\VariableParser;
 use Absmartly\SDK\VariantAssigner;
-use InvalidArgumentException;
 
-use function array_keys;
+use Exception;
+use Throwable;
+
 use function base64_encode;
 use function count;
 use function get_object_vars;
 use function gettype;
 use function hash;
 use function is_int;
-use function is_scalar;
+use function microtime;
 use function sprintf;
 use function trim;
 
 class Context {
 
-	protected SDK $sdk;
+	private SDK $sdk;
 
-	protected int $timestamp;
-	private int $publishDelay = 100;
-	private int $refreshInterval = 0;
+	private ContextEventHandler $eventHandler;
+	private ContextEventLogger $eventLogger;
+	private ContextDataProvider $dataProvider;
+	private VariableParser $variableParser;
+	private AudienceMatcher $audienceMatcher;
 
-	protected ContextEventHandler $eventHandler;
-	protected ContextEventLogger $eventLogger;
-	protected ContextDataProvider $dataProvider;
-	protected VariableParser $variableParser;
-	protected AudienceMatcher $audienceMatcher;
-	protected ScheduledExecutorService $scheduler;
+	private array $units = [];
+	private bool $failed = false;
 
-	protected array $units = [];
-	protected bool $failed;
+	private ?ContextData $data;
 
-	protected ContextData $data;
-
-	protected array $index;
-	protected array $indexVariables;
+	private array $index;
+	private array $indexVariables;
 
 
-	protected array $hashedUnits;
-	protected array $assigners = [];
-	protected array $assignmentCache;
+	private array $hashedUnits;
+	private array $assigners = [];
+	private array $assignmentCache;
 
-	protected array $exposures = [];
-	protected array $achivements;
+	private array $exposures = [];
+	private array $achievements = [];
 
-	protected array $attributes = [];
-	protected array $overrides = [];
-	protected array $cassignments = [];
+	private array $attributes = [];
+	private array $overrides = [];
+	private array $cassignments = [];
 
+	private int $pendingCount = 0;
+	private bool $closed = false;
+	private bool $ready;
 
+	public function isReady(): bool {
+		return $this->ready;
+	}
 
-	protected int $pendingCount = 0;
-	protected bool $closing = false;
-	protected bool $closed = false;
-	protected bool $refreshing = false;
-
-//	private volatile CompletableFuture<Void> readyFuture_;
-//	private volatile CompletableFuture<Void> closingFuture_;
-//	private volatile CompletableFuture<Void> refreshFuture_;
-
-	protected ReentrantLock $timeoutLock;
-	protected ?ScheduledFuture $timeout = null;
-	protected ?ScheduledFuture $refreshTimer = null;
-
-
-
-
-
-
-
-
-	public function isReady(): bool {}
 	public function isFailed(): bool {
 		return $this->failed;
 	}
-	public function isClosed(): bool {}
-	public function isClosing(): bool {}
 
+	public function isClosed(): bool {
+		return $this->closed;
+	}
 
+	protected function getTime(): int {
+		return (int) microtime(true) * 1000;
+	}
 
-	public function __construct(SDK $sdk, ContextConfig $contextConfig, ContextData $data) {
+	private function __construct(SDK $sdk, ContextConfig $contextConfig, ContextDataProvider $dataProvider, ?ContextData $contextData = null) {
 		$this->sdk = $sdk;
-		$this->data = $data;
+		$this->dataProvider = $dataProvider;
 		$this->setUnits($contextConfig->getUnits());
 		$this->setOverrides($contextConfig->getOverrides());
 		$this->setCustomAssignments($contextConfig->getCustomAssignments());
@@ -103,14 +92,35 @@ class Context {
 		$this->audienceMatcher = new AudienceMatcher();
 		$this->variableParser = new VariableParser();
 
-		$this->setData($data);
+		try {
+			$this->ready = true;
+			if (!$contextData) {
+				$data = $this->data = $this->dataProvider->getContextData();
+			}
+			else {
+				$data = $this->data = $contextData;
+			}
+
+			$this->setData($data);
+			$this->logEvent(ContextEventLoggerEvent::Ready, $data);
+		}
+		catch (Exception $exception) {
+			$this->setDataFailed();
+			$this->logError($exception);
+		}
 	}
 
-	public function setEventLogger(ContextEventLogger $eventLogger): Context {
+	private function setEventLogger(ContextEventLogger $eventLogger): Context {
 		$this->eventLogger = $eventLogger;
+		return $this;
 	}
 
-	public function setData(ContextData $data): void {
+	private function setEventHandler(ContextEventHandler $eventHandler): Context {
+		$this->eventHandler = $eventHandler;
+		return $this;
+	}
+
+	private function setData(ContextData $data): void {
 		$this->data = $data;
 		$this->index = [];
 		$this->indexVariables = [];
@@ -142,12 +152,30 @@ class Context {
 		}
 	}
 
-	public static function createFromContextConfig(SDK $sdk, ContextConfig $contextConfig, ContextData $data): Context {
-		return new Context($sdk, $contextConfig, $data);
+	private function setDataFailed(): void {
+		$this->indexVariables = [];
+		$this->index = [];
+		$this->data = null;
+		$this->failed = true;
 	}
 
-	public function checkReady(): void {
+	public static function createFromContextConfig(SDK $sdk, ContextConfig $contextConfig, ContextDataProvider $dataProvider, ContextEventHandler $handler, ?ContextData $contextData = null): Context {
+		$context = new Context($sdk, $contextConfig, $dataProvider, $contextData);
+		$context->setEventHandler($handler);
 
+		if ($logger = $contextConfig->getEventLogger()) {
+			$context->setEventLogger($logger);
+		}
+
+		return $context;
+	}
+
+	private function checkReady(): void {
+		if (!$this->isReady()) {
+			throw new LogicException('ABSmartly Context is not yet ready');
+		}
+
+		$this->checkNotClosed();
 	}
 
 	public function getExperiment(string $experimentName): ?ExperimentVariables {
@@ -155,10 +183,15 @@ class Context {
 	}
 
 	public function getExperiments(): array {
+		$return = [];
+
 		if (!empty($this->data->experiments)) {
-			return array_keys($this->data->experiments);
+			foreach ($this->data->experiments as $experiment) {
+				$return[] = $experiment->name;
+			}
 		}
-		return [];
+
+		return $return;
 	}
 
 	private function experimentMatches(Experiment $experiment, Assignment $assignment): bool {
@@ -169,7 +202,7 @@ class Context {
 			$experiment->trafficSplit === $assignment->trafficSplit;
 	}
 
-	protected function getAssignment(string $experimentName): Assignment {
+	private function getAssignment(string $experimentName): Assignment {
 		$experiment = $this->getExperiment($experimentName);
 
 		if (isset($this->assignmentCache[$experimentName])) {
@@ -220,20 +253,18 @@ class Context {
 				$assignment->audienceMismatch = !$result;
 			}
 
-
 			if (isset($experiment->data->audienceStrict) && !empty($assignment->audienceMismatch)) {
 				$assignment->variant = 0;
 			}
 			else if (empty($experiment->data->fullOnVariant) && $uid = $this->units[$experiment->data->unitType] ?? null) {
-				$unitHash = $this->getUnitHash($unitType, $uid);
-				$assigner = $this->getVariantAssigner($unitType, $unitHash);
+				//$unitHash = $this->getUnitHash($unitType, $uid);
+				$assigner = $this->getVariantAssigner($unitType, $uid);
 
 				$eligible = $assigner->assign(
 					$experiment->data->trafficSplit,
 					$experiment->data->seedHi,
 					$experiment->data->seedLo
 				);
-
 				if ($eligible === 1) {
 					$custom = $this->cassignments[$experimentName] ?? null;
 					if ($custom !== null) {
@@ -252,6 +283,8 @@ class Context {
 					$assignment->eligible = false;
 					$assignment->variant = 0;
 				}
+
+				$assignment->assigned = true;
 			}
 			else {
 				$assignment->assigned = true;
@@ -273,7 +306,7 @@ class Context {
 		return $assignment;
 	}
 
-	public function getVariableValue(string $key, $defaultValue) {
+	public function getVariableValue(string $key, $defaultValue = null) {
 		$this->checkReady();
 		$assignment = $this->getVariableAssignment($key);
 
@@ -302,150 +335,13 @@ class Context {
 		return $this;
 	}
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+	public function setAttributes(array $attributes): Context {
+		foreach ($attributes as $key => $value) {
+			$this->setAttribute($key, $value);
+		}
+
+		return $this;
+	}
 
 	private function getUnitHash(string $unitType, string $unitUID): string {
 		if (isset($this->hashedUnits[$unitType])) {
@@ -462,17 +358,12 @@ class Context {
 		return $this->hashedUnits[$unitType];
 	}
 
-	public function getVariantAssigner(string $unitType, string $unitHash): VariantAssigner {
-		if (isset($this->assigners[$unitType])) {
-			return $this->assigners[$unitType];
-		}
-
-		return $this->assigners[$unitType] = new VariantAssigner($unitHash);
+	private function getVariantAssigner(string $unitType, string $unitHash): VariantAssigner {
+		return $this->assigners[$unitType] ?? ($this->assigners[$unitType] = new VariantAssigner($unitHash));
 	}
 
-
 	public function getTreatment(string $experimentName): int {
-		$this->checkReady(true);
+		$this->checkReady();
 		$assignment = $this->getAssignment($experimentName);
 		if (empty($assignment->exposed)) {
 			$this->queueExposure($assignment);
@@ -481,7 +372,7 @@ class Context {
 		return $assignment->variant;
 	}
 
-	protected function queueExposure(Assignment $assignment): void {
+	private function queueExposure(Assignment $assignment): void {
 		if (!empty($assignment->exposed)) {
 			return;
 		}
@@ -490,13 +381,26 @@ class Context {
 		$assignment->exposed = true;
 		$exposure->ingestAssignment($assignment);
 
+		$this->exposures[] = $exposure;
 		++$this->pendingCount;
 
-		$this->logEvent(ContextEventLogger::EVENT_EXPOSURE, $exposure);
+		$this->logEvent(ContextEventLoggerEvent::Exposure, $exposure);
 	}
 
-	protected function logEvent(string $event, object $data): void {
+	private function logEvent(string $event, ?object $data): void {
+		if (!isset($this->eventLogger)) {
+			return;
+		}
 
+		$this->eventLogger->handleEvent($this, new ContextEventLoggerEvent($event, $data));
+	}
+
+	private function logError(Throwable $throwable): void {
+		if (!isset($this->eventLogger)) {
+			return;
+		}
+
+		$this->eventLogger->handleEvent($this, new ContextEventLoggerEvent(ContextEventLoggerEvent::Error, $throwable));
 	}
 
 
@@ -522,12 +426,12 @@ class Context {
 		return $this->indexVariables[$experimentName] ?? null;
 	}
 
-	public function getData(): ContextData {
+	public function getContextData(): ContextData {
 		return $this->data;
 	}
 
 	public function peekTreatment(string $experimentName): int {
-		$this->checkReady(true);
+		$this->checkReady();
 		return $this->getAssignment($experimentName)->variant;
 	}
 
@@ -536,7 +440,7 @@ class Context {
 		// It could have been possible to simply array_merge here, but we need
 		// to verify strict-types, hence the foreach loop.
 		foreach ($units as $key => $value) {
-			if (!is_scalar($value)) {
+			if (!is_string($value)) {
 				throw new InvalidArgumentException(
 					sprintf('Unit set value with key "%s" must be of type string, %s passed', $key, gettype($value)));
 			}
@@ -584,7 +488,6 @@ class Context {
 		return $this;
 	}
 
-
 	public function getOverride(string $experimentName): ?int {
 		return $this->overrides[$experimentName] ?? null;
 	}
@@ -608,4 +511,89 @@ class Context {
 	public function getPendingCount(): int {
 		return $this->pendingCount;
 	}
+
+	private function checkNotClosed(): void {
+		if ($this->isClosed()) {
+			throw new LogicException('ABSmartly Context is closed');
+		}
+	}
+
+	public function flush(): void {
+		if ($this->isFailed()) {
+			$this->exposures = [];
+			$this->achievements = [];
+			$this->pendingCount = 0;
+
+			return;
+		}
+
+		if ($this->getPendingCount() === 0) {
+			return;
+		}
+
+		$event = $this->buildPublishEvent();
+		try {
+			$this->eventHandler->publish($event);
+			$this->logEvent(ContextEventLoggerEvent::Publish, $event);
+			$this->pendingCount = 0;
+		}
+		catch (Exception $exception) {
+			$this->failed = true;
+			$this->logError($exception);
+		}
+	}
+
+	private function buildPublishEvent(): PublishEvent {
+		$event = new PublishEvent();
+		$event->publishedAt = $this->getTime();
+		$event->units = $this->units;
+		$event->hashed = true;
+		$event->exposures = $this->exposures;
+		$event->attributes = $this->attributes;
+		$event->goals = $this->achievements;
+
+		return $event;
+	}
+
+	public function track(string $goalName, ?object $properties = null): void {
+		$this->checkNotClosed();
+		$achievement = new GoalAchievement($goalName, $this->getTime(), $properties);
+		$this->achievements[] = $achievement;
+		++$this->pendingCount;
+
+		$this->logEvent(ContextEventLoggerEvent::Goal, $achievement);
+	}
+
+	public function publish(): void {
+		$this->checkNotClosed();
+		$this->flush();
+	}
+
+	public function refresh(): void {
+		$this->checkNotClosed();
+		try {
+			$data = $this->dataProvider->getContextData();
+			$this->setData($data);
+			$this->logEvent(ContextEventLoggerEvent::Refresh, $data);
+		}
+		catch (Exception $exception) {
+			$this->setDataFailed();
+			$this->logError($exception);
+		}
+	}
+
+	public function close(): void {
+		if ($this->getPendingCount() > 0) {
+			$this->flush();
+		}
+		if ($this->isClosed()) {
+			return;
+		}
+
+		$this->logEvent(ContextEventLoggerEvent::Close, null);
+		$this->closed = true;
+		$this->sdk->close();
+	}
+
+
 }

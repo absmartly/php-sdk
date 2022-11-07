@@ -2,7 +2,7 @@
 declare(strict_types=1);
 namespace Absmartly\SDK\Client;
 
-use Absmartly\SDK\Context\ContextEventLogger;
+use Absmartly\SDK\Exception\InvalidArgumentException;
 
 use function get_class;
 use function str_repeat;
@@ -14,13 +14,15 @@ class ClientConfig {
 	private string $endpoint;
 	private string $environment;
 
-	private ContextEventLogger $eventLogger;
+	private int $retries = 5;
+	private int $timeout = 3000;
 
 	public function __construct(
+		string $endpoint,
 		string $apiKey,
 		string $application,
-		string $endpoint,
-		string $environment) {
+		string $environment
+	) {
 
 		$this->apiKey = $apiKey;
 		$this->application = $application;
@@ -58,11 +60,38 @@ class ClientConfig {
 		return $this->apiKey;
 	}
 
-	public function setContextEventLogger(ContextEventLogger $eventLogger): ClientConfig {
-		$this->eventLogger = $eventLogger;
+
+
+	/**
+	 * @param int $retries The number of retries before the SDK stops trying to connect.
+	 * @return $this
+	 */
+	public function setRetries(int $retries = 5): ClientConfig {
+		if ($retries < 0) {
+			throw new InvalidArgumentException('Retries value must be 0 (no retries) or larger');
+		}
+
+		$this->retries = $retries;
+		return $this;
 	}
 
-	public function getEventLogger(): ContextEventLogger {
-		return $this->eventLogger;
+	/**
+	 * @param int $timeout Amount of time, in milliseconds, before the SDK will stop trying to connect.
+	 * @return $this
+	 */
+	public function setTimeout(int $timeout = 3000): ClientConfig {
+		if ($timeout <= 0) {
+			throw new InvalidArgumentException('Timeout value must be larger than 0');
+		}
+		$this->timeout = $timeout;
+		return $this;
+	}
+
+	public function getTimeout(): int {
+		return $this->timeout;
+	}
+
+	public function getRetries(): int {
+		return $this->retries;
 	}
 }
