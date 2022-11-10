@@ -343,21 +343,6 @@ class Context {
 		return $this;
 	}
 
-	private function getUnitHash(string $unitType, string $unitUID): string {
-		if (isset($this->hashedUnits[$unitType])) {
-			return $this->hashedUnits[$unitType];
-		}
-
-		$this->hashedUnits[$unitType] = hash('md5', $unitUID, true);
-		$this->hashedUnits[$unitType] = strtr(base64_encode($this->hashedUnits[$unitType]), [
-			'+' => '-',
-			'/' => '_',
-			'=' => '',
-		]);
-
-		return $this->hashedUnits[$unitType];
-	}
-
 	private function getVariantAssigner(string $unitType, string $unitHash): VariantAssigner {
 		return $this->assigners[$unitType] ?? ($this->assigners[$unitType] = new VariantAssigner($unitHash));
 	}

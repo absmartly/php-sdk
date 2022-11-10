@@ -9,7 +9,6 @@ use Absmartly\SDK\JsonExpression\Operator\OperatorInterface;
 use function array_key_exists;
 use function count;
 use function explode;
-use function floatval;
 use function get_object_vars;
 use function gettype;
 use function is_array;
