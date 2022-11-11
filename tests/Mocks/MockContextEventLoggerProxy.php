@@ -1,10 +1,10 @@
 <?php
 
-namespace Absmartly\SDK\Tests\Mocks;
+namespace ABSmartly\SDK\Tests\Mocks;
 
-use Absmartly\SDK\Context\Context;
-use Absmartly\SDK\Context\ContextEventLogger;
-use Absmartly\SDK\Context\ContextEventLoggerEvent;
+use ABSmartly\SDK\Context\Context;
+use ABSmartly\SDK\Context\ContextEventLogger;
+use ABSmartly\SDK\Context\ContextEventLoggerEvent;
 
 class MockContextEventLoggerProxy implements ContextEventLogger {
 	public int $called = 0;

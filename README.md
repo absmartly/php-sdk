@@ -23,7 +23,7 @@ Once the SDK is installed, it can be initialized in your project.
 You can create an SDK instance using the API key, application name, environment, and the endpoint URL obtained from A/B Smartly.
 
 ```php  
-use \Absmartly\SDK\SDK;
+use \ABSmartly\SDK\SDK;
 
 $sdk = SDK::createWithDefaults(  
   apiKey: $apiKey,
@@ -37,7 +37,7 @@ Note that the above example uses named parameters introduced in PHP 8.0. Althoug
 
 Example:
 ```php
-use \Absmartly\SDK\SDK;
+use \ABSmartly\SDK\SDK;
 
 $sdk = SDK::createWithDefaults(  
   $apiKey, $application, $endpoint, $environment
@@ -47,12 +47,12 @@ $sdk = SDK::createWithDefaults(
 The above is a short-cut that creates an SDK instance quickly using default values. If you would like granular  choice of individual components (such as a custom event logger), it can be done as following:
 
 ```php  
-use Absmartly\SDK\Client\ClientConfig;  
-use Absmartly\SDK\Client\Client;  
-use Absmartly\SDK\Config;  
-use Absmartly\SDK\SDK;  
-use Absmartly\SDK\Context\ContextConfig;
-use Absmartly\SDK\Context\ContextEventLoggerCallback;
+use ABSmartly\SDK\Client\ClientConfig;  
+use ABSmartly\SDK\Client\Client;  
+use ABSmartly\SDK\Config;  
+use ABSmartly\SDK\SDK;  
+use ABSmartly\SDK\Context\ContextConfig;
+use ABSmartly\SDK\Context\ContextEventLoggerCallback;
   
 $clientConfig = new ClientConfig('', '', '', '');  
 $client = new Client($clientConfig);  
@@ -79,15 +79,15 @@ $context = $sdk->createContext($contextConfig);
 | `environment`  |  `"production"` or `"development"`  | ✅ |                  _undefined_                   |  The environment of the platform where the SDK is installed. Environments are created on the Web Console and should match the available environments in your infrastructure.     
 | `application`  |              `string`               | ✅ |                  _undefined_                   | The name of the application where the SDK is installed. Applications are created on the Web Console and should match the applications where your experiments will be running.    
 |   `retries`    |                `int`                | ❌ |                       5                        |                                                         The number of retries before the SDK stops trying to connect.                                                          | |   `timeout`    |                `int`                | ❌ |                     `3000`                     |                                                An amount of time, in milliseconds, before the SDK will stop trying to connect.                                                 |  
-| `eventLogger`  | `\Absmartly\SDK\Context\ContextEventLogger`  | ❌ | `null`, See Using a Custom Event Logger below  |                                                                A callback function which runs after SDK events.                                                                  
+| `eventLogger`  | `\ABSmartly\SDK\Context\ContextEventLogger`  | ❌ | `null`, See Using a Custom Event Logger below  |                                                                A callback function which runs after SDK events.                                                                  
 
 ### Using a Custom Event Logger
 
 The A/B Smartly SDK can be instantiated with an event logger used for all  contexts. In addition, an event logger can be specified when creating a  particular context in the `ContextConfig`.
 
 ```php  
-use Absmartly\SDK\Client\ClientConfig;
-use Absmartly\SDK\Context\ContextEventLoggerCallback;
+use ABSmartly\SDK\Client\ClientConfig;
+use ABSmartly\SDK\Context\ContextEventLoggerCallback;
 
 $contextConfig = new ContextConfig();
 $contextConfig->setEventLogger(new ContextEventLoggerCallback(  
@@ -97,10 +97,10 @@ $contextConfig->setEventLogger(new ContextEventLoggerCallback(
 )); 
 ```  
 
-Alternately, it is possible to implement `\Absmartly\SDK\Context\ContextEventLogger` interface with `handleEvent()` method that receives the `Context` object itself, along with a `ContextEventLoggerEvent` object as shown below:
+Alternately, it is possible to implement `\ABSmartly\SDK\Context\ContextEventLogger` interface with `handleEvent()` method that receives the `Context` object itself, along with a `ContextEventLoggerEvent` object as shown below:
 
 ```php  
-use \Absmartly\SDK\Context\ContextEventLoggerCallback;  
+use \ABSmartly\SDK\Context\ContextEventLoggerCallback;  
   
 class CustomLogger implements ContextEventLogger {
     public function handleEvent(Context $context, ContextEventLoggerEvent $event): void {  

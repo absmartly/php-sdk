@@ -1,9 +1,9 @@
 <?php
 
-namespace Absmartly\SDK\Tests\Mocks;
+namespace ABSmartly\SDK\Tests\Mocks;
 
-use Absmartly\SDK\Context\ContextEventHandler;
-use Absmartly\SDK\PublishEvent;
+use ABSmartly\SDK\Context\ContextEventHandler;
+use ABSmartly\SDK\PublishEvent;
 
 class ContextEventHandlerMock extends ContextEventHandler {
 	public array $submitted = [];

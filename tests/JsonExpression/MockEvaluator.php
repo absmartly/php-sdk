@@ -1,8 +1,8 @@
 <?php
 
-namespace Absmartly\SDK\Tests\JsonExpression;
+namespace ABSmartly\SDK\Tests\JsonExpression;
 
-use Absmartly\SDK\JsonExpression\Evaluator;
+use ABSmartly\SDK\JsonExpression\Evaluator;
 
 class MockEvaluator extends Evaluator {
 	public function evaluate($expr) {

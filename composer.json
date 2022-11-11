@@ -13,12 +13,12 @@
     "license": "MIT",
     "autoload": {
         "psr-4": {
-            "Absmartly\\SDK\\": "src/"
+            "ABSmartly\\SDK\\": "src/"
         }
     },
     "autoload-dev": {
         "psr-4": {
-            "Absmartly\\SDK\\Tests\\": "tests/"
+            "ABSmartly\\SDK\\Tests\\": "tests/"
         }
     },
     "authors": [

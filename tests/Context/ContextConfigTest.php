@@ -1,8 +1,8 @@
 <?php
 
-namespace Absmartly\SDK\Tests\Context;
+namespace ABSmartly\SDK\Tests\Context;
 
-use Absmartly\SDK\Context\ContextConfig;
+use ABSmartly\SDK\Context\ContextConfig;
 use PHPUnit\Framework\TestCase;
 
 class ContextConfigTest extends TestCase {

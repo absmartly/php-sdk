@@ -1,10 +1,10 @@
 <?php
 
-namespace Absmartly\SDK\Tests\JsonExpression;
+namespace ABSmartly\SDK\Tests\JsonExpression;
 
-use Absmartly\SDK\JsonExpression\Evaluator;
-use Absmartly\SDK\JsonExpression\Expression;
-use Absmartly\SDK\JsonExpression\Operator\OperatorCollection;
+use ABSmartly\SDK\JsonExpression\Evaluator;
+use ABSmartly\SDK\JsonExpression\Expression;
+use ABSmartly\SDK\JsonExpression\Operator\OperatorCollection;
 use PHPUnit\Framework\TestCase;
 
 class ExpressionTest extends TestCase {

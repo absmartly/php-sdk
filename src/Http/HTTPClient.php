@@ -1,8 +1,8 @@
 <?php /** @noinspection PhpElementIsNotAvailableInCurrentPhpVersionInspection */
 
-namespace Absmartly\SDK\Http;
+namespace ABSmartly\SDK\Http;
 
-use Absmartly\SDK\Exception\HttpClientError;
+use ABSmartly\SDK\Exception\HttpClientError;
 use CurlHandle;
 
 use function curl_close;

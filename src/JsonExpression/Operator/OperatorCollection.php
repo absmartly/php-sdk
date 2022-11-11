@@ -1,6 +1,6 @@
 <?php
 declare(strict_types=1);
-namespace Absmartly\SDK\JsonExpression\Operator;
+namespace ABSmartly\SDK\JsonExpression\Operator;
 
 final class OperatorCollection {
 	public OperatorInterface $and;

@@ -1,9 +1,9 @@
 <?php
 
-namespace Absmartly\SDK\Tests\Mocks;
+namespace ABSmartly\SDK\Tests\Mocks;
 
-use Absmartly\SDK\Context\ContextData;
-use Absmartly\SDK\Context\ContextDataProvider;
+use ABSmartly\SDK\Context\ContextData;
+use ABSmartly\SDK\Context\ContextDataProvider;
 
 class ContextDataProviderMock extends ContextDataProvider {
 	private string $source = 'context.json';

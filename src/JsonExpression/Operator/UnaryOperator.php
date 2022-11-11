@@ -1,8 +1,8 @@
 <?php
 declare(strict_types=1);
-namespace Absmartly\SDK\JsonExpression\Operator;
+namespace ABSmartly\SDK\JsonExpression\Operator;
 
-use Absmartly\SDK\JsonExpression\Evaluator;
+use ABSmartly\SDK\JsonExpression\Evaluator;
 
 abstract class UnaryOperator {
 	abstract public function unary(Evaluator $evaluator, $arg): bool;

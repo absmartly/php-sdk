@@ -1,10 +1,10 @@
 <?php
 declare(strict_types=1);
-namespace Absmartly\SDK\JsonExpression;
+namespace ABSmartly\SDK\JsonExpression;
 
-use Absmartly\SDK\Exception\InvalidArgumentException;
-use Absmartly\SDK\JsonExpression\Operator\OperatorCollection;
-use Absmartly\SDK\JsonExpression\Operator\OperatorInterface;
+use ABSmartly\SDK\Exception\InvalidArgumentException;
+use ABSmartly\SDK\JsonExpression\Operator\OperatorCollection;
+use ABSmartly\SDK\JsonExpression\Operator\OperatorInterface;
 
 use function array_key_exists;
 use function count;

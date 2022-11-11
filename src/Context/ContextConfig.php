@@ -1,6 +1,6 @@
 <?php
 
-namespace Absmartly\SDK\Context;
+namespace ABSmartly\SDK\Context;
 
 use InvalidArgumentException;
 

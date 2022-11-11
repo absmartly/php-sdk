@@ -1,10 +1,10 @@
 <?php
 
-namespace Absmartly\SDK;
+namespace ABSmartly\SDK;
 
-use Absmartly\SDK\Client\Client;
-use Absmartly\SDK\Context\ContextDataProvider;
-use Absmartly\SDK\Context\ContextEventHandler;
+use ABSmartly\SDK\Client\Client;
+use ABSmartly\SDK\Context\ContextDataProvider;
+use ABSmartly\SDK\Context\ContextEventHandler;
 
 class Config {
 	private Client $client;

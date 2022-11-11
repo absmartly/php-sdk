@@ -1,9 +1,9 @@
 <?php
 
-namespace Absmartly\SDK\Exception;
+namespace ABSmartly\SDK\Exception;
 
 use RuntimeException;
 
-class TimeoutException extends RuntimeException implements AbsmartlyException {
+class TimeoutException extends RuntimeException implements ABSmartlyException {
 
 }

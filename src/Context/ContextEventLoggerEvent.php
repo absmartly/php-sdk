@@ -1,6 +1,6 @@
 <?php
 
-namespace Absmartly\SDK\Context;
+namespace ABSmartly\SDK\Context;
 
 class ContextEventLoggerEvent {
 	private string $event;

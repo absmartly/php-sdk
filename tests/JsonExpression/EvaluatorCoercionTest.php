@@ -1,8 +1,8 @@
 <?php
 
-namespace Absmartly\SDK\Tests\JsonExpression;
+namespace ABSmartly\SDK\Tests\JsonExpression;
 
-use Absmartly\SDK\JsonExpression\Evaluator;
+use ABSmartly\SDK\JsonExpression\Evaluator;
 use PHPUnit\Framework\TestCase;
 
 class EvaluatorCoercionTest extends TestCase {

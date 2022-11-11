@@ -1,6 +1,6 @@
 <?php
 
-namespace Absmartly\SDK;
+namespace ABSmartly\SDK;
 
 use function get_object_vars as get_object_varsAlias;
 use function json_decode;

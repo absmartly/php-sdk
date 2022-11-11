@@ -1,8 +1,8 @@
 <?php
 
-namespace Absmartly\SDK\Tests;
+namespace ABSmartly\SDK\Tests;
 
-use Absmartly\SDK\PublishEvent;
+use ABSmartly\SDK\PublishEvent;
 use PHPUnit\Framework\TestCase;
 
 class PublishEventTest extends TestCase {

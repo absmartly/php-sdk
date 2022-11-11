@@ -1,10 +1,10 @@
 <?php
 
-namespace Absmartly\SDK\Client;
+namespace ABSmartly\SDK\Client;
 
-use Absmartly\SDK\Context\ContextData;
-use Absmartly\SDK\Http\HTTPClient;
-use Absmartly\SDK\PublishEvent;
+use ABSmartly\SDK\Context\ContextData;
+use ABSmartly\SDK\Http\HTTPClient;
+use ABSmartly\SDK\PublishEvent;
 
 use function json_decode;
 use function json_encode;

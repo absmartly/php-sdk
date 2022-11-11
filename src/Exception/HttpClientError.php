@@ -1,9 +1,9 @@
 <?php
 
-namespace Absmartly\SDK\Exception;
+namespace ABSmartly\SDK\Exception;
 
 use RuntimeException;
 
-class HttpClientError extends RuntimeException implements AbsmartlyException {
+class HttpClientError extends RuntimeException implements ABSmartlyException {
 
 }

@@ -1,10 +1,10 @@
 <?php
 
-namespace Absmartly\SDK\Tests\JsonExpression\Operator;
+namespace ABSmartly\SDK\Tests\JsonExpression\Operator;
 
-use Absmartly\SDK\JsonExpression\Operator\NotOperator;
-use Absmartly\SDK\JsonExpression\Operator\OperatorCollection;
-use Absmartly\SDK\Tests\JsonExpression\MockEvaluator;
+use ABSmartly\SDK\JsonExpression\Operator\NotOperator;
+use ABSmartly\SDK\JsonExpression\Operator\OperatorCollection;
+use ABSmartly\SDK\Tests\JsonExpression\MockEvaluator;
 use PHPUnit\Framework\TestCase;
 
 class NotOperatorTest extends TestCase {

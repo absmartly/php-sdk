@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-namespace Absmartly\SDK;
+namespace ABSmartly\SDK;
 
 use InvalidArgumentException;
 use lastguest\Murmur;

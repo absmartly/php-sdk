@@ -1,7 +1,7 @@
 <?php
 
-namespace Absmartly\SDK\Exception;
+namespace ABSmartly\SDK\Exception;
 
-class LogicException extends \LogicException implements AbsmartlyException {
+class LogicException extends \LogicException implements ABSmartlyException {
 
 }

@@ -1,10 +1,10 @@
 <?php
 
-namespace Absmartly\SDK\Tests\Http;
+namespace ABSmartly\SDK\Tests\Http;
 
-use Absmartly\SDK\Exception\HttpClientError;
-use Absmartly\SDK\Http\HTTPClient;
-use Absmartly\SDK\Http\Response;
+use ABSmartly\SDK\Exception\HttpClientError;
+use ABSmartly\SDK\Http\HTTPClient;
+use ABSmartly\SDK\Http\Response;
 use PHPUnit\Framework\TestCase;
 
 class HTTPClientIntegrationTest extends TestCase {

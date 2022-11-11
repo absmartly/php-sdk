@@ -1,22 +1,22 @@
 <?php
 
-namespace Absmartly\SDK\Tests\Context;
+namespace ABSmartly\SDK\Tests\Context;
 
-use Absmartly\SDK\Client\Client;
-use Absmartly\SDK\Client\ClientConfig;
-use Absmartly\SDK\Config;
-use Absmartly\SDK\Context\Context;
-use Absmartly\SDK\Context\ContextConfig;
-use Absmartly\SDK\Context\ContextData;
-use Absmartly\SDK\Context\ContextDataProvider;
-use Absmartly\SDK\Context\ContextEventHandler;
-use Absmartly\SDK\Context\ContextEventLogger;
-use Absmartly\SDK\Context\ContextEventLoggerEvent;
-use Absmartly\SDK\GoalAchievement;
-use Absmartly\SDK\SDK;
-use Absmartly\SDK\Tests\Mocks\ContextDataProviderMock;
-use Absmartly\SDK\Tests\Mocks\ContextEventHandlerMock;
-use Absmartly\SDK\Tests\Mocks\MockContextEventLoggerProxy;
+use ABSmartly\SDK\Client\Client;
+use ABSmartly\SDK\Client\ClientConfig;
+use ABSmartly\SDK\Config;
+use ABSmartly\SDK\Context\Context;
+use ABSmartly\SDK\Context\ContextConfig;
+use ABSmartly\SDK\Context\ContextData;
+use ABSmartly\SDK\Context\ContextDataProvider;
+use ABSmartly\SDK\Context\ContextEventHandler;
+use ABSmartly\SDK\Context\ContextEventLogger;
+use ABSmartly\SDK\Context\ContextEventLoggerEvent;
+use ABSmartly\SDK\GoalAchievement;
+use ABSmartly\SDK\SDK;
+use ABSmartly\SDK\Tests\Mocks\ContextDataProviderMock;
+use ABSmartly\SDK\Tests\Mocks\ContextEventHandlerMock;
+use ABSmartly\SDK\Tests\Mocks\MockContextEventLoggerProxy;
 use PHPUnit\Framework\TestCase;
 
 class ContextTest extends TestCase {

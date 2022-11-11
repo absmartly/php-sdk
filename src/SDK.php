@@ -1,15 +1,15 @@
 <?php
 
-namespace Absmartly\SDK;
+namespace ABSmartly\SDK;
 
-use Absmartly\SDK\Client\Client;
-use Absmartly\SDK\Client\ClientConfig;
-use Absmartly\SDK\Context\Context;
-use Absmartly\SDK\Context\ContextConfig;
-use Absmartly\SDK\Context\ContextData;
-use Absmartly\SDK\Context\ContextDataProvider;
-use Absmartly\SDK\Context\ContextEventHandler;
-use Absmartly\SDK\Http\HTTPClient;
+use ABSmartly\SDK\Client\Client;
+use ABSmartly\SDK\Client\ClientConfig;
+use ABSmartly\SDK\Context\Context;
+use ABSmartly\SDK\Context\ContextConfig;
+use ABSmartly\SDK\Context\ContextData;
+use ABSmartly\SDK\Context\ContextDataProvider;
+use ABSmartly\SDK\Context\ContextEventHandler;
+use ABSmartly\SDK\Http\HTTPClient;
 
 final class SDK {
 

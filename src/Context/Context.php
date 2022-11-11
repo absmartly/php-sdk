@@ -1,19 +1,19 @@
 <?php
 
-namespace Absmartly\SDK\Context;
+namespace ABSmartly\SDK\Context;
 
-use Absmartly\SDK\Assignment;
-use Absmartly\SDK\AudienceMatcher;
-use Absmartly\SDK\Exception\InvalidArgumentException;
-use Absmartly\SDK\Exception\LogicException;
-use Absmartly\SDK\Experiment;
-use Absmartly\SDK\ExperimentVariables;
-use Absmartly\SDK\Exposure;
-use Absmartly\SDK\GoalAchievement;
-use Absmartly\SDK\PublishEvent;
-use Absmartly\SDK\SDK;
-use Absmartly\SDK\VariableParser;
-use Absmartly\SDK\VariantAssigner;
+use ABSmartly\SDK\Assignment;
+use ABSmartly\SDK\AudienceMatcher;
+use ABSmartly\SDK\Exception\InvalidArgumentException;
+use ABSmartly\SDK\Exception\LogicException;
+use ABSmartly\SDK\Experiment;
+use ABSmartly\SDK\ExperimentVariables;
+use ABSmartly\SDK\Exposure;
+use ABSmartly\SDK\GoalAchievement;
+use ABSmartly\SDK\PublishEvent;
+use ABSmartly\SDK\SDK;
+use ABSmartly\SDK\VariableParser;
+use ABSmartly\SDK\VariantAssigner;
 
 use Exception;
 use Throwable;

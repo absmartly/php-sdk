@@ -1,6 +1,6 @@
 <?php
 
-namespace Absmartly\SDK\Http;
+namespace ABSmartly\SDK\Http;
 
 class Response {
 	/**

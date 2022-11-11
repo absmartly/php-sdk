@@ -1,8 +1,8 @@
 <?php
 
-namespace Absmartly\SDK;
+namespace ABSmartly\SDK;
 
-use Absmartly\SDK\JsonExpression\Expression;
+use ABSmartly\SDK\JsonExpression\Expression;
 use stdClass;
 
 class AudienceMatcher {

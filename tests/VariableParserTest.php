@@ -1,8 +1,8 @@
 <?php
 
-namespace Absmartly\SDK\Tests;
+namespace ABSmartly\SDK\Tests;
 
-use Absmartly\SDK\VariableParser;
+use ABSmartly\SDK\VariableParser;
 use PHPUnit\Framework\TestCase;
 
 class VariableParserTest extends TestCase {

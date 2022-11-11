@@ -1,7 +1,7 @@
 <?php
 
-namespace Absmartly\SDK\Exception;
+namespace ABSmartly\SDK\Exception;
 
-class InvalidArgumentException extends \InvalidArgumentException implements AbsmartlyException {
+class InvalidArgumentException extends \InvalidArgumentException implements ABSmartlyException {
 
 }

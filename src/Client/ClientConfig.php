@@ -1,8 +1,8 @@
 <?php
 declare(strict_types=1);
-namespace Absmartly\SDK\Client;
+namespace ABSmartly\SDK\Client;
 
-use Absmartly\SDK\Exception\InvalidArgumentException;
+use ABSmartly\SDK\Exception\InvalidArgumentException;
 
 use function get_class;
 use function str_repeat;

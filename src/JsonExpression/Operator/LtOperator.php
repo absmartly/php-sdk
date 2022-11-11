@@ -1,8 +1,8 @@
 <?php
 declare(strict_types=1);
-namespace Absmartly\SDK\JsonExpression\Operator;
+namespace ABSmartly\SDK\JsonExpression\Operator;
 
-use Absmartly\SDK\JsonExpression\Evaluator;
+use ABSmartly\SDK\JsonExpression\Evaluator;
 
 class LtOperator extends BinaryOperator {
 	public function binary(Evaluator $evaluator, $lhs, $rhs): ?bool {

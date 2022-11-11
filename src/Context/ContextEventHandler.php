@@ -1,9 +1,9 @@
 <?php
 
-namespace Absmartly\SDK\Context;
+namespace ABSmartly\SDK\Context;
 
-use Absmartly\SDK\Client\Client;
-use Absmartly\SDK\PublishEvent;
+use ABSmartly\SDK\Client\Client;
+use ABSmartly\SDK\PublishEvent;
 
 class ContextEventHandler {
 	private Client $client;

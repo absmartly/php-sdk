@@ -1,6 +1,6 @@
 <?php
 
-namespace Absmartly\SDK;
+namespace ABSmartly\SDK;
 
 use JsonSerializable;
 

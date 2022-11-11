@@ -1,12 +1,12 @@
 <?php
 
-namespace Absmartly\SDK\Tests\JsonExpression\Operator;
+namespace ABSmartly\SDK\Tests\JsonExpression\Operator;
 
-use Absmartly\SDK\JsonExpression\Evaluator;
-use Absmartly\SDK\JsonExpression\Operator\OperatorCollection;
-use Absmartly\SDK\JsonExpression\Operator\OperatorInterface;
-use Absmartly\SDK\JsonExpression\Operator\VarOperator;
-use Absmartly\SDK\Tests\JsonExpression\MockEvaluator;
+use ABSmartly\SDK\JsonExpression\Evaluator;
+use ABSmartly\SDK\JsonExpression\Operator\OperatorCollection;
+use ABSmartly\SDK\JsonExpression\Operator\OperatorInterface;
+use ABSmartly\SDK\JsonExpression\Operator\VarOperator;
+use ABSmartly\SDK\Tests\JsonExpression\MockEvaluator;
 use PHPUnit\Framework\TestCase;
 
 class VarOperatorTest extends TestCase {

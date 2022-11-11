@@ -1,8 +1,8 @@
 <?php
 
-namespace Absmartly\SDK\Tests;
+namespace ABSmartly\SDK\Tests;
 
-use Absmartly\SDK\VariantAssigner;
+use ABSmartly\SDK\VariantAssigner;
 use PHPUnit\Framework\TestCase;
 
 class VariantAssignerTest extends TestCase {
