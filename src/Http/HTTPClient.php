@@ -72,7 +72,7 @@ class HTTPClient {
 
 	private function fetchResponse(): Response {
 		$returnedResponse = curl_exec($this->curlHandle);
-		$this->throwOnError();
+		$this->throwOnError($returnedResponse);
 
 		$response = new Response();
 		$response->content = (string) $returnedResponse;
@@ -96,13 +96,15 @@ class HTTPClient {
 		return $this->fetchResponse();
 	}
 
-	private function throwOnError(): void {
+	private function throwOnError(?string $responseBody): void {
 		if ($error = curl_errno($this->curlHandle)) {
 			if ($error === CURLE_HTTP_RETURNED_ERROR) {
 				throw new HttpClientError(
-					sprintf('HTTP Client returned an HTTP error %d for URL %s',
+					sprintf('HTTP Client returned an HTTP error %d for URL %s: Response Body: %s',
 					        curl_getinfo($this->curlHandle, CURLINFO_HTTP_CODE),
-					        curl_getinfo($this->curlHandle, CURLINFO_EFFECTIVE_URL))
+					        curl_getinfo($this->curlHandle, CURLINFO_EFFECTIVE_URL),
+							$responseBody,
+					)
 				);
 			}
 

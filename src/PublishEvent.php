@@ -17,10 +17,19 @@ class PublishEvent implements JsonSerializable {
 			'publishedAt' => $this->publishedAt,
 		];
 
-		foreach (['units', 'hashed', 'exposures', 'attributes'] as $key) {
+		foreach (['hashed', 'exposures', 'attributes'] as $key) {
 			if (!empty($this->{$key})) {
 				$object->{$key} = $this->{$key};
 			}
+		}
+
+		if (isset($this->units)) {
+			$units = [];
+			foreach ($this->units as $unit => $value) {
+				$units[] = ['type' => $unit, 'uid' => $value];
+			}
+
+			$object->units = $units;
 		}
 
 		foreach (['goals', 'exposures'] as $key) {

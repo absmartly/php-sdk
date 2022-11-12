@@ -36,6 +36,6 @@ class Exposure {
 	}
 
 	protected static function getTime(): int {
-		return time();
+		return (int) (microtime(true) * 1000);
 	}
 }
