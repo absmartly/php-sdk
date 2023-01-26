@@ -274,7 +274,7 @@ class ContextTest extends TestCase {
 	}
 
 	// Additional test
-	public function testSetUnitEmpty(): void {;
+	public function testSetUnitEmpty(): void {
 		$context = $this->createReadyContext();
 
 		$this->expectException(\InvalidArgumentException::class);
