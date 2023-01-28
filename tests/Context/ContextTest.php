@@ -12,7 +12,9 @@ use ABSmartly\SDK\Context\ContextDataProvider;
 use ABSmartly\SDK\Context\ContextEventHandler;
 use ABSmartly\SDK\Context\ContextEventLogger;
 use ABSmartly\SDK\Context\ContextEventLoggerEvent;
+use ABSmartly\SDK\Exposure;
 use ABSmartly\SDK\GoalAchievement;
+use ABSmartly\SDK\PublishEvent;
 use ABSmartly\SDK\SDK;
 use ABSmartly\SDK\Tests\Mocks\ContextDataProviderMock;
 use ABSmartly\SDK\Tests\Mocks\ContextEventHandlerMock;
@@ -557,6 +559,28 @@ class ContextTest extends TestCase {
 		self::assertSame(0, $context->getTreatment("not_found"));
 
 		self::assertSame(count($context->getContextData()->experiments) + 1, $context->getPendingCount());
+
+		$context->publish();
+		$context->close();
+
+		$publishEvent = $this->eventHandler->submitted[0];
+		$time = (int) (microtime(true) * 1000);
+		$expected = [
+			Exposure::create(1, "exp_test_ab", "session_id", 1, $time, true, true, false, false, false, false),
+			Exposure::create(2, "exp_test_abc", "session_id", 2, $time, true, true, false, false, false, false),
+			Exposure::create(3, "exp_test_not_eligible", "user_id", 0, $time, true, false, false, false, false, false),
+			Exposure::create(4, "exp_test_fullon", "session_id", 2, $time, true, true, false, true, false,	false),
+			Exposure::create(0, "not_found", null, 0, $time, false, true, false, false, false, false),
+		];
+
+		foreach ($expected as $key => $exposure) {
+			$expectedExposure = (object)(array) $exposure;
+
+			// Avoid test failures because precision is lost during json decode/encode operation.
+			$publishEvent->exposures[$key]->exposedAt = (float) $time;
+
+			self::assertEquals($expectedExposure, $publishEvent->exposures[$key]);
+		}
 	}
 
 	public function testGetTreatmentStartsPublishTimeoutAfterExposure(): void {
