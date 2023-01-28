@@ -517,6 +517,7 @@ class Context {
 		}
 
 		$event = $this->buildPublishEvent();
+
 		try {
 			$this->eventHandler->publish($event);
 			$this->logEvent(ContextEventLoggerEvent::Publish, $event);

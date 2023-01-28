@@ -97,17 +97,19 @@ class HTTPClient {
 	}
 
 	private function throwOnError(?string $responseBody): void {
-		if ($error = curl_errno($this->curlHandle)) {
-			if ($error === CURLE_HTTP_RETURNED_ERROR) {
-				throw new HttpClientError(
-					sprintf('HTTP Client returned an HTTP error %d for URL %s: Response Body: %s',
-					        curl_getinfo($this->curlHandle, CURLINFO_HTTP_CODE),
-					        curl_getinfo($this->curlHandle, CURLINFO_EFFECTIVE_URL),
-							$responseBody,
-					)
-				);
-			}
+		$http_status = curl_getinfo($this->curlHandle, CURLINFO_HTTP_CODE);
 
+		if ($http_status >= 400) {
+			throw new HttpClientError(
+				sprintf('HTTP Client returned an HTTP error %d for URL %s: Response Body: %s',
+					curl_getinfo($this->curlHandle, CURLINFO_HTTP_CODE),
+					curl_getinfo($this->curlHandle, CURLINFO_EFFECTIVE_URL),
+					$responseBody,
+				)
+			);
+		}
+
+		if ($error = curl_errno($this->curlHandle)) {
 			throw new HttpClientError(sprintf('HTTP Client returned error %d: %s', $error, curl_strerror($error)));
 		}
 	}
@@ -128,7 +130,6 @@ class HTTPClient {
 			CURLOPT_SSL_VERIFYHOST => 2,
 			CURLOPT_SSL_VERIFYPEER => true,
 			CURLOPT_SSLVERSION => CURL_SSLVERSION_TLSv1_2,
-			CURLOPT_FAILONERROR => true, // So Curl fails on status codes >= 400
 		]);
 	}
 
