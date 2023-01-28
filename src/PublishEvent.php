@@ -7,32 +7,41 @@ use JsonSerializable;
 use stdClass;
 
 class PublishEvent implements JsonSerializable {
-	public bool $hashed;
-	public array $units;
 	public int $publishedAt;
+	public bool $hashed = false;
+	protected array $units = [];
 	public array $exposures = [];
 	public array $goals = [];
 	public array $attributes;
 
+	public function hashUnit(string $unit): string {
+		$hash = hash('md5', $unit, true);
+
+		// Removing padding and +/ characters in the base64 encoded string.
+		$hash = strtr(base64_encode($hash), [
+			'+' => '-',
+			'/' => '_',
+			'=' => '',
+		]);
+
+		return substr($hash, 0, 22);
+	}
+
+	public function setUnits(array $units): void {
+		$this->hashed = true;
+		foreach ($units as $unit => $value) {
+			$unitObject = new stdClass();
+			$unitObject->type = $unit;
+			$unitObject->uid = $this->hashUnit($value);
+
+			$this->units[] = $unitObject;
+		}
+	}
 	public function jsonSerialize(): object {
 		$object = new stdClass();
+		$object->publishedAt = $this->publishedAt ?? Context::getTime();
 
-		foreach (['hashed', 'exposures', 'attributes'] as $key) {
-			if (!empty($this->{$key})) {
-				$object->{$key} = $this->{$key};
-			}
-		}
-
-		if (isset($this->units)) {
-			$units = [];
-			foreach ($this->units as $unit => $value) {
-				$units[] = ['type' => $unit, 'uid' => $value];
-			}
-
-			$object->units = $units;
-		}
-
-		foreach (['goals', 'exposures'] as $key) {
+		foreach (['goals', 'exposures', 'attributes', 'units'] as $key) {
 			if (!empty($this->{$key})) {
 				$object->{$key} = [];
 				foreach ($this->{$key} as $item) {
@@ -42,7 +51,6 @@ class PublishEvent implements JsonSerializable {
 			}
 		}
 
-		$object->publishedAt = Context::getTime();
 		return $object;
 	}
 }

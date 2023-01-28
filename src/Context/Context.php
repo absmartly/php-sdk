@@ -18,7 +18,6 @@ use ABSmartly\SDK\VariantAssigner;
 use Exception;
 use Throwable;
 
-use function base64_encode;
 use function count;
 use function get_object_vars;
 use function gettype;
@@ -243,7 +242,7 @@ class Context {
 		}
 		elseif ($experiment) {
 			$unitType = $experiment->data->unitType;
-			if (!empty($experiment->data->audience)) {
+			if (!empty($experiment->data->audience) && !empty((array) $experiment->data->audience)) {
 				$attrs = [];
 				foreach ($this->attributes as $name => $value) {
 					$attrs[$name] = $value;
@@ -531,8 +530,7 @@ class Context {
 
 	private function buildPublishEvent(): PublishEvent {
 		$event = new PublishEvent();
-		$event->units = $this->units;
-		$event->hashed = false;
+		$event->setUnits($this->units);
 		$event->exposures = $this->exposures;
 		$event->attributes = $this->attributes;
 		$event->goals = $this->achievements;

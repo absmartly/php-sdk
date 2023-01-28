@@ -25,6 +25,7 @@ class Exposure {
 		$this->unit = $assignment->unitType ?? null;
 		$this->variant = $assignment->variant;
 		$this->eligible = $assignment->eligible;
+		$this->assigned = $assignment->assigned;
 		$this->overridden = $assignment->overridden;
 		$this->fullOn = $assignment->fullOn;
 		$this->custom = $assignment->custom;
