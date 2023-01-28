@@ -74,7 +74,7 @@ class Context {
 		return $this->closed;
 	}
 
-	protected function getTime(): int {
+	public static function getTime(): int {
 		return (int) microtime(true) * 1000;
 	}
 
@@ -531,9 +531,8 @@ class Context {
 
 	private function buildPublishEvent(): PublishEvent {
 		$event = new PublishEvent();
-		$event->publishedAt = $this->getTime();
 		$event->units = $this->units;
-		$event->hashed = true;
+		$event->hashed = false;
 		$event->exposures = $this->exposures;
 		$event->attributes = $this->attributes;
 		$event->goals = $this->achievements;
@@ -543,7 +542,7 @@ class Context {
 
 	public function track(string $goalName, ?object $properties = null): void {
 		$this->checkNotClosed();
-		$achievement = new GoalAchievement($goalName, $this->getTime(), $properties);
+		$achievement = new GoalAchievement($goalName, static::getTime(), $properties);
 		$this->achievements[] = $achievement;
 		++$this->pendingCount;
 
@@ -580,6 +579,5 @@ class Context {
 		$this->closed = true;
 		$this->sdk->close();
 	}
-
 
 }

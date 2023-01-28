@@ -2,6 +2,7 @@
 
 namespace ABSmartly\SDK;
 
+use ABSmartly\SDK\Context\Context;
 use function time;
 
 class Exposure {
@@ -20,7 +21,7 @@ class Exposure {
 	public function ingestAssignment(Assignment $assignment): void {
 		$this->id = $assignment->id;
 		$this->name = $assignment->name;
-		$this->exposedAt = static::getTime();
+		$this->exposedAt = Context::getTime();
 		$this->unit = $assignment->unitType ?? null;
 		$this->variant = $assignment->variant;
 		$this->eligible = $assignment->eligible;
@@ -50,7 +51,4 @@ class Exposure {
 		return $exposure;
 	}
 
-	protected static function getTime(): int {
-		return (int) (microtime(true) * 1000);
-	}
 }

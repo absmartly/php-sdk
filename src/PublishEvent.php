@@ -2,7 +2,9 @@
 
 namespace ABSmartly\SDK;
 
+use ABSmartly\SDK\Context\Context;
 use JsonSerializable;
+use stdClass;
 
 class PublishEvent implements JsonSerializable {
 	public bool $hashed;
@@ -13,9 +15,7 @@ class PublishEvent implements JsonSerializable {
 	public array $attributes;
 
 	public function jsonSerialize(): object {
-		$object = (object) [
-			'publishedAt' => $this->publishedAt,
-		];
+		$object = new stdClass();
 
 		foreach (['hashed', 'exposures', 'attributes'] as $key) {
 			if (!empty($this->{$key})) {
@@ -42,6 +42,7 @@ class PublishEvent implements JsonSerializable {
 			}
 		}
 
+		$object->publishedAt = Context::getTime();
 		return $object;
 	}
 }
