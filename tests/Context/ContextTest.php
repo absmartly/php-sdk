@@ -455,7 +455,7 @@ class ContextTest extends TestCase {
 
 		$context->publish();
 		self::assertArrayHasKey(0, $this->eventHandler->submitted);
-		self::assertSame('21', $this->eventHandler->submitted[0]->attributes->age);
+		self::assertSame('21', $this->eventHandler->submitted[0]->attributes[0]->value);
 		self::assertSame('exp_test_ab', $this->eventHandler->submitted[0]->exposures[0]->name);
 		self::assertFalse($this->eventHandler->submitted[0]->exposures[0]->audienceMismatch);
 	}
@@ -633,7 +633,8 @@ class ContextTest extends TestCase {
 
 		$event = $this->eventHandler->submitted[0];
 		self::assertSame('pAE3a1i5Drs5mKRNq56adA', $event->units[0]->uid);
-		self::assertSame('21', $event->attributes->age);
+		self::assertSame('age', $event->attributes[0]->name);
+		self::assertSame('21', $event->attributes[0]->value);
 		self::assertFalse($event->exposures[0]->audienceMismatch);
 	}
 
@@ -791,8 +792,7 @@ class ContextTest extends TestCase {
 		$context->publish();
 
 		$event = $this->eventHandler->submitted[0];
-
-		self::assertSame('2', $event->attributes->attr2);
+		self::assertSame('2', $event->attributes[1]->value);
 		self::assertSame(245, $event->goals[0]->properties->hours);
 		self::assertSame('not_found', $event->exposures[2]->name);
 
@@ -809,7 +809,7 @@ class ContextTest extends TestCase {
 		$context->publish();
 
 		$event = $this->eventHandler->submitted[1];
-		self::assertSame('2', $event->attributes->attr2);
+		self::assertSame('2', $event->attributes[1]->value);
 		self::assertSame(245, $event->goals[0]->properties->hours);
 		self::assertSame('not_found', $event->exposures[2]->name);
 

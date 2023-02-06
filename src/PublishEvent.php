@@ -12,7 +12,7 @@ class PublishEvent implements JsonSerializable {
 	protected array $units = [];
 	public array $exposures = [];
 	public array $goals = [];
-	public array $attributes;
+	protected array $attributes = [];
 
 	public function __construct() {
 		$this->publishedAt = Context::getTime();
@@ -41,6 +41,16 @@ class PublishEvent implements JsonSerializable {
 			$this->units[] = $unitObject;
 		}
 	}
+
+	public function setAttributes(array $attributes): void {
+		foreach ($attributes as $field => $value) {
+			$this->attributes[] = (object) [
+				'name' => $field,
+				'value' => $value,
+				'setAt' => $this->publishedAt,
+			];
+		}
+	}
 	public function jsonSerialize(): object {
 		$this->publishedAt = Context::getTime();
 		$object = new stdClass();
@@ -57,9 +67,7 @@ class PublishEvent implements JsonSerializable {
 			}
 		}
 
-		if (!empty($this->attributes)) {
-			$object->attributes = $this->attributes;
-		}
+		$object->attributes = $this->attributes;
 
 		return $object;
 	}

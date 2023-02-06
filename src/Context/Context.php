@@ -83,6 +83,7 @@ class Context {
 		$this->setUnits($contextConfig->getUnits());
 		$this->setOverrides($contextConfig->getOverrides());
 		$this->setCustomAssignments($contextConfig->getCustomAssignments());
+		$this->setAttributes($contextConfig->getAttributes());
 
 		if ($logger = $contextConfig->getEventLogger()) {
 			$this->setEventLogger($logger);
@@ -531,8 +532,8 @@ class Context {
 	private function buildPublishEvent(): PublishEvent {
 		$event = new PublishEvent();
 		$event->setUnits($this->units);
+		$event->setAttributes($this->attributes);
 		$event->exposures = $this->exposures;
-		$event->attributes = $this->attributes;
 		$event->goals = $this->achievements;
 
 		return $event;
