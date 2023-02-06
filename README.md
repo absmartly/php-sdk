@@ -22,27 +22,13 @@ Once the SDK is installed, it can be initialized in your project.
 
 You can create an SDK instance using the API key, application name, environment, and the endpoint URL obtained from A/B Smartly.
 
-```php  
-use \ABSmartly\SDK\SDK;
-
-$sdk = SDK::createWithDefaults(  
-  endpoint: $endpoint,
-  apiKey: $apiKey,
-  environment: $environment,
-  application: $application
-);
-```  
-
-Note that the above example uses named parameters introduced in PHP 8.0. Although it is strongly recommended to use the latest PHP version, PHP 7.4 is supported as well. On PHP 7.4, parameters are only passed in their order, as named parameters are not supported.
-
-Example:
 ```php
 use \ABSmartly\SDK\SDK;
 
 $sdk = SDK::createWithDefaults(  
   $endpoint, $apiKey, $environment, $application, 
 ); 
-```  
+
 
 The above is a short-cut that creates an SDK instance quickly using default values. If you would like granular  choice of individual components (such as a custom event logger), it can be done as following:
 
