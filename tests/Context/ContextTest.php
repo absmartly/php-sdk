@@ -632,7 +632,7 @@ class ContextTest extends TestCase {
 		$context->publish();
 
 		$event = $this->eventHandler->submitted[0];
-		self::assertSame('e791e240fcd3df7d238cfc285f475e8152fcc0ec', $event->units[0]->uid);
+		self::assertSame('pAE3a1i5Drs5mKRNq56adA', $event->units[0]->uid);
 		self::assertSame('21', $event->attributes->age);
 		self::assertFalse($event->exposures[0]->audienceMismatch);
 	}
@@ -647,8 +647,9 @@ class ContextTest extends TestCase {
 
 		$event = $this->eventHandler->submitted[0];
 
-		self::assertSame('e791e240fcd3df7d238cfc285f475e8152fcc0ec', $event->units[0]->uid);
+		self::assertSame('pAE3a1i5Drs5mKRNq56adA', $event->units[0]->uid);
 		self::assertTrue($event->exposures[0]->audienceMismatch);
+		self::assertTrue($event->hashed);
 	}
 
 	public function testGetTreatmentQueuesExposureWithAudienceMismatchTrueAndControlVariantOnAudienceMismatchInStrictMode(): void {
@@ -697,7 +698,7 @@ class ContextTest extends TestCase {
 		$context->publish();
 
 		$publishEvent = $this->eventHandler->submitted[0];
-		self::assertSame('e791e240fcd3df7d238cfc285f475e8152fcc0ec', $publishEvent->units[0]->uid);
+		self::assertSame('pAE3a1i5Drs5mKRNq56adA', $publishEvent->units[0]->uid);
 		self::assertSame('goal1', $publishEvent->goals[0]->name);
 		self::assertSame('goal2', $publishEvent->goals[1]->name);
 		self::assertSame('goal2', $publishEvent->goals[2]->name);

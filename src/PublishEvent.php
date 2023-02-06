@@ -40,8 +40,9 @@ class PublishEvent implements JsonSerializable {
 	public function jsonSerialize(): object {
 		$object = new stdClass();
 		$object->publishedAt = $this->publishedAt ?? Context::getTime();
+		$object->hashed = $this->hashed;
 
-		foreach (['goals', 'exposures', 'attributes', 'units'] as $key) {
+		foreach (['goals', 'exposures', 'units'] as $key) {
 			if (!empty($this->{$key})) {
 				$object->{$key} = [];
 				foreach ($this->{$key} as $item) {
@@ -49,6 +50,10 @@ class PublishEvent implements JsonSerializable {
 					$object->{$key}[] = (object) (array) $item;
 				}
 			}
+		}
+
+		if (!empty($this->attributes)) {
+			$object->attributes = $this->attributes;
 		}
 
 		return $object;
