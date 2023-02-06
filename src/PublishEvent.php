@@ -14,6 +14,10 @@ class PublishEvent implements JsonSerializable {
 	public array $goals = [];
 	public array $attributes;
 
+	public function __construct() {
+		$this->publishedAt = Context::getTime();
+	}
+
 	public function hashUnit(string $unit): string {
 		$hash = hash('md5', $unit, true);
 
@@ -38,9 +42,10 @@ class PublishEvent implements JsonSerializable {
 		}
 	}
 	public function jsonSerialize(): object {
+		$this->publishedAt = Context::getTime();
 		$object = new stdClass();
-		$object->publishedAt = $this->publishedAt ?? Context::getTime();
 		$object->hashed = $this->hashed;
+		$object->publishedAt = $this->publishedAt;
 
 		foreach (['goals', 'exposures', 'units'] as $key) {
 			if (!empty($this->{$key})) {
