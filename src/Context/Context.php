@@ -74,7 +74,7 @@ class Context {
 	}
 
 	public static function getTime(): int {
-		return (int) microtime(true) * 1000;
+		return (int) (microtime(true) * 1000);
 	}
 
 	private function __construct(SDK $sdk, ContextConfig $contextConfig, ContextDataProvider $dataProvider, ?ContextData $contextData = null) {
