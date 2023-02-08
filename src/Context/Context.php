@@ -18,7 +18,6 @@ use ABSmartly\SDK\VariantAssigner;
 use Exception;
 use Throwable;
 
-use function base64_encode;
 use function count;
 use function get_object_vars;
 use function gettype;
@@ -74,8 +73,8 @@ class Context {
 		return $this->closed;
 	}
 
-	protected function getTime(): int {
-		return (int) microtime(true) * 1000;
+	public static function getTime(): int {
+		return (int) (microtime(true) * 1000);
 	}
 
 	private function __construct(SDK $sdk, ContextConfig $contextConfig, ContextDataProvider $dataProvider, ?ContextData $contextData = null) {
@@ -84,6 +83,7 @@ class Context {
 		$this->setUnits($contextConfig->getUnits());
 		$this->setOverrides($contextConfig->getOverrides());
 		$this->setCustomAssignments($contextConfig->getCustomAssignments());
+		$this->setAttributes($contextConfig->getAttributes());
 
 		if ($logger = $contextConfig->getEventLogger()) {
 			$this->setEventLogger($logger);
@@ -243,11 +243,8 @@ class Context {
 		}
 		elseif ($experiment) {
 			$unitType = $experiment->data->unitType;
-			if (!empty($experiment->data->audience)) {
-				$attrs = [];
-				foreach ($this->attributes as $name => $value) {
-					$attrs[$name] = $value;
-				}
+			if (!empty($experiment->data->audience) && !empty((array) $experiment->data->audience)) {
+				$attrs = $this->getAttributes();
 
 				$result = $this->audienceMatcher->evaluate($experiment->data->audience, $attrs);
 				$assignment->audienceMismatch = !$result;
@@ -331,7 +328,12 @@ class Context {
 	}
 
 	public function setAttribute(string $name, string $value): Context {
-		$this->attributes[$name] = $value;
+		$this->attributes[] = (object) [
+			'name' => $name,
+			'value' => $value,
+			'setAt' => self::getTime(),
+		];
+
 		return $this;
 	}
 
@@ -341,6 +343,25 @@ class Context {
 		}
 
 		return $this;
+	}
+
+	public function getAttribute(string $name) {
+		foreach (array_reverse($this->attributes) as $attribute) {
+			if ($attribute->name === $name) {
+				return $attribute->value;
+			}
+		}
+
+		return null;
+	}
+
+	public function getAttributes(): array {
+		$result = [];
+		foreach ($this->attributes as $attribute) {
+			$result[$attribute->name] = $attribute->value;
+		}
+
+		return $result;
 	}
 
 	private function getVariantAssigner(string $unitType, string $unitHash): VariantAssigner {
@@ -517,6 +538,7 @@ class Context {
 		}
 
 		$event = $this->buildPublishEvent();
+
 		try {
 			$this->eventHandler->publish($event);
 			$this->logEvent(ContextEventLoggerEvent::Publish, $event);
@@ -530,11 +552,9 @@ class Context {
 
 	private function buildPublishEvent(): PublishEvent {
 		$event = new PublishEvent();
-		$event->publishedAt = $this->getTime();
-		$event->units = $this->units;
-		$event->hashed = true;
+		$event->setUnits($this->units);
+		$event->setAttributes($this->attributes);
 		$event->exposures = $this->exposures;
-		$event->attributes = $this->attributes;
 		$event->goals = $this->achievements;
 
 		return $event;
@@ -542,7 +562,7 @@ class Context {
 
 	public function track(string $goalName, ?object $properties = null): void {
 		$this->checkNotClosed();
-		$achievement = new GoalAchievement($goalName, $this->getTime(), $properties);
+		$achievement = new GoalAchievement($goalName, static::getTime(), $properties);
 		$this->achievements[] = $achievement;
 		++$this->pendingCount;
 
@@ -579,6 +599,5 @@ class Context {
 		$this->closed = true;
 		$this->sdk->close();
 	}
-
 
 }

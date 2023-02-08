@@ -13,7 +13,7 @@ use function rtrim;
 use const JSON_THROW_ON_ERROR;
 
 class Client {
-	protected const VERSION = '1.0';
+	protected const VERSION = '1.0.1';
 	private HTTPClient $httpClient;
 	private string $url;
 	private array $query;
@@ -56,7 +56,7 @@ class Client {
 	}
 
 	public function publish(PublishEvent $publishEvent): void {
-		$data = json_encode($publishEvent, JSON_THROW_ON_ERROR);
+		$data = $this->encode($publishEvent);
 		$this->httpClient->put($this->url, $this->query, $this->headers, $data);
 	}
 

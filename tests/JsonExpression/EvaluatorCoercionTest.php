@@ -103,7 +103,7 @@ class EvaluatorCoercionTest extends TestCase {
 		self::assertSame("-9007199254740991", Evaluator::stringConvert(-9007199254740991));
 
 		// Handling when numbers lose precision.
-		self::assertSame((string) number_format(0.9007199254740991, ini_get('precision') - 1), Evaluator::stringConvert(0.9007199254740991));
-		self::assertSame((string) number_format(-0.9007199254740991, ini_get('precision') - 1), Evaluator::stringConvert(-0.9007199254740991));
+		self::assertSame(number_format(0.9007199254740991, ini_get('precision') - 1), Evaluator::stringConvert(0.9007199254740991));
+		self::assertSame(number_format(-0.9007199254740991, ini_get('precision') - 1), Evaluator::stringConvert(-0.9007199254740991));
 	}
 }

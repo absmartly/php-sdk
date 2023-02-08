@@ -12,7 +12,9 @@ use ABSmartly\SDK\Context\ContextDataProvider;
 use ABSmartly\SDK\Context\ContextEventHandler;
 use ABSmartly\SDK\Context\ContextEventLogger;
 use ABSmartly\SDK\Context\ContextEventLoggerEvent;
+use ABSmartly\SDK\Exposure;
 use ABSmartly\SDK\GoalAchievement;
+use ABSmartly\SDK\PublishEvent;
 use ABSmartly\SDK\SDK;
 use ABSmartly\SDK\Tests\Mocks\ContextDataProviderMock;
 use ABSmartly\SDK\Tests\Mocks\ContextEventHandlerMock;
@@ -272,7 +274,7 @@ class ContextTest extends TestCase {
 	}
 
 	// Additional test
-	public function testSetUnitEmpty(): void {;
+	public function testSetUnitEmpty(): void {
 		$context = $this->createReadyContext();
 
 		$this->expectException(\InvalidArgumentException::class);
@@ -453,7 +455,7 @@ class ContextTest extends TestCase {
 
 		$context->publish();
 		self::assertArrayHasKey(0, $this->eventHandler->submitted);
-		self::assertSame('21', $this->eventHandler->submitted[0]->attributes->age);
+		self::assertSame('21', $this->eventHandler->submitted[0]->attributes[0]->value);
 		self::assertSame('exp_test_ab', $this->eventHandler->submitted[0]->exposures[0]->name);
 		self::assertFalse($this->eventHandler->submitted[0]->exposures[0]->audienceMismatch);
 	}
@@ -557,6 +559,28 @@ class ContextTest extends TestCase {
 		self::assertSame(0, $context->getTreatment("not_found"));
 
 		self::assertSame(count($context->getContextData()->experiments) + 1, $context->getPendingCount());
+
+		$context->publish();
+		$context->close();
+
+		$publishEvent = $this->eventHandler->submitted[0];
+		$time = (int) (microtime(true) * 1000);
+		$expected = [
+			Exposure::create(1, "exp_test_ab", "session_id", 1, $time, true, true, false, false, false, false),
+			Exposure::create(2, "exp_test_abc", "session_id", 2, $time, true, true, false, false, false, false),
+			Exposure::create(3, "exp_test_not_eligible", "user_id", 0, $time, true, false, false, false, false, false),
+			Exposure::create(4, "exp_test_fullon", "session_id", 2, $time, true, true, false, true, false,	false),
+			Exposure::create(0, "not_found", null, 0, $time, false, true, false, false, false, false),
+		];
+
+		foreach ($expected as $key => $exposure) {
+			$expectedExposure = (object)(array) $exposure;
+
+			// Avoid test failures because precision is lost during json decode/encode operation.
+			$publishEvent->exposures[$key]->exposedAt = (float) $time;
+
+			self::assertEquals($expectedExposure, $publishEvent->exposures[$key]);
+		}
 	}
 
 	public function testGetTreatmentStartsPublishTimeoutAfterExposure(): void {
@@ -608,8 +632,9 @@ class ContextTest extends TestCase {
 		$context->publish();
 
 		$event = $this->eventHandler->submitted[0];
-		self::assertSame('e791e240fcd3df7d238cfc285f475e8152fcc0ec', $event->units[0]->uid);
-		self::assertSame('21', $event->attributes->age);
+		self::assertSame('pAE3a1i5Drs5mKRNq56adA', $event->units[0]->uid);
+		self::assertSame('age', $event->attributes[0]->name);
+		self::assertSame('21', $event->attributes[0]->value);
 		self::assertFalse($event->exposures[0]->audienceMismatch);
 	}
 
@@ -623,8 +648,9 @@ class ContextTest extends TestCase {
 
 		$event = $this->eventHandler->submitted[0];
 
-		self::assertSame('e791e240fcd3df7d238cfc285f475e8152fcc0ec', $event->units[0]->uid);
+		self::assertSame('pAE3a1i5Drs5mKRNq56adA', $event->units[0]->uid);
 		self::assertTrue($event->exposures[0]->audienceMismatch);
+		self::assertTrue($event->hashed);
 	}
 
 	public function testGetTreatmentQueuesExposureWithAudienceMismatchTrueAndControlVariantOnAudienceMismatchInStrictMode(): void {
@@ -673,7 +699,7 @@ class ContextTest extends TestCase {
 		$context->publish();
 
 		$publishEvent = $this->eventHandler->submitted[0];
-		self::assertSame('e791e240fcd3df7d238cfc285f475e8152fcc0ec', $publishEvent->units[0]->uid);
+		self::assertSame('pAE3a1i5Drs5mKRNq56adA', $publishEvent->units[0]->uid);
 		self::assertSame('goal1', $publishEvent->goals[0]->name);
 		self::assertSame('goal2', $publishEvent->goals[1]->name);
 		self::assertSame('goal2', $publishEvent->goals[2]->name);
@@ -766,8 +792,7 @@ class ContextTest extends TestCase {
 		$context->publish();
 
 		$event = $this->eventHandler->submitted[0];
-
-		self::assertSame('2', $event->attributes->attr2);
+		self::assertSame('2', $event->attributes[1]->value);
 		self::assertSame(245, $event->goals[0]->properties->hours);
 		self::assertSame('not_found', $event->exposures[2]->name);
 
@@ -784,7 +809,7 @@ class ContextTest extends TestCase {
 		$context->publish();
 
 		$event = $this->eventHandler->submitted[1];
-		self::assertSame('2', $event->attributes->attr2);
+		self::assertSame('2', $event->attributes[1]->value);
 		self::assertSame(245, $event->goals[0]->properties->hours);
 		self::assertSame('not_found', $event->exposures[2]->name);
 
