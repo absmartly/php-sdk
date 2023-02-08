@@ -88,7 +88,12 @@ class ContextConfig {
 	}
 
 	public function setAttribute(string $name, $value): ContextConfig {
-		$this->attributes[$name] = $value;
+		$this->attributes[] = (object) [
+			'name' => $name,
+			'value' => $value,
+			'setAt' => Context::getTime(),
+		];
+
 		return $this;
 	}
 
@@ -100,12 +105,23 @@ class ContextConfig {
 		return $this;
 	}
 
-	public function getAttribute(string $name): ?object {
-		return $this->attributes[$name] ?? null;
+	public function getAttribute(string $name) {
+		foreach (array_reverse($this->attributes) as $attribute) {
+			if ($attribute->name === $name) {
+				return $attribute->value;
+			}
+		}
+
+		return null;
 	}
 
 	public function getAttributes(): array {
-		return $this->attributes;
+		$result = [];
+		foreach ($this->attributes as $attribute) {
+			$result[$attribute->name] = $attribute->value;
+		}
+
+		return $result;
 	}
 
 	public function setOverride(string $experimentName, int $variant): ContextConfig {

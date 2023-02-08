@@ -43,13 +43,7 @@ class PublishEvent implements JsonSerializable {
 	}
 
 	public function setAttributes(array $attributes): void {
-		foreach ($attributes as $field => $value) {
-			$this->attributes[] = (object) [
-				'name' => $field,
-				'value' => $value,
-				'setAt' => $this->publishedAt,
-			];
-		}
+		$this->attributes = $attributes;
 	}
 	public function jsonSerialize(): object {
 		$this->publishedAt = Context::getTime();

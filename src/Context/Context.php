@@ -244,10 +244,7 @@ class Context {
 		elseif ($experiment) {
 			$unitType = $experiment->data->unitType;
 			if (!empty($experiment->data->audience) && !empty((array) $experiment->data->audience)) {
-				$attrs = [];
-				foreach ($this->attributes as $name => $value) {
-					$attrs[$name] = $value;
-				}
+				$attrs = $this->getAttributes();
 
 				$result = $this->audienceMatcher->evaluate($experiment->data->audience, $attrs);
 				$assignment->audienceMismatch = !$result;
@@ -331,7 +328,12 @@ class Context {
 	}
 
 	public function setAttribute(string $name, string $value): Context {
-		$this->attributes[$name] = $value;
+		$this->attributes[] = (object) [
+			'name' => $name,
+			'value' => $value,
+			'setAt' => self::getTime(),
+		];
+
 		return $this;
 	}
 
@@ -341,6 +343,25 @@ class Context {
 		}
 
 		return $this;
+	}
+
+	public function getAttribute(string $name) {
+		foreach (array_reverse($this->attributes) as $attribute) {
+			if ($attribute->name === $name) {
+				return $attribute->value;
+			}
+		}
+
+		return null;
+	}
+
+	public function getAttributes(): array {
+		$result = [];
+		foreach ($this->attributes as $attribute) {
+			$result[$attribute->name] = $attribute->value;
+		}
+
+		return $result;
 	}
 
 	private function getVariantAssigner(string $unitType, string $unitHash): VariantAssigner {
