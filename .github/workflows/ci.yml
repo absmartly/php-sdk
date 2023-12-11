@@ -1,8 +1,4 @@
-on:
-  push:
-  pull_request:
-  schedule:
-    - cron: '0 0 */3 * *'
+on: [push]
 name: CI
 
 jobs:

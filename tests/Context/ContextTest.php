@@ -505,6 +505,38 @@ class ContextTest extends TestCase {
 		self::assertEquals($this->variableExperiments, $context->getVariableKeys());
 	}
 
+    public function testGetFieldValueKeys(): void {
+        $context = $this->createReadyContext();
+        self::assertEquals(['country', 'languages', 'overrides'], $context->getCustomFieldKeys());
+    }
+
+    public function testGetFieldValueValues(): void {
+        $context = $this->createReadyContext();
+        self::assertEquals(null, $context->getCustomFieldValue('not_found', 'not_found'));
+        self::assertEquals(null, $context->getCustomFieldValue('exp_test_ab', 'not_found'));
+        self::assertEquals("US,PT,ES,DE,FR", $context->getCustomFieldValue('exp_test_ab', 'country'));
+        self::assertEquals((object)array('123' => 1, '456' => 0), $context->getCustomFieldValue('exp_test_ab', 'overrides'));
+        self::assertEquals("json", $context->getCustomFieldValueType('exp_test_ab', 'overrides'));
+
+        self::assertEquals(null, $context->getCustomFieldValue('exp_test_ab', 'languages'));
+        self::assertEquals(null, $context->getCustomFieldValueType('exp_test_ab', 'languages'));
+
+        self::assertEquals(null, $context->getCustomFieldValue('exp_test_abc', 'overrides'));
+        self::assertEquals(null, $context->getCustomFieldValueType('exp_test_abc', 'overrides'));
+
+        self::assertEquals("en-US,en-GB,pt-PT,pt-BR,es-ES,es-MX", $context->getCustomFieldValue('exp_test_abc', 'languages'));
+        self::assertEquals("string", $context->getCustomFieldValueType('exp_test_abc', 'languages'));
+
+        self::assertEquals(null, $context->getCustomFieldValue('exp_test_no_custom_fields', 'country'));
+        self::assertEquals(null, $context->getCustomFieldValueType('exp_test_no_custom_fields', 'country'));
+
+        self::assertEquals(null, $context->getCustomFieldValue('exp_test_no_custom_fields', 'overrides'));
+        self::assertEquals(null, $context->getCustomFieldValueType('exp_test_no_custom_fields', 'overrides'));
+
+        self::assertEquals(null, $context->getCustomFieldValue('exp_test_no_custom_fields', 'languages'));
+        self::assertEquals(null, $context->getCustomFieldValueType('exp_test_no_custom_fields', 'languages'));
+    }
+
 	public function testPeekTreatmentReturnsOverrideVariant(): void {
 		$context = $this->createReadyContext();
 
