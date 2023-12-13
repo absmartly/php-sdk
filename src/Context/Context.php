@@ -4,6 +4,7 @@ namespace ABSmartly\SDK\Context;
 
 use ABSmartly\SDK\Assignment;
 use ABSmartly\SDK\AudienceMatcher;
+use ABSmartly\SDK\ContextCustomFieldValue;
 use ABSmartly\SDK\Exception\InvalidArgumentException;
 use ABSmartly\SDK\Exception\LogicException;
 use ABSmartly\SDK\Experiment;
@@ -44,6 +45,7 @@ class Context {
 
 	private array $index;
 	private array $indexVariables;
+	private array $contextCustomFields;
 
 
 	private array $hashedUnits;
@@ -124,6 +126,8 @@ class Context {
 		$this->data = $data;
 		$this->index = [];
 		$this->indexVariables = [];
+		$this->contextCustomFields = [];
+		$experimentCustomFields = [];
 
 		foreach ($data->experiments as $experiment) {
 			$experimentVariables = new ExperimentVariables();
@@ -148,7 +152,35 @@ class Context {
 				$experimentVariables->variables[] = $parsed;
 			}
 
+			if (
+				property_exists($experiment, 'customFieldValues') &&
+				$experiment->customFieldValues !== null) {
+				$experimentCustomFields = [];
+				foreach ($experiment->customFieldValues as $customFieldValue) {
+					$type = $customFieldValue->type;
+					$value = new ContextCustomFieldValue();
+					$value->type = $type;
+
+					if ($customFieldValue->value !== null) {
+						$customValue = $customFieldValue->value;
+
+						if (strpos($type, 'json') > -1) {
+							$value->value = $this->variableParser->parse($experiment->name, $customValue);
+						} else if (strpos($type, 'boolean') > -1) {
+							$value->value = settype($customValue, 'boolean');
+						} else if (strpos($type, 'number') > -1) {
+							$value->value = settype($customValue, 'int');
+						} else {
+							$value->value = $customValue;
+						}
+					}
+					$experimentCustomFields[$customFieldValue->name] = $value;
+				}
+			}
+
+
 			$this->index[$experiment->name] = $experimentVariables;
+			$this->contextCustomFields[$experiment->name] = $experimentCustomFields;
 		}
 	}
 
@@ -316,6 +348,52 @@ class Context {
 		}
 
 		return $assignment->variables->{$key} ?? $defaultValue;
+	}
+
+	public function getCustomFieldKeys(): array{
+		$return = [];
+		foreach ($this->data->experiments as $experiment) {
+			if (property_exists($experiment, 'customFieldValues')) {
+				$customFieldValues = $experiment->customFieldValues;
+				if ($customFieldValues != null) {
+					foreach ($experiment->customFieldValues as $customFieldValue) {
+						$return[] = $customFieldValue->name;
+					}
+				}
+			}
+		}
+		$return = array_unique($return);
+		sort($return);
+		return $return;
+	}
+
+	public function getCustomFieldValue(string $environmentName, string $key){
+		if (array_key_exists($environmentName, $this->contextCustomFields)) {
+			$customFieldValues = $this->contextCustomFields[$environmentName];
+			if (array_key_exists($key, $customFieldValues)) {
+				$field = $customFieldValues[$key];
+				if ($field != null) {
+					return $field->value;
+				}
+			}
+		}
+
+		return null;
+	}
+
+	public function getCustomFieldValueType(string $environmentName, string $key)
+	{
+		if (array_key_exists($environmentName, $this->contextCustomFields)) {
+			$customFieldValues = $this->contextCustomFields[$environmentName];
+			if (array_key_exists($key, $customFieldValues)) {
+				$field = $customFieldValues[$key];
+				if ($field != null) {
+					return $field->type;
+				}
+			}
+		}
+
+		return null;
 	}
 
 	public function getVariableKeys(): array {
