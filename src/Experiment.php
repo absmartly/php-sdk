@@ -25,6 +25,7 @@ class Experiment {
 	public bool $audienceStrict;
 	public array $applications;
 	public array $variants;
+	public ?array $customFieldValues;
 
 	public function __construct(object $data) {
 		if (!empty($data->audience)) {
@@ -34,6 +35,7 @@ class Experiment {
 			$this->audience = null;
 		}
 
+		$this->customFieldValues = null;
 
 		$data = get_object_varsAlias($data);
 		foreach ($data as $field => $value) {
