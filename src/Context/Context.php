@@ -250,7 +250,7 @@ class Context {
 				$assignment->audienceMismatch = !$result;
 			}
 
-			if (isset($experiment->data->audienceStrict) && !empty($assignment->audienceMismatch)) {
+			if (isset($experiment->data->audienceStrict) && $experiment->data->audienceStrict === true && !empty($assignment->audienceMismatch)) {
 				$assignment->variant = 0;
 			}
 			else if (empty($experiment->data->fullOnVariant) && $uid = $this->units[$experiment->data->unitType] ?? null) {
