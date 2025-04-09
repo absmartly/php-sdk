@@ -1140,4 +1140,42 @@ class ContextTest extends TestCase {
 
 		self::assertSame(3, $context->getPendingCount());
 	}
+
+	public function testPeekTreatmentReturnsAssignedVariantOnAudienceMismatchWithExplicitFalseStrictMode(): void {
+		$context = $this->createReadyContext('audience_false_strict_context.json');
+		self::assertSame(1, $context->peekTreatment("exp_test_ab"));
+	}
+
+	public function testGetTreatmentWithMatchingAudienceAndExplicitFalseStrictMode(): void {
+		$context = $this->createReadyContext('audience_false_strict_context.json');
+		$context->setAttribute('age', 21);
+		
+		self::assertSame(1, $context->getTreatment("exp_test_ab"));
+		self::assertSame(1, $context->getPendingCount());
+		
+		$context->publish();
+		self::assertArrayHasKey(0, $this->eventHandler->submitted);
+		self::assertSame('21', $this->eventHandler->submitted[0]->attributes[0]->value);
+		self::assertSame('exp_test_ab', $this->eventHandler->submitted[0]->exposures[0]->name);
+		self::assertFalse($this->eventHandler->submitted[0]->exposures[0]->audienceMismatch);
+	}
+
+	public function testPeekVariableValueReturnsAssignedVariantOnAudienceMismatchWithExplicitFalseStrictMode(): void {
+		$context = $this->createReadyContext('audience_false_strict_context.json');
+		self::assertSame("large", $context->peekVariableValue("banner.size", "small"));
+	}
+
+	public function testGetVariableValueWithMatchingAudienceAndExplicitFalseStrictMode(): void {
+		$context = $this->createReadyContext('audience_false_strict_context.json');
+		$context->setAttribute('age', 21);
+		
+		self::assertSame("large", $context->getVariableValue("banner.size", "small"));
+		self::assertSame(1, $context->getPendingCount());
+		
+		$context->publish();
+		self::assertArrayHasKey(0, $this->eventHandler->submitted);
+		self::assertSame('21', $this->eventHandler->submitted[0]->attributes[0]->value);
+		self::assertSame('exp_test_ab', $this->eventHandler->submitted[0]->exposures[0]->name);
+		self::assertFalse($this->eventHandler->submitted[0]->exposures[0]->audienceMismatch);
+	}
 }

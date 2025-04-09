@@ -45,7 +45,7 @@ class HTTPClient {
 	public int $retries = 5;
 	public int $timeout = 3000;
 
-	private function setupRequest(string $url, array $query = [], array $headers = [], string $type = 'GET', string $data = null): void {
+    private function setupRequest(string $url, array $query = [], array $headers = [], string $type = 'GET', ?string $data = null): void {
 		$this->curlInit();
 		$flatHeaders = [];
 		foreach ($headers as $header => $value) {
