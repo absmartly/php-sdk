@@ -60,6 +60,7 @@ class Context {
 	private int $pendingCount = 0;
 	private bool $closed = false;
 	private bool $ready;
+	private int $attrsSeq = 0;
 
 	public function isReady(): bool {
 		return $this->ready;
@@ -71,6 +72,10 @@ class Context {
 
 	public function isClosed(): bool {
 		return $this->closed;
+	}
+
+	public function pending(): int {
+		return $this->pendingCount;
 	}
 
 	public static function getTime(): int {
@@ -194,6 +199,46 @@ class Context {
 		return $return;
 	}
 
+	public function customFieldValue(string $experimentName, string $fieldName) {
+		$experiment = $this->getExperiment($experimentName);
+		if ($experiment === null || !isset($experiment->data->customFieldValues)) {
+			return null;
+		}
+
+		$customFieldValues = $experiment->data->customFieldValues;
+		if (is_string($customFieldValues)) {
+			$customFieldValues = json_decode($customFieldValues, true);
+		}
+
+		if (is_object($customFieldValues)) {
+			$customFieldValues = get_object_vars($customFieldValues);
+		}
+
+		if (!isset($customFieldValues[$fieldName])) {
+			return null;
+		}
+
+		$value = $customFieldValues[$fieldName];
+		$type = $customFieldValues[$fieldName . '_type'] ?? null;
+
+		if ($type === 'json' && is_string($value)) {
+			return json_decode($value, true);
+		}
+
+		if ($type === 'number' && is_string($value)) {
+			if (strpos($value, '.') !== false) {
+				return (float) $value;
+			}
+			return (int) $value;
+		}
+
+		if (str_starts_with($type ?? '', 'boolean') && is_string($value)) {
+			return $value === 'true' || $value === '1';
+		}
+
+		return $value;
+	}
+
 	private function experimentMatches(Experiment $experiment, Assignment $assignment): bool {
 		return $experiment->id === $assignment->id &&
 			$experiment->unitType === $assignment->unitType &&
@@ -202,12 +247,30 @@ class Context {
 			$experiment->trafficSplit === $assignment->trafficSplit;
 	}
 
+	private function audienceMatches(Experiment $experiment, Assignment $assignment): bool {
+		if (!empty($experiment->audience) && !empty((array) $experiment->audience)) {
+			if ($this->attrsSeq > ($assignment->attrsSeq ?? 0)) {
+				$attrs = $this->getAttributes();
+				$result = $this->audienceMatcher->evaluate($experiment->audience, $attrs);
+				$newAudienceMismatch = !$result;
+
+				if ($newAudienceMismatch !== $assignment->audienceMismatch) {
+					return false;
+				}
+
+				$assignment->attrsSeq = $this->attrsSeq;
+			}
+		}
+		return true;
+	}
+
 	private function getAssignment(string $experimentName): Assignment {
 		$experiment = $this->getExperiment($experimentName);
 
 		if (isset($this->assignmentCache[$experimentName])) {
 			$assignment = $this->assignmentCache[$experimentName];
-			if ($override = $this->overrides[$experimentName] ?? false) {
+			if (array_key_exists($experimentName, $this->overrides)) {
+				$override = $this->overrides[$experimentName];
 				if ($assignment->overridden && $assignment->variant === $override) {
 					// override up-to-date
 					return $assignment;
@@ -219,7 +282,7 @@ class Context {
 					return $assignment;
 				}
 			} else if (!isset($this->cassignments[$experimentName]) || $this->cassignments[$experimentName] === $assignment->variant) {
-				if ($this->experimentMatches($experiment->data, $assignment)) {
+				if ($this->experimentMatches($experiment->data, $assignment) && $this->audienceMatches($experiment->data, $assignment)) {
 					// assignment up-to-date
 					return $assignment;
 				}
@@ -250,7 +313,7 @@ class Context {
 				$assignment->audienceMismatch = !$result;
 			}
 
-			if (isset($experiment->data->audienceStrict) && !empty($assignment->audienceMismatch)) {
+			if (!empty($experiment->data->audienceStrict) && !empty($assignment->audienceMismatch)) {
 				$assignment->variant = 0;
 			}
 			else if (empty($experiment->data->fullOnVariant) && $uid = $this->units[$experiment->data->unitType] ?? null) {
@@ -296,9 +359,11 @@ class Context {
 			$assignment->fullOnVariant = $experiment->data->fullOnVariant;
 		}
 
-		if (($experiment !== null) && ($assignment->variant < count($experiment->data->variants))) {
+		if (($experiment !== null) && $assignment->variant >= 0 && ($assignment->variant < count($experiment->data->variants))) {
 			$assignment->variables = $experiment->variables[$assignment->variant];
 		}
+
+		$assignment->attrsSeq = $this->attrsSeq;
 
 		return $assignment;
 	}
@@ -311,11 +376,14 @@ class Context {
 			return $defaultValue;
 		}
 
-		if (empty($assignment->exposed)) {
-			$this->queueExposure($assignment);
+		if ($assignment->variables !== null && isset($assignment->variables->{$key})) {
+			if (empty($assignment->exposed)) {
+				$this->queueExposure($assignment);
+			}
+			return $assignment->variables->{$key};
 		}
 
-		return $assignment->variables->{$key} ?? $defaultValue;
+		return $defaultValue;
 	}
 
 	public function getVariableKeys(): array {
@@ -327,12 +395,13 @@ class Context {
 		return $return;
 	}
 
-	public function setAttribute(string $name, string $value): Context {
+	public function setAttribute(string $name, $value): Context {
 		$this->attributes[] = (object) [
 			'name' => $name,
 			'value' => $value,
 			'setAt' => self::getTime(),
 		];
+		++$this->attrsSeq;
 
 		return $this;
 	}
@@ -455,6 +524,14 @@ class Context {
 		}
 
 		return $this;
+	}
+
+	public function getUnit(string $unitType) {
+		return $this->units[$unitType] ?? null;
+	}
+
+	public function getUnits(): array {
+		return $this->units;
 	}
 
 	public function setOverrides(array $overrides): Context {
@@ -595,7 +672,7 @@ class Context {
 			return;
 		}
 
-		$this->logEvent(ContextEventLoggerEvent::Close, null);
+		$this->logEvent(ContextEventLoggerEvent::Finalize, null);
 		$this->closed = true;
 		$this->sdk->close();
 	}

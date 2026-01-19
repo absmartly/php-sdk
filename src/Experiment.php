@@ -25,6 +25,7 @@ class Experiment {
 	public bool $audienceStrict;
 	public array $applications;
 	public array $variants;
+	public ?object $customFieldValues = null;
 
 	public function __construct(object $data) {
 		if (!empty($data->audience)) {
