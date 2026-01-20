@@ -376,11 +376,14 @@ class Context {
 			return $defaultValue;
 		}
 
-		if ($assignment->variables !== null && isset($assignment->variables->{$key})) {
+		if ($assignment->variables !== null) {
 			if (empty($assignment->exposed)) {
 				$this->queueExposure($assignment);
 			}
-			return $assignment->variables->{$key};
+
+			if (isset($assignment->variables->{$key}) && ($assignment->assigned || $assignment->overridden)) {
+				return $assignment->variables->{$key};
+			}
 		}
 
 		return $defaultValue;
