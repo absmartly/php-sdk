@@ -455,7 +455,7 @@ class ContextTest extends TestCase {
 
 		$context->publish();
 		self::assertArrayHasKey(0, $this->eventHandler->submitted);
-		self::assertSame('21', $this->eventHandler->submitted[0]->attributes[0]->value);
+		self::assertSame(21, $this->eventHandler->submitted[0]->attributes[0]->value);
 		self::assertSame('exp_test_ab', $this->eventHandler->submitted[0]->exposures[0]->name);
 		self::assertFalse($this->eventHandler->submitted[0]->exposures[0]->audienceMismatch);
 	}
@@ -634,7 +634,7 @@ class ContextTest extends TestCase {
 		$event = $this->eventHandler->submitted[0];
 		self::assertSame('pAE3a1i5Drs5mKRNq56adA', $event->units[0]->uid);
 		self::assertSame('age', $event->attributes[0]->name);
-		self::assertSame('21', $event->attributes[0]->value);
+		self::assertSame(21, $event->attributes[0]->value);
 		self::assertFalse($event->exposures[0]->audienceMismatch);
 	}
 
@@ -792,7 +792,7 @@ class ContextTest extends TestCase {
 		$context->publish();
 
 		$event = $this->eventHandler->submitted[0];
-		self::assertSame('2', $event->attributes[1]->value);
+		self::assertSame(2, $event->attributes[1]->value);
 		self::assertSame(245, $event->goals[0]->properties->hours);
 		self::assertSame('not_found', $event->exposures[2]->name);
 
@@ -809,7 +809,7 @@ class ContextTest extends TestCase {
 		$context->publish();
 
 		$event = $this->eventHandler->submitted[1];
-		self::assertSame('2', $event->attributes[1]->value);
+		self::assertSame(2, $event->attributes[1]->value);
 		self::assertSame(245, $event->goals[0]->properties->hours);
 		self::assertSame('not_found', $event->exposures[2]->name);
 
@@ -870,7 +870,7 @@ class ContextTest extends TestCase {
 		$logger->clear();
 		$context->close();
 
-		self::assertSame(ContextEventLoggerEvent::Close, $logger->events[0]->getEvent());
+		self::assertSame(ContextEventLoggerEvent::Finalize, $logger->events[0]->getEvent());
 	}
 
 	public function testCloseCallsEventLoggerWithPendingEvents(): void {
@@ -882,7 +882,7 @@ class ContextTest extends TestCase {
 		self::assertSame(ContextEventLoggerEvent::Ready, $logger->events[0]->getEvent());
 		self::assertSame(ContextEventLoggerEvent::Goal, $logger->events[1]->getEvent());
 		self::assertSame(ContextEventLoggerEvent::Publish, $logger->events[2]->getEvent());
-		self::assertSame(ContextEventLoggerEvent::Close, $logger->events[3]->getEvent());
+		self::assertSame(ContextEventLoggerEvent::Finalize, $logger->events[3]->getEvent());
 	}
 
 	public function testCloseCallsEventLoggerOnError(): void {
@@ -927,7 +927,7 @@ class ContextTest extends TestCase {
 		self::assertSame(ContextEventLoggerEvent::Goal, $logger->events[1]->getEvent());
 		self::assertSame(ContextEventLoggerEvent::Refresh, $logger->events[2]->getEvent());
 		self::assertSame(ContextEventLoggerEvent::Publish, $logger->events[3]->getEvent());
-		self::assertSame(ContextEventLoggerEvent::Close, $logger->events[4]->getEvent());
+		self::assertSame(ContextEventLoggerEvent::Finalize, $logger->events[4]->getEvent());
 	}
 
 	public function testRefreshCallsEventLoggerOnError(): void {
