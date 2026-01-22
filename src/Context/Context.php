@@ -320,10 +320,10 @@ class Context {
 				//$unitHash = $this->getUnitHash($unitType, $uid);
 				$assigner = $this->getVariantAssigner($unitType, $uid);
 
-				$eligible = $assigner->assign(
+					$eligible = $assigner->assign(
 					$experiment->data->trafficSplit,
-					$experiment->data->seedHi,
-					$experiment->data->seedLo
+					$experiment->data->trafficSeedHi,
+					$experiment->data->trafficSeedLo
 				);
 				if ($eligible === 1) {
 					$custom = $this->cassignments[$experimentName] ?? null;
