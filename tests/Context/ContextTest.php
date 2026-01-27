@@ -1140,4 +1140,462 @@ class ContextTest extends TestCase {
 
 		self::assertSame(3, $context->getPendingCount());
 	}
+
+	/*
+	 * =============================================================================
+	 *                      PHASE 1: FAILED STATE TESTING
+	 * =============================================================================
+	 */
+
+	public function testFailedStateInitialization(): void {
+		$clientConfig = new ClientConfig('https://demo.absmartly.io/v1', '', '', '');
+		$client = new Client($clientConfig);
+		$config = new Config($client);
+
+		$dataProvider = new ContextDataProviderMock($client);
+		$dataProvider->prerun = static function() {
+			throw new \RuntimeException('Connection failed during initialization');
+		};
+		$config->setContextDataProvider($dataProvider);
+
+		$eventHandler = new ContextEventHandlerMock($client);
+		$contextConfig = new ContextConfig();
+		$contextConfig->setEventHandler($eventHandler);
+		$context = (new SDK($config))->createContext($contextConfig);
+
+		self::assertTrue($context->isReady());
+		self::assertTrue($context->isFailed());
+	}
+
+	public function testIsFailedReturnsTrue(): void {
+		$clientConfig = new ClientConfig('https://demo.absmartly.io/v1', '', '', '');
+		$client = new Client($clientConfig);
+		$config = new Config($client);
+
+		$dataProvider = new ContextDataProviderMock($client);
+		$dataProvider->prerun = static function() {
+			throw new \RuntimeException('Server unavailable');
+		};
+		$config->setContextDataProvider($dataProvider);
+
+		$eventHandler = new ContextEventHandlerMock($client);
+		$contextConfig = new ContextConfig();
+		$contextConfig->setEventHandler($eventHandler);
+		$context = (new SDK($config))->createContext($contextConfig);
+
+		self::assertTrue($context->isFailed());
+		self::assertFalse($context->isClosed());
+	}
+
+	public function testOperationsOnFailedContext(): void {
+		$clientConfig = new ClientConfig('https://demo.absmartly.io/v1', '', '', '');
+		$client = new Client($clientConfig);
+		$config = new Config($client);
+
+		$dataProvider = new ContextDataProviderMock($client);
+		$dataProvider->prerun = static function() {
+			throw new \RuntimeException('Init failure');
+		};
+		$config->setContextDataProvider($dataProvider);
+
+		$eventHandler = new ContextEventHandlerMock($client);
+		$contextConfig = new ContextConfig();
+		$contextConfig->setEventHandler($eventHandler);
+		$contextConfig->setUnits($this->units);
+		$context = (new SDK($config))->createContext($contextConfig);
+
+		self::assertTrue($context->isFailed());
+
+		self::assertSame(0, $context->getTreatment('any_experiment'));
+		self::assertSame(1, $context->getPendingCount());
+
+		$context->track('goal1', (object) ['amount' => 100]);
+		self::assertSame(2, $context->getPendingCount());
+
+		$context->publish();
+		self::assertEmpty($eventHandler->submitted);
+		self::assertSame(0, $context->getPendingCount());
+	}
+
+	public function testRecoveryFromFailedState(): void {
+		$clientConfig = new ClientConfig('https://demo.absmartly.io/v1', '', '', '');
+		$client = new Client($clientConfig);
+		$config = new Config($client);
+
+		$callCount = 0;
+		$dataProvider = new ContextDataProviderMock($client);
+		$dataProvider->prerun = static function() use (&$callCount) {
+			$callCount++;
+			if ($callCount === 1) {
+				throw new \RuntimeException('First call fails');
+			}
+		};
+		$config->setContextDataProvider($dataProvider);
+
+		$eventHandler = new ContextEventHandlerMock($client);
+		$contextConfig = new ContextConfig();
+		$contextConfig->setEventHandler($eventHandler);
+		$context = (new SDK($config))->createContext($contextConfig);
+
+		self::assertTrue($context->isFailed());
+		self::assertSame(1, $callCount);
+
+		$context->refresh();
+		self::assertSame(2, $callCount);
+	}
+
+	/*
+	 * =============================================================================
+	 *                    PHASE 2: ATTRIBUTE MANAGEMENT
+	 * =============================================================================
+	 */
+
+	public function testSetAttribute(): void {
+		$context = $this->createReadyContext();
+
+		$context->setAttribute('user_age', 25);
+		self::assertSame(25, $context->getAttribute('user_age'));
+
+		$context->setAttribute('country', 'US');
+		self::assertSame('US', $context->getAttribute('country'));
+	}
+
+	public function testSetAttributes(): void {
+		$context = $this->createReadyContext();
+
+		$context->setAttributes([
+			'tier' => 'premium',
+			'score' => 100,
+			'active' => true,
+		]);
+
+		self::assertSame('premium', $context->getAttribute('tier'));
+		self::assertSame(100, $context->getAttribute('score'));
+		self::assertTrue($context->getAttribute('active'));
+	}
+
+	public function testGetAttribute(): void {
+		$context = $this->createReadyContext();
+
+		self::assertNull($context->getAttribute('nonexistent'));
+
+		$context->setAttribute('name', 'John');
+		self::assertSame('John', $context->getAttribute('name'));
+
+		$context->setAttribute('name', 'Jane');
+		self::assertSame('Jane', $context->getAttribute('name'));
+	}
+
+	public function testAttributePersistenceAcrossPublish(): void {
+		$context = $this->createReadyContext();
+
+		$context->setAttribute('persistent_attr', 'value1');
+		$context->getTreatment('exp_test_ab');
+
+		$context->publish();
+
+		self::assertSame('value1', $context->getAttribute('persistent_attr'));
+
+		$context->track('goal1');
+		$context->publish();
+
+		self::assertSame('value1', $context->getAttribute('persistent_attr'));
+		self::assertCount(2, $this->eventHandler->submitted);
+	}
+
+	public function testAttributeInPublishedEvent(): void {
+		$context = $this->createReadyContext();
+
+		$context->setAttribute('plan', 'enterprise');
+		$context->setAttribute('seats', 50);
+		$context->getTreatment('exp_test_ab');
+
+		$context->publish();
+
+		self::assertCount(1, $this->eventHandler->submitted);
+		$event = $this->eventHandler->submitted[0];
+
+		$attributeNames = array_map(fn($attr) => $attr->name, $event->attributes);
+		self::assertContains('plan', $attributeNames);
+		self::assertContains('seats', $attributeNames);
+	}
+
+	/*
+	 * =============================================================================
+	 *                       PHASE 4: ERROR HANDLING
+	 * =============================================================================
+	 */
+
+	public function testInvalidExperimentName(): void {
+		$context = $this->createReadyContext();
+
+		self::assertSame(0, $context->getTreatment(''));
+		self::assertSame(0, $context->getTreatment('nonexistent_experiment'));
+		self::assertSame(0, $context->getTreatment('exp_with_special_chars!@#'));
+	}
+
+	public function testMalformedContextData(): void {
+		$context = $this->createReadyContext();
+
+		$context->setOverride('exp_test_ab', 999);
+		self::assertSame(999, $context->getTreatment('exp_test_ab'));
+
+		$context->setCustomAssignment('exp_test_abc', -1);
+		self::assertSame(-1, $context->getTreatment('exp_test_abc'));
+	}
+
+	public function testNetworkErrorRecovery(): void {
+		$logger = new MockContextEventLoggerProxy();
+		$context = $this->createReadyContext('context.json', true, $logger);
+
+		$this->eventHandler->prerun = static function() {
+			throw new \RuntimeException('Network timeout');
+		};
+
+		$context->track('goal1');
+		$context->publish();
+
+		self::assertTrue($context->isFailed());
+
+		$errorEvents = array_filter($logger->events, fn($e) => $e->getEvent() === ContextEventLoggerEvent::Error);
+		self::assertNotEmpty($errorEvents);
+
+		$lastError = array_values($errorEvents)[count($errorEvents) - 1];
+		self::assertInstanceOf(\Throwable::class, $lastError->getData());
+		self::assertStringContainsString('Network timeout', $lastError->getData()->getMessage());
+	}
+
+	public function testPartialResponseHandling(): void {
+		$context = $this->createReadyContext();
+
+		$experiments = $context->getExperiments();
+		self::assertNotEmpty($experiments);
+
+		foreach ($experiments as $experimentName) {
+			$treatment = $context->getTreatment($experimentName);
+			self::assertIsInt($treatment);
+			self::assertGreaterThanOrEqual(0, $treatment);
+		}
+
+		self::assertSame(0, $context->getTreatment('missing_experiment'));
+	}
+
+	/*
+	 * =============================================================================
+	 *                   PHASE 5: EVENT HANDLER SCENARIOS
+	 * =============================================================================
+	 */
+
+	public function testEventHandlerAllEventTypes(): void {
+		$logger = new MockContextEventLoggerProxy();
+		$context = $this->createReadyContext('context.json', true, $logger);
+
+		$context->getTreatment('exp_test_ab');
+		$context->track('goal1', (object) ['amount' => 100]);
+		$context->publish();
+		$context->refresh();
+		$context->close();
+
+		$eventTypes = array_map(fn($e) => $e->getEvent(), $logger->events);
+
+		self::assertContains(ContextEventLoggerEvent::Ready, $eventTypes);
+		self::assertContains(ContextEventLoggerEvent::Exposure, $eventTypes);
+		self::assertContains(ContextEventLoggerEvent::Goal, $eventTypes);
+		self::assertContains(ContextEventLoggerEvent::Publish, $eventTypes);
+		self::assertContains(ContextEventLoggerEvent::Refresh, $eventTypes);
+		self::assertContains(ContextEventLoggerEvent::Finalize, $eventTypes);
+	}
+
+	public function testEventHandlerErrorInCallback(): void {
+		$logger = new MockContextEventLoggerProxy();
+		$context = $this->createReadyContext('context.json', true, $logger);
+
+		$this->eventHandler->prerun = static function() {
+			throw new \RuntimeException('Handler error');
+		};
+
+		$context->track('goal1');
+		$context->publish();
+
+		$errorEvents = array_filter($logger->events, fn($e) => $e->getEvent() === ContextEventLoggerEvent::Error);
+		self::assertNotEmpty($errorEvents);
+
+		$errorEvent = array_values($errorEvents)[0];
+		self::assertInstanceOf(\Throwable::class, $errorEvent->getData());
+	}
+
+	public function testEventHandlerOrdering(): void {
+		$logger = new MockContextEventLoggerProxy();
+		$context = $this->createReadyContext('context.json', true, $logger);
+
+		$logger->clear();
+
+		$context->getTreatment('exp_test_ab');
+		$context->track('goal1');
+		$context->publish();
+		$context->close();
+
+		$events = $logger->events;
+		$eventTypes = array_map(fn($e) => $e->getEvent(), $events);
+
+		$exposureIndex = array_search(ContextEventLoggerEvent::Exposure, $eventTypes);
+		$goalIndex = array_search(ContextEventLoggerEvent::Goal, $eventTypes);
+		$publishIndex = array_search(ContextEventLoggerEvent::Publish, $eventTypes);
+		$finalizeIndex = array_search(ContextEventLoggerEvent::Finalize, $eventTypes);
+
+		self::assertLessThan($goalIndex, $exposureIndex);
+		self::assertLessThan($publishIndex, $goalIndex);
+		self::assertLessThan($finalizeIndex, $publishIndex);
+	}
+
+	public function testEventHandlerReceivesCorrectData(): void {
+		$logger = new MockContextEventLoggerProxy();
+		$context = $this->createReadyContext('context.json', true, $logger);
+
+		$logger->clear();
+
+		$context->getTreatment('exp_test_ab');
+		$context->track('custom_goal', (object) ['value' => 42]);
+		$context->publish();
+
+		$exposureEvents = array_filter($logger->events, fn($e) => $e->getEvent() === ContextEventLoggerEvent::Exposure);
+		$goalEvents = array_filter($logger->events, fn($e) => $e->getEvent() === ContextEventLoggerEvent::Goal);
+		$publishEvents = array_filter($logger->events, fn($e) => $e->getEvent() === ContextEventLoggerEvent::Publish);
+
+		self::assertCount(1, $exposureEvents);
+		self::assertCount(1, $goalEvents);
+		self::assertCount(1, $publishEvents);
+
+		$exposure = array_values($exposureEvents)[0]->getData();
+		self::assertInstanceOf(Exposure::class, $exposure);
+		self::assertSame('exp_test_ab', $exposure->name);
+
+		$goal = array_values($goalEvents)[0]->getData();
+		self::assertInstanceOf(GoalAchievement::class, $goal);
+		self::assertSame('custom_goal', $goal->name);
+		self::assertSame(42, $goal->properties->value);
+
+		$publish = array_values($publishEvents)[0]->getData();
+		self::assertInstanceOf(PublishEvent::class, $publish);
+	}
+
+	/*
+	 * =============================================================================
+	 *                     PHASE 6: INTEGRATION SCENARIOS
+	 * =============================================================================
+	 */
+
+	public function testFullLifecycle(): void {
+		$logger = new MockContextEventLoggerProxy();
+		$context = $this->createReadyContext('context.json', true, $logger);
+
+		self::assertTrue($context->isReady());
+		self::assertFalse($context->isFailed());
+		self::assertFalse($context->isClosed());
+
+		$experiments = $context->getExperiments();
+		self::assertNotEmpty($experiments);
+
+		$context->setAttribute('session_type', 'returning');
+
+		$treatment = $context->getTreatment('exp_test_ab');
+		self::assertIsInt($treatment);
+
+		$context->track('page_view');
+		$context->track('conversion', (object) ['revenue' => 99.99]);
+
+		$context->publish();
+		self::assertSame(0, $context->getPendingCount());
+
+		$context->refresh();
+
+		$context->close();
+		self::assertTrue($context->isClosed());
+
+		$eventTypes = array_map(fn($e) => $e->getEvent(), $logger->events);
+		self::assertContains(ContextEventLoggerEvent::Ready, $eventTypes);
+		self::assertContains(ContextEventLoggerEvent::Finalize, $eventTypes);
+	}
+
+	public function testMultipleExperiments(): void {
+		$context = $this->createReadyContext();
+
+		$experiments = $context->getExperiments();
+		self::assertGreaterThan(1, count($experiments));
+
+		$treatments = [];
+		foreach ($experiments as $experimentName) {
+			$treatments[$experimentName] = $context->getTreatment($experimentName);
+		}
+
+		self::assertSame(count($experiments), count($treatments));
+
+		foreach ($treatments as $experimentName => $treatment) {
+			self::assertIsInt($treatment);
+			self::assertGreaterThanOrEqual(0, $treatment);
+		}
+
+		$context->publish();
+
+		self::assertCount(1, $this->eventHandler->submitted);
+		$event = $this->eventHandler->submitted[0];
+		self::assertSame(count($experiments), count($event->exposures));
+	}
+
+	public function testAttributeUpdatesInTemplates(): void {
+		$context = $this->createReadyContext('audience_context.json');
+
+		$context->setAttribute('age', 15);
+		$treatmentBefore = $context->getTreatment('exp_test_ab');
+
+		$context->publish();
+		$this->eventHandler->submitted = [];
+
+		$context->setAttribute('age', 25);
+		$treatmentAfter = $context->getTreatment('exp_test_ab');
+
+		$context->publish();
+
+		$events = $this->eventHandler->submitted;
+		self::assertCount(1, $events);
+
+		$attributeNames = array_map(fn($attr) => $attr->name, $events[0]->attributes);
+		self::assertContains('age', $attributeNames);
+	}
+
+	public function testCrossFeatureInteraction(): void {
+		$context = $this->createReadyContext();
+
+		$context->setOverride('exp_test_ab', 0);
+		$context->setCustomAssignment('exp_test_abc', 1);
+
+		$overriddenTreatment = $context->getTreatment('exp_test_ab');
+		self::assertSame(0, $overriddenTreatment);
+
+		$customTreatment = $context->getTreatment('exp_test_abc');
+		self::assertSame(1, $customTreatment);
+
+		$regularTreatment = $context->getTreatment('exp_test_fullon');
+		self::assertSame($this->expectedVariants['exp_test_fullon'], $regularTreatment);
+
+		$borderValue = $context->getVariableValue('banner.border', 0);
+		self::assertSame(0, $borderValue);
+
+		$buttonColor = $context->getVariableValue('button.color', 'default');
+		self::assertSame('blue', $buttonColor);
+
+		$context->track('combined_goal', (object) [
+			'overridden' => $overriddenTreatment,
+			'custom' => $customTreatment,
+			'regular' => $regularTreatment,
+		]);
+
+		$context->publish();
+
+		self::assertCount(1, $this->eventHandler->submitted);
+		$event = $this->eventHandler->submitted[0];
+
+		self::assertGreaterThanOrEqual(3, count($event->exposures));
+		self::assertCount(1, $event->goals);
+	}
 }
