@@ -523,12 +523,12 @@ PHP supports per-request timeout configuration through HTTP client options:
 ```php
 use ABSmartly\SDK\Client\ClientConfig;
 use ABSmartly\SDK\Client\Client;
-use ABSmartly\SDK\Http\DefaultHttpClient;
+use ABSmartly\SDK\Http\HTTPClient;
 use ABSmartly\SDK\Config;
 use ABSmartly\SDK\ABsmartly;
 use ABSmartly\SDK\Context\ContextConfig;
 
-$httpClient = new DefaultHttpClient();
+$httpClient = new HTTPClient();
 $httpClient->timeout = 1500;
 
 $clientConfig = new ClientConfig($endpoint, $apiKey, $environment, $application);
