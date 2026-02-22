@@ -19,20 +19,20 @@ class InOperatorTest extends TestCase {
 	}
 
 	public function testStringInString(): void {
-		self::assertTrue($this->operator->evaluate($this->evaluator, ["abcdefghijk", "abc"]));
-		self::assertTrue($this->operator->evaluate($this->evaluator, ["abcdefghijk", "def"]));
-		self::assertFalse($this->operator->evaluate($this->evaluator, ["abcdefghijk", "xxx"]));
+		self::assertTrue($this->operator->evaluate($this->evaluator, ["abc", "abcdefghijk"]));
+		self::assertTrue($this->operator->evaluate($this->evaluator, ["def", "abcdefghijk"]));
+		self::assertFalse($this->operator->evaluate($this->evaluator, ["xxx", "abcdefghijk"]));
 
-		self::assertNull($this->operator->evaluate($this->evaluator, ["abcdefghijk", null]));
+		self::assertNull($this->operator->evaluate($this->evaluator, [null, "abcdefghijk"]));
 	}
 
 	public function testReturnFalseOnEmptyArray(): void {
-		self::assertFalse($this->operator->evaluate($this->evaluator, [[], false]));
-		self::assertFalse($this->operator->evaluate($this->evaluator, [[], "1"]));
-		self::assertFalse($this->operator->evaluate($this->evaluator, [[], true]));
-		self::assertFalse($this->operator->evaluate($this->evaluator, [[], false]));
+		self::assertFalse($this->operator->evaluate($this->evaluator, [false, []]));
+		self::assertFalse($this->operator->evaluate($this->evaluator, ["1", []]));
+		self::assertFalse($this->operator->evaluate($this->evaluator, [true, []]));
+		self::assertFalse($this->operator->evaluate($this->evaluator, [false, []]));
 
-		self::assertNull($this->operator->evaluate($this->evaluator, [[], null]));
+		self::assertNull($this->operator->evaluate($this->evaluator, [null, []]));
 	}
 
 	public function testArrayContainsValue(): void {
@@ -40,29 +40,29 @@ class InOperatorTest extends TestCase {
 		$haystack12 = [1, 2];
 		$haystackabKeys = ['a' => 5, 'b' => 6];
 
-		self::assertFalse($this->operator->evaluate($this->evaluator, [$haystack01, 2]));
-		self::assertFalse($this->operator->evaluate($this->evaluator, [$haystack12, 0]));
-		self::assertTrue($this->operator->evaluate($this->evaluator, [$haystack12, 1]));
-		self::assertTrue($this->operator->evaluate($this->evaluator, [$haystack12, 2]));
-		self::assertFalse($this->operator->evaluate($this->evaluator, [$haystackabKeys, 'a']));
-		self::assertFalse($this->operator->evaluate($this->evaluator, [$haystackabKeys, 'b']));
-		self::assertTrue($this->operator->evaluate($this->evaluator, [$haystackabKeys, 5]));
-		self::assertTrue($this->operator->evaluate($this->evaluator, [$haystackabKeys, 6]));
-		self::assertFalse($this->operator->evaluate($this->evaluator, [$haystackabKeys, 7]));
+		self::assertFalse($this->operator->evaluate($this->evaluator, [2, $haystack01]));
+		self::assertFalse($this->operator->evaluate($this->evaluator, [0, $haystack12]));
+		self::assertTrue($this->operator->evaluate($this->evaluator, [1, $haystack12]));
+		self::assertTrue($this->operator->evaluate($this->evaluator, [2, $haystack12]));
+		self::assertFalse($this->operator->evaluate($this->evaluator, ['a', $haystackabKeys]));
+		self::assertFalse($this->operator->evaluate($this->evaluator, ['b', $haystackabKeys]));
+		self::assertTrue($this->operator->evaluate($this->evaluator, [5, $haystackabKeys]));
+		self::assertTrue($this->operator->evaluate($this->evaluator, [6, $haystackabKeys]));
+		self::assertFalse($this->operator->evaluate($this->evaluator, [7, $haystackabKeys]));
 	}
 
 	public function testObjectContainsProperty(): void {
 		$haystackab = (object) ['a' => 1, 'b' => 2 ];
 		$haystackbc = (object) ['b' => 2, 'c' => 3, 0 => 100];
 
-		self::assertFalse($this->operator->evaluate($this->evaluator, [$haystackab, 'c']));
-		self::assertTrue($this->operator->evaluate($this->evaluator, [$haystackab, 'b']));
-		self::assertTrue($this->operator->evaluate($this->evaluator, [$haystackbc, 'b']));
-		self::assertTrue($this->operator->evaluate($this->evaluator, [$haystackbc, 0]));
+		self::assertFalse($this->operator->evaluate($this->evaluator, ['c', $haystackab]));
+		self::assertTrue($this->operator->evaluate($this->evaluator, ['b', $haystackab]));
+		self::assertTrue($this->operator->evaluate($this->evaluator, ['b', $haystackbc]));
+		self::assertTrue($this->operator->evaluate($this->evaluator, [0, $haystackbc]));
 	}
 
 	public function testArrayDiffNull(): void {
-		self::assertFalse($this->operator->evaluate($this->evaluator, [[1, 2, 3], [2, 3]]));
-		self::assertFalse($this->operator->evaluate($this->evaluator, [[1, 2, 3], [5, 6]]));
+		self::assertFalse($this->operator->evaluate($this->evaluator, [[2, 3], [1, 2, 3]]));
+		self::assertFalse($this->operator->evaluate($this->evaluator, [[5, 6], [1, 2, 3]]));
 	}
 }

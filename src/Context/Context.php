@@ -600,7 +600,7 @@ class Context {
 
 	private function checkNotClosed(): void {
 		if ($this->isClosed()) {
-			throw new LogicException('ABSmartly Context is closed');
+			throw new LogicException('ABSmartly Context is finalized');
 		}
 	}
 
