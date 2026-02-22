@@ -25,15 +25,9 @@ class MatchOperator extends BinaryOperator {
 	}
 
 	private function runRegexBounded(string $text, string $pattern): ?bool {
-		/*
-		 * If the user-provided $pattern has forward slash delimiters, accept them. Any other patterns will
-		 * automatically get forward slashes as delimiters.
-		 *
-		 * This is not ideal, because unlike JS, regexps are strings, and working with user-provided patterns is
-		 * prone to either security issues (too eager regexps, or simply Regexp errors), or having to enforce delimiters
-		 * at source.
-		 */
-		$matches = preg_match('/'. trim($pattern, '/') . '/', $text);
+		$pattern = trim($pattern, '/');
+
+		$matches = @preg_match('~'. $pattern . '~', $text);
 
 		if (preg_last_error() !== PREG_NO_ERROR) {
 			return null;
