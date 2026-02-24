@@ -1,6 +1,6 @@
-# A/B Smartly SDK
+# A/B Smartly PHP SDK
 
-A/B Smartly PHP SDK
+A/B Smartly - PHP SDK
 
 ## Compatibility
 
@@ -10,9 +10,7 @@ The A/B Smartly PHP SDK is compatible with PHP versions 7.4 and later. For the b
 
 The main SDK class has been renamed from `SDK` to `ABsmartly` to standardize naming across all ABSmartly SDKs. The old `SDK` class name is still available as a deprecated alias for backwards compatibility, but it is recommended to migrate to the new `ABsmartly` class name in new projects.
 
-## Getting Started
-
-### Install the SDK
+## Installation
 
 A/B Smartly PHP SDK can be installed with [`composer`](https://getcomposer.org):
 
@@ -20,7 +18,13 @@ A/B Smartly PHP SDK can be installed with [`composer`](https://getcomposer.org):
 composer require absmartly/php-sdk
 ```
 
-### Import and Initialize the SDK
+## Getting Started
+
+Please follow the [installation](#installation) instructions before trying the following code.
+
+### Initialization
+
+This example assumes an API Key, an Application, and an Environment have been created in the A/B Smartly web console.
 
 #### Recommended: Simple API
 
@@ -57,23 +61,12 @@ use ABSmartly\SDK\Client\ClientConfig;
 use ABSmartly\SDK\Client\Client;
 use ABSmartly\SDK\Config;
 use ABSmartly\SDK\ABsmartly;
-use ABSmartly\SDK\Context\ContextConfig;
-use ABSmartly\SDK\Context\ContextEventLoggerCallback;
 
 $clientConfig = new ClientConfig($endpoint, $apiKey, $environment, $application);
 $client = new Client($clientConfig);
 $config = new Config($client);
 
 $sdk = new ABsmartly($config);
-
-$contextConfig = new ContextConfig();
-$contextConfig->setEventLogger(new ContextEventLoggerCallback(
-    function (string $event, ?object $data) {
-        // Custom callback
-    }
-));
-
-$context = $sdk->createContext($contextConfig);
 ```
 
 #### Using Async HTTP Client
@@ -111,79 +104,11 @@ The async HTTP client uses ReactPHP promises and allows for non-blocking I/O ope
 | `application`           | `string`                                       | &#9989;   | `null`                                        | The name of the application where the SDK is installed. Applications are created on the Web Console and should match the applications where your experiments will be running. |
 | `retries`               | `int`                                          | &#10060;  | `5`                                           | The number of retries before the SDK stops trying to connect.                                                                                                                 |
 | `timeout`               | `int`                                          | &#10060;  | `3000`                                        | An amount of time, in milliseconds, before the SDK will stop trying to connect.                                                                                               |
-| `eventLogger`           | `ContextEventLogger`                           | &#10060;  | `null`                                        | A callback function which runs after SDK events. See [Using a Custom Event Logger](#using-a-custom-event-logger) below.                                                      |
+| `eventLogger`           | `ContextEventLogger`                           | &#10060;  | `null`                                        | A callback function which runs after SDK events. See [Custom Event Logger](#custom-event-logger) below.                                                                      |
 | `contextDataProvider`   | `ContextDataProvider`                          | &#10060;  | auto                                          | Custom provider for context data (advanced usage)                                                                                                                             |
 | `contextEventHandler`   | `ContextEventHandler`                          | &#10060;  | auto                                          | Custom handler for publishing events (advanced usage)                                                                                                                         |
 
-### Using a Custom Event Logger
-
-The A/B Smartly SDK can be instantiated with an event logger used for all contexts. In addition, an event logger can be specified when creating a particular context in the `ContextConfig`.
-
-#### Simple Callback Approach
-
-```php
-use ABSmartly\SDK\Context\ContextConfig;
-use ABSmartly\SDK\Context\ContextEventLoggerCallback;
-
-$contextConfig = new ContextConfig();
-$contextConfig->setEventLogger(new ContextEventLoggerCallback(
-    function (string $event, ?object $data) {
-        // Custom callback
-        if ($event === 'Error') {
-            error_log('ABSmartly Error: ' . print_r($data, true));
-        }
-    }
-));
-```
-
-#### Interface Implementation Approach
-
-Alternatively, you can implement the `ContextEventLogger` interface with a `handleEvent()` method that receives the `Context` object itself, along with a `ContextEventLoggerEvent` object:
-
-```php
-use ABSmartly\SDK\Context\Context;
-use ABSmartly\SDK\Context\ContextEventLogger;
-use ABSmartly\SDK\Context\ContextEventLoggerEvent;
-
-class CustomLogger implements ContextEventLogger {
-    public function handleEvent(Context $context, ContextEventLoggerEvent $event): void {
-        $eventName = $event->getEvent();
-        $eventData = $event->getData();
-
-        // Process the log event
-        switch ($eventName) {
-            case 'Exposure':
-                // Log exposure event
-                break;
-            case 'Goal':
-                // Log goal achievement
-                break;
-            case 'Error':
-                error_log('ABSmartly Error: ' . print_r($eventData, true));
-                break;
-        }
-    }
-}
-
-$contextConfig = new ContextConfig();
-$contextConfig->setEventLogger(new CustomLogger());
-```
-
-**Event Types**
-
-The data parameter depends on the type of event. Currently, the SDK logs the following events:
-
-| Event      | When                                                        | Data                                                        |
-| ---------- | ----------------------------------------------------------- | ----------------------------------------------------------- |
-| `Error`    | `Context` receives an error                                 | `Exception` object thrown                                   |
-| `Ready`    | `Context` turns ready                                       | `ContextData` object used to initialize the context         |
-| `Refresh`  | `Context->refresh()` method succeeds                        | `ContextData` used to refresh the context                   |
-| `Publish`  | `Context->publish()` method succeeds                        | `PublishEvent` data sent to the A/B Smartly event collector|
-| `Exposure` | `Context->getTreatment()` method succeeds on first exposure | `Exposure` data enqueued for publishing                     |
-| `Goal`     | `Context->track()` method succeeds                          | `GoalAchievement` goal data enqueued for publishing         |
-| `Close`    | `Context->close()` method succeeds the first time           | `null`                                                      |  
-
-## Create a New Context Request
+## Creating a New Context
 
 ### Synchronously
 
@@ -209,22 +134,19 @@ $contextConfig->setUnit('session_id', '5ebf06d8cb5d8137290c4abb64155584fbdb64d8'
 
 $context = $sdk->createContext($contextConfig);
 
-// Use promises for async operations
 $context->ready()->then(
     function($context) {
-        // Context is ready
         $treatment = $context->getTreatment('exp_test_experiment');
     },
     function($error) {
-        // Handle error
         error_log('Context failed: ' . $error->getMessage());
     }
 );
 ```
 
-### With Prefetched Data
+### With Pre-fetched Data
 
-To avoid repeating the round-trip on the client-side, you can initialize a context with pre-fetched data from a previous context:
+When doing full-stack experimentation with A/B Smartly, we recommend creating a context only once on the server-side. Creating a context involves a round-trip to the A/B Smartly event collector. We can avoid repeating the round-trip on the client-side by re-using data previously retrieved.
 
 ```php
 use ABSmartly\SDK\Context\ContextConfig;
@@ -238,7 +160,6 @@ $anotherContextConfig = new ContextConfig();
 $anotherContextConfig->setUnit('session_id', 'another-user-id');
 
 $anotherContext = $sdk->createContextWithData($anotherContextConfig, $context->getContextData());
-// No need to wait - context is immediately ready
 ```
 
 ### Refreshing the Context with Fresh Experiment Data
@@ -260,14 +181,13 @@ You can add additional units to a context by calling the `Context->setUnit()` or
 ```php
 $context->setUnit('user_id', 143432);
 
-// Or set multiple units at once
 $context->setUnits([
     'user_id' => 143432,
     'db_user_id' => 1000013
 ]);
 ```
 
-> **Note:** You cannot override an already set unit type as that would be a change of identity and would throw an exception. In this case, you must create a new context instead. The `Context->setUnit()` and `Context->setUnits()` methods can be called before the context is ready.  
+> **Note:** You cannot override an already set unit type as that would be a change of identity and would throw an exception. In this case, you must create a new context instead. The `Context->setUnit()` and `Context->setUnits()` methods can be called before the context is ready.
 
 ## Basic Usage
 
@@ -321,7 +241,150 @@ $context->setOverrides([
     'exp_test_experiment' => 1,
     'exp_another_experiment' => 0,
 ]);
-```  
+```
+
+## Advanced
+
+### Context Attributes
+
+Attributes are used to pass meta-data about the user and/or the request. They can be used later in the Web Console to create segments or audiences. They can be set using the `Context->setAttribute()` or `Context->setAttributes()` methods, before or after the context is ready.
+
+```php
+$context->setAttribute('user_agent', $_SERVER['HTTP_USER_AGENT']);
+
+$context->setAttributes([
+    'customer_age' => 'new_customer',
+    'session_id' => session_id()
+]);
+```
+
+### Custom Assignments
+
+Sometimes it may be necessary to override the automatic selection of a variant. For example, if you wish to have your variant chosen based on data from an API call. This can be accomplished using the `Context->setCustomAssignment()` method.
+
+```php
+$chosenVariant = 1;
+$context->setCustomAssignment('experiment_name', $chosenVariant);
+```
+
+If you are running multiple experiments and need to choose different custom assignments for each one, you can do so using the `Context->setCustomAssignments()` method.
+
+```php
+$assignments = [
+    'experiment_name' => 1,
+    'another_experiment_name' => 0,
+    'a_third_experiment_name' => 2
+];
+
+$context->setCustomAssignments($assignments);
+```
+
+### Tracking Goals
+
+Goals are created in the A/B Smartly Web Console.
+
+```php
+$context->track('payment', (object) [
+    'item_count' => 1,
+    'total_amount' => 1999.99
+]);
+```
+
+### Publishing Pending Data
+
+Sometimes it is necessary to ensure all events have been published to the A/B Smartly collector before proceeding. You can explicitly call the `Context->publish()` method.
+
+```php
+$context->publish();
+```
+
+With async HTTP client:
+
+```php
+$context->publish()->then(function() {
+    header('Location: https://www.absmartly.com');
+});
+```
+
+### Finalizing
+
+The `close()` method will ensure all events have been published to the A/B Smartly collector, like `Context->publish()`, and will also "seal" the context, throwing an error if any method that could generate an event is called.
+
+```php
+$context->close();
+```
+
+With async HTTP client:
+
+```php
+$context->close()->then(function() {
+    header('Location: https://www.absmartly.com');
+});
+```
+
+### Custom Event Logger
+
+The A/B Smartly SDK can be instantiated with an event logger used for all contexts. In addition, an event logger can be specified when creating a particular context in the `ContextConfig`.
+
+#### Simple Callback Approach
+
+```php
+use ABSmartly\SDK\Context\ContextConfig;
+use ABSmartly\SDK\Context\ContextEventLoggerCallback;
+
+$contextConfig = new ContextConfig();
+$contextConfig->setEventLogger(new ContextEventLoggerCallback(
+    function (string $event, ?object $data) {
+        if ($event === 'Error') {
+            error_log('ABSmartly Error: ' . print_r($data, true));
+        }
+    }
+));
+```
+
+#### Interface Implementation Approach
+
+Alternatively, you can implement the `ContextEventLogger` interface with a `handleEvent()` method that receives the `Context` object itself, along with a `ContextEventLoggerEvent` object:
+
+```php
+use ABSmartly\SDK\Context\Context;
+use ABSmartly\SDK\Context\ContextEventLogger;
+use ABSmartly\SDK\Context\ContextEventLoggerEvent;
+
+class CustomLogger implements ContextEventLogger {
+    public function handleEvent(Context $context, ContextEventLoggerEvent $event): void {
+        $eventName = $event->getEvent();
+        $eventData = $event->getData();
+
+        switch ($eventName) {
+            case 'Exposure':
+                break;
+            case 'Goal':
+                break;
+            case 'Error':
+                error_log('ABSmartly Error: ' . print_r($eventData, true));
+                break;
+        }
+    }
+}
+
+$contextConfig = new ContextConfig();
+$contextConfig->setEventLogger(new CustomLogger());
+```
+
+**Event Types**
+
+The data parameter depends on the type of event. Currently, the SDK logs the following events:
+
+| Event      | When                                                        | Data                                                        |
+| ---------- | ----------------------------------------------------------- | ----------------------------------------------------------- |
+| `Error`    | `Context` receives an error                                 | `Exception` object thrown                                   |
+| `Ready`    | `Context` turns ready                                       | `ContextData` object used to initialize the context         |
+| `Refresh`  | `Context->refresh()` method succeeds                        | `ContextData` used to refresh the context                   |
+| `Publish`  | `Context->publish()` method succeeds                        | `PublishEvent` data sent to the A/B Smartly event collector |
+| `Exposure` | `Context->getTreatment()` method succeeds on first exposure | `Exposure` data enqueued for publishing                     |
+| `Goal`     | `Context->track()` method succeeds                          | `GoalAchievement` goal data enqueued for publishing         |
+| `Close`    | `Context->close()` method succeeds the first time           | `null`                                                      |
 
 ## Platform-Specific Examples
 
@@ -586,87 +649,6 @@ $context->ready()->then(
 );
 ```
 
-## Advanced
-
-### Context Attributes
-
-Attributes are used to pass meta-data about the user and/or the request. They can be used later in the Web Console to create segments or audiences. They can be set using the `Context->setAttribute()` or `Context->setAttributes()` methods, before or after the context is ready.
-
-```php
-$context->setAttribute('user_agent', $_SERVER['HTTP_USER_AGENT']);
-
-$context->setAttributes([
-    'customer_age' => 'new_customer',
-    'session_id' => session_id()
-]);
-```
-
-### Custom Assignments
-
-Sometimes it may be necessary to override the automatic selection of a variant. For example, if you wish to have your variant chosen based on data from an API call. This can be accomplished using the `Context->setCustomAssignment()` method.
-
-```php
-$chosenVariant = 1;
-$context->setCustomAssignment('experiment_name', $chosenVariant);
-```
-
-If you are running multiple experiments and need to choose different custom assignments for each one, you can do so using the `Context->setCustomAssignments()` method.
-
-```php
-$assignments = [
-    'experiment_name' => 1,
-    'another_experiment_name' => 0,
-    'a_third_experiment_name' => 2
-];
-
-$context->setCustomAssignments($assignments);
-```
-
-### Tracking Goals
-
-Goals are created in the A/B Smartly Web Console.
-
-```php
-$context->track('payment', (object) [
-    'item_count' => 1,
-    'total_amount' => 1999.99
-]);
-```
-
-### Publish
-
-Sometimes it is necessary to ensure all events have been published to the A/B Smartly collector before proceeding. You can explicitly call the `Context->publish()` method.
-
-```php
-$context->publish();
-```
-
-With async HTTP client:
-
-```php
-$context->publish()->then(function() {
-    // All events published
-    header('Location: https://www.absmartly.com');
-});
-```
-
-### Finalize
-
-The `close()` method will ensure all events have been published to the A/B Smartly collector, like `Context->publish()`, and will also "seal" the context, throwing an error if any method that could generate an event is called.
-
-```php
-$context->close();
-```
-
-With async HTTP client:
-
-```php
-$context->close()->then(function() {
-    // Context closed and all events published
-    header('Location: https://www.absmartly.com');
-});
-```
-
 ## About A/B Smartly
 
 **A/B Smartly** is the leading provider of state-of-the-art, on-premises, full-stack experimentation platforms for engineering and product teams that want to confidently deploy features as fast as they can develop them.
@@ -676,7 +658,7 @@ A/B Smartly's real-time analytics helps engineering and product teams ensure tha
 
 - [JavaScript SDK](https://www.github.com/absmartly/javascript-sdk)
 - [Java SDK](https://www.github.com/absmartly/java-sdk)
-- [PHP SDK](https://www.github.com/absmartly/php-sdk)
+- [PHP SDK](https://www.github.com/absmartly/php-sdk) (this package)
 - [Swift SDK](https://www.github.com/absmartly/swift-sdk)
 - [Vue2 SDK](https://www.github.com/absmartly/vue2-sdk)
 - [Vue3 SDK](https://www.github.com/absmartly/vue3-sdk)
@@ -687,11 +669,3 @@ A/B Smartly's real-time analytics helps engineering and product teams ensure tha
 - [.NET SDK](https://www.github.com/absmartly/dotnet-sdk)
 - [Dart SDK](https://www.github.com/absmartly/dart-sdk)
 - [Flutter SDK](https://www.github.com/absmartly/flutter-sdk)
-
-## Documentation
-
-- [Full Documentation](https://docs.absmartly.com/)
-
-## License
-
-MIT License - see [LICENSE](LICENSE) for details.
