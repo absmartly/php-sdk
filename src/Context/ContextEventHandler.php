@@ -2,13 +2,13 @@
 
 namespace ABSmartly\SDK\Context;
 
-use ABSmartly\SDK\Client\Client;
+use ABSmartly\SDK\Client\ClientInterface;
 use ABSmartly\SDK\PublishEvent;
 
 class ContextEventHandler {
-	private Client $client;
+	private ClientInterface $client;
 
-	public function __construct(Client $client) {
+	public function __construct(ClientInterface $client) {
 		$this->client = $client;
 	}
 

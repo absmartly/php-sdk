@@ -8,7 +8,15 @@
         "ext-json": "*"
     },
     "require-dev": {
-        "phpunit/phpunit": "^9.5.26"
+        "phpunit/phpunit": "^9.5.26",
+        "react/http": "^1.9",
+        "react/async": "^4.0",
+        "react/promise": "^3.0"
+    },
+    "suggest": {
+        "react/http": "Required for async HTTP support with ReactPHP",
+        "react/async": "Required for sync-over-async operations with ReactPHP",
+        "react/promise": "Required for async operations"
     },
     "license": "MIT",
     "autoload": {
@@ -27,5 +35,8 @@
             "email": "ayesh@aye.sh"
         }
     ],
-    "keywords": ["absmartly"]
+    "keywords": ["absmartly"],
+    "scripts": {
+        "test": "phpunit"
+    }
 }

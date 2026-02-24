@@ -28,6 +28,17 @@ class Experiment {
 	public ?object $customFieldValues = null;
 
 	public function __construct(object $data) {
+		$requiredFields = ['id', 'name', 'unitType', 'iteration', 'seedHi', 'seedLo', 'split',
+			'trafficSeedHi', 'trafficSeedLo', 'trafficSplit', 'fullOnVariant', 'applications', 'variants'];
+
+		foreach ($requiredFields as $field) {
+			if (!property_exists($data, $field)) {
+				throw new \ABSmartly\SDK\Exception\RuntimeException(
+					sprintf('Missing required field "%s" in experiment data', $field)
+				);
+			}
+		}
+
 		if (!empty($data->audience)) {
 			$this->audience = json_decode($data->audience, false, 512, JSON_THROW_ON_ERROR);
 		}

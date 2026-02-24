@@ -11,7 +11,7 @@ use ABSmartly\SDK\ExperimentVariables;
 use ABSmartly\SDK\Exposure;
 use ABSmartly\SDK\GoalAchievement;
 use ABSmartly\SDK\PublishEvent;
-use ABSmartly\SDK\SDK;
+use ABSmartly\SDK\ABsmartly;
 use ABSmartly\SDK\VariableParser;
 use ABSmartly\SDK\VariantAssigner;
 
@@ -29,7 +29,7 @@ use function trim;
 
 class Context {
 
-	private SDK $sdk;
+	private ABsmartly $sdk;
 
 	private ContextEventHandler $eventHandler;
 	private ContextEventLogger $eventLogger;
@@ -82,7 +82,7 @@ class Context {
 		return (int) (microtime(true) * 1000);
 	}
 
-	private function __construct(SDK $sdk, ContextConfig $contextConfig, ContextDataProvider $dataProvider, ?ContextData $contextData = null) {
+	private function __construct(ABsmartly $sdk, ContextConfig $contextConfig, ContextDataProvider $dataProvider, ?ContextData $contextData = null, bool $pending = false) {
 		$this->sdk = $sdk;
 		$this->dataProvider = $dataProvider;
 		$this->setUnits($contextConfig->getUnits());
@@ -96,6 +96,14 @@ class Context {
 
 		$this->audienceMatcher = new AudienceMatcher();
 		$this->variableParser = new VariableParser();
+
+		if ($pending) {
+			$this->ready = false;
+			$this->data = null;
+			$this->index = [];
+			$this->indexVariables = [];
+			return;
+		}
 
 		try {
 			$this->ready = true;
@@ -111,6 +119,12 @@ class Context {
 		}
 		catch (Exception $exception) {
 			$this->setDataFailed();
+			error_log(sprintf(
+				'ABsmartly SDK CRITICAL: Context initialization failed: %s in %s:%d. Context is in failed state.',
+				$exception->getMessage(),
+				$exception->getFile(),
+				$exception->getLine()
+			));
 			$this->logError($exception);
 		}
 	}
@@ -164,7 +178,7 @@ class Context {
 		$this->failed = true;
 	}
 
-	public static function createFromContextConfig(SDK $sdk, ContextConfig $contextConfig, ContextDataProvider $dataProvider, ContextEventHandler $handler, ?ContextData $contextData = null): Context {
+	public static function createFromContextConfig(ABsmartly $sdk, ContextConfig $contextConfig, ContextDataProvider $dataProvider, ContextEventHandler $handler, ?ContextData $contextData = null): Context {
 		$context = new Context($sdk, $contextConfig, $dataProvider, $contextData);
 		$context->setEventHandler($handler);
 
@@ -173,6 +187,33 @@ class Context {
 		}
 
 		return $context;
+	}
+
+	public static function createPending(ABsmartly $sdk, ContextConfig $contextConfig, ContextDataProvider $dataProvider, ContextEventHandler $handler): Context {
+		$context = new Context($sdk, $contextConfig, $dataProvider, null, true);
+		$context->setEventHandler($handler);
+
+		if ($logger = $contextConfig->getEventLogger()) {
+			$context->setEventLogger($logger);
+		}
+
+		return $context;
+	}
+
+	public function setContextData(ContextData $contextData): void {
+		if ($this->ready) {
+			return;
+		}
+
+		try {
+			$this->data = $contextData;
+			$this->setData($contextData);
+			$this->ready = true;
+			$this->logEvent(ContextEventLoggerEvent::Ready, $contextData);
+		} catch (Exception $exception) {
+			$this->setDataFailed();
+			$this->logError($exception);
+		}
 	}
 
 	private function checkReady(): void {
@@ -207,7 +248,17 @@ class Context {
 
 		$customFieldValues = $experiment->data->customFieldValues;
 		if (is_string($customFieldValues)) {
-			$customFieldValues = json_decode($customFieldValues, true);
+			try {
+				$customFieldValues = json_decode($customFieldValues, true, 512, JSON_THROW_ON_ERROR);
+			}
+			catch (\JsonException $e) {
+				error_log(sprintf(
+					'ABsmartly SDK Error: Failed to decode custom field values for experiment "%s": %s',
+					$experimentName,
+					$e->getMessage()
+				));
+				return null;
+			}
 		}
 
 		if (is_object($customFieldValues)) {
@@ -222,7 +273,18 @@ class Context {
 		$type = $customFieldValues[$fieldName . '_type'] ?? null;
 
 		if ($type === 'json' && is_string($value)) {
-			return json_decode($value, true);
+			try {
+				return json_decode($value, true, 512, JSON_THROW_ON_ERROR);
+			}
+			catch (\JsonException $e) {
+				error_log(sprintf(
+					'ABsmartly SDK Error: Failed to decode JSON custom field "%s" for experiment "%s": %s',
+					$fieldName,
+					$experimentName,
+					$e->getMessage()
+				));
+				return null;
+			}
 		}
 
 		if ($type === 'number' && is_string($value)) {
@@ -475,6 +537,12 @@ class Context {
 
 	private function logError(Throwable $throwable): void {
 		if (!isset($this->eventLogger)) {
+			error_log(sprintf(
+				'ABsmartly SDK Error: %s in %s:%d',
+				$throwable->getMessage(),
+				$throwable->getFile(),
+				$throwable->getLine()
+			));
 			return;
 		}
 
@@ -600,12 +668,24 @@ class Context {
 
 	private function checkNotClosed(): void {
 		if ($this->isClosed()) {
-			throw new LogicException('ABSmartly Context is closed');
+			throw new LogicException('ABSmartly Context is finalized');
 		}
 	}
 
 	public function flush(): void {
 		if ($this->isFailed()) {
+			$errorMsg = sprintf(
+				'ABsmartly SDK Warning: Discarding %d exposures and %d goals due to failed context state',
+				count($this->exposures),
+				count($this->achievements)
+			);
+			error_log($errorMsg);
+			if (isset($this->eventLogger)) {
+				$this->eventLogger->handleEvent($this, new ContextEventLoggerEvent(
+					ContextEventLoggerEvent::Error,
+					new \RuntimeException($errorMsg)
+				));
+			}
 			$this->exposures = [];
 			$this->achievements = [];
 			$this->pendingCount = 0;
@@ -622,10 +702,18 @@ class Context {
 		try {
 			$this->eventHandler->publish($event);
 			$this->logEvent(ContextEventLoggerEvent::Publish, $event);
+			$this->exposures = [];
+			$this->achievements = [];
 			$this->pendingCount = 0;
 		}
 		catch (Exception $exception) {
 			$this->failed = true;
+			error_log(sprintf(
+				'ABsmartly SDK Error: Failed to publish %d exposures and %d goals: %s. Data will be lost.',
+				count($this->exposures),
+				count($this->achievements),
+				$exception->getMessage()
+			));
 			$this->logError($exception);
 		}
 	}
@@ -656,13 +744,25 @@ class Context {
 
 	public function refresh(): void {
 		$this->checkNotClosed();
+		$oldData = $this->data;
+		$oldIndex = $this->index;
+		$oldIndexVariables = $this->indexVariables;
 		try {
 			$data = $this->dataProvider->getContextData();
 			$this->setData($data);
 			$this->logEvent(ContextEventLoggerEvent::Refresh, $data);
 		}
 		catch (Exception $exception) {
-			$this->setDataFailed();
+			$this->data = $oldData;
+			$this->index = $oldIndex;
+			$this->indexVariables = $oldIndexVariables;
+			$this->failed = true;
+			error_log(sprintf(
+				'ABsmartly SDK Error: Failed to refresh context, keeping existing data: %s in %s:%d',
+				$exception->getMessage(),
+				$exception->getFile(),
+				$exception->getLine()
+			));
 			$this->logError($exception);
 		}
 	}
@@ -677,7 +777,6 @@ class Context {
 
 		$this->logEvent(ContextEventLoggerEvent::Finalize, null);
 		$this->closed = true;
-		$this->sdk->close();
 	}
 
 }

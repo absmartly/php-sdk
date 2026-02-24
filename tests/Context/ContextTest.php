@@ -811,7 +811,7 @@ class ContextTest extends TestCase {
 		$event = $this->eventHandler->submitted[1];
 		self::assertSame(2, $event->attributes[1]->value);
 		self::assertSame(245, $event->goals[0]->properties->hours);
-		self::assertSame('not_found', $event->exposures[2]->name);
+		self::assertFalse(property_exists($event, 'exposures'), 'Second publish should not have exposures - they were already sent in first publish');
 
 		self::assertSame(0, $context->getPendingCount());
 

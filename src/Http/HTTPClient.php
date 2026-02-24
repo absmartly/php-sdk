@@ -37,7 +37,7 @@ use const CURLOPT_SSLVERSION;
 use const CURLOPT_URL;
 use const CURLPROTO_HTTPS;
 
-class HTTPClient {
+class HTTPClient implements HttpClientInterface {
 	/**
 	 * @var CurlHandle|resource
 	 */
@@ -71,14 +71,48 @@ class HTTPClient {
 	}
 
 	private function fetchResponse(): Response {
-		$returnedResponse = curl_exec($this->curlHandle);
-		$this->throwOnError($returnedResponse);
+		$attempt = 0;
+		$lastException = null;
 
-		$response = new Response();
-		$response->content = (string) $returnedResponse;
-		$response->status = (int) curl_getinfo($this->curlHandle, CURLINFO_HTTP_CODE);
+		while ($attempt < $this->retries) {
+			try {
+				$returnedResponse = curl_exec($this->curlHandle);
+				$this->throwOnError($returnedResponse);
 
-		return $response;
+				$response = new Response();
+				$response->content = (string) $returnedResponse;
+				$response->status = (int) curl_getinfo($this->curlHandle, CURLINFO_HTTP_CODE);
+
+				return $response;
+			}
+			catch (HttpClientError $e) {
+				$lastException = $e;
+				$httpCode = curl_getinfo($this->curlHandle, CURLINFO_HTTP_CODE);
+				$curlError = curl_errno($this->curlHandle);
+
+				$isRetryable = ($curlError !== 0) ||
+					($httpCode >= 500 && $httpCode < 600) ||
+					$httpCode === 408 ||
+					$httpCode === 429;
+
+				if (!$isRetryable || $attempt >= $this->retries - 1) {
+					throw $e;
+				}
+
+				$attempt++;
+				$backoffMs = min(1000 * pow(2, $attempt - 1), 10000);
+				error_log(sprintf(
+					'ABsmartly SDK: Retrying HTTP request (attempt %d/%d) after %dms due to error: %s',
+					$attempt,
+					$this->retries,
+					$backoffMs,
+					$e->getMessage()
+				));
+				usleep($backoffMs * 1000);
+			}
+		}
+
+		throw $lastException;
 	}
 
 	public function get(string $url, array $query = [], array $headers = []): Response {
@@ -119,6 +153,10 @@ class HTTPClient {
 			return;
 		}
 		$this->curlHandle = curl_init();
+
+		if ($this->curlHandle === false) {
+			throw new HttpClientError('Failed to initialize cURL. Is the curl extension loaded?');
+		}
 
 		// https://php.watch/articles/php-curl-security-hardening
 		curl_setopt_array($this->curlHandle, [

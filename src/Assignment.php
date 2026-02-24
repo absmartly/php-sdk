@@ -9,8 +9,8 @@ class Assignment {
 	public int $iteration = 0;
 	public int $fullOnVariant = 0;
 	public string $name = '';
-	public ?string $unitType;
-	public array $trafficSplit;
+	public ?string $unitType = null;
+	public array $trafficSplit = [];
 	public int $variant = 0;
 	public bool $assigned = false;
 	public bool $overridden = false;
