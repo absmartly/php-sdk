@@ -62,7 +62,7 @@ use ABSmartly\SDK\Client\Client;
 use ABSmartly\SDK\Config;
 use ABSmartly\SDK\ABsmartly;
 
-$clientConfig = new ClientConfig($endpoint, $apiKey, $environment, $application);
+$clientConfig = new ClientConfig($endpoint, $apiKey, $application, $environment);
 $client = new Client($clientConfig);
 $config = new Config($client);
 
@@ -80,7 +80,7 @@ use ABSmartly\SDK\Http\ReactHttpClient;
 use ABSmartly\SDK\Config;
 use ABSmartly\SDK\ABsmartly;
 
-$clientConfig = new ClientConfig($endpoint, $apiKey, $environment, $application);
+$clientConfig = new ClientConfig($endpoint, $apiKey, $application, $environment);
 
 $reactHttpClient = new ReactHttpClient();
 $reactHttpClient->timeout = 3000;
@@ -594,7 +594,7 @@ use ABSmartly\SDK\Context\ContextConfig;
 $httpClient = new HTTPClient();
 $httpClient->timeout = 1500;
 
-$clientConfig = new ClientConfig($endpoint, $apiKey, $environment, $application);
+$clientConfig = new ClientConfig($endpoint, $apiKey, $application, $environment);
 $client = new Client($clientConfig, $httpClient);
 
 $config = new Config($client);
@@ -622,7 +622,7 @@ use React\EventLoop\Loop;
 $reactHttpClient = new ReactHttpClient();
 $reactHttpClient->timeout = 1500;
 
-$clientConfig = new ClientConfig($endpoint, $apiKey, $environment, $application);
+$clientConfig = new ClientConfig($endpoint, $apiKey, $application, $environment);
 $client = new Client($clientConfig, $reactHttpClient);
 
 $config = new Config($client);
