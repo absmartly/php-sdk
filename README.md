@@ -52,9 +52,9 @@ $sdk = ABsmartly::createWithDefaults(
 );
 ```
 
-#### Advanced: Manual Client Configuration
+#### Alternative: Manual Client Configuration
 
-The above is a shortcut that creates an SDK instance quickly using default values. For advanced use cases where you need custom HTTP clients or configurations, you can manually configure individual components:
+The above is a shortcut that creates an SDK instance quickly using default values. If you need to manually configure individual components, you can do so:
 
 ```php
 use ABSmartly\SDK\Client\ClientConfig;
