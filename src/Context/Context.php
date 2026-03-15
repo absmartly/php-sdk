@@ -59,8 +59,10 @@ class Context {
 
 	private int $pendingCount = 0;
 	private bool $closed = false;
+	private bool $finalizing = false;
 	private bool $ready;
 	private int $attrsSeq = 0;
+	private ?Throwable $readyError = null;
 
 	public function isReady(): bool {
 		return $this->ready;
@@ -72,6 +74,63 @@ class Context {
 
 	public function isClosed(): bool {
 		return $this->closed;
+	}
+
+	public function isFinalizing(): bool {
+		return $this->finalizing && !$this->closed;
+	}
+
+	public function readyError(): ?Throwable {
+		return $this->readyError;
+	}
+
+	public function getCustomFieldKeys(): array {
+		$keys = [];
+		if (!empty($this->data->experiments)) {
+			foreach ($this->data->experiments as $experiment) {
+				if (!isset($experiment->customFieldValues)) {
+					continue;
+				}
+
+				$customFieldValues = $experiment->customFieldValues;
+				if (is_string($customFieldValues)) {
+					$customFieldValues = json_decode($customFieldValues, true) ?? [];
+				}
+				if (is_object($customFieldValues)) {
+					$customFieldValues = get_object_vars($customFieldValues);
+				}
+				if (!is_array($customFieldValues)) {
+					continue;
+				}
+
+				foreach (array_keys($customFieldValues) as $k) {
+					if (!str_ends_with($k, '_type')) {
+						$keys[$k] = true;
+					}
+				}
+			}
+		}
+		return array_keys($keys);
+	}
+
+	public function getCustomFieldValueType(string $experimentName, string $key): ?string {
+		$experiment = $this->getExperiment($experimentName);
+		if ($experiment === null || !isset($experiment->data->customFieldValues)) {
+			return null;
+		}
+
+		$customFieldValues = $experiment->data->customFieldValues;
+		if (is_string($customFieldValues)) {
+			$customFieldValues = json_decode($customFieldValues, true) ?? [];
+		}
+		if (is_object($customFieldValues)) {
+			$customFieldValues = get_object_vars($customFieldValues);
+		}
+		if (!is_array($customFieldValues)) {
+			return null;
+		}
+
+		return $customFieldValues[$key . '_type'] ?? null;
 	}
 
 	public function pending(): int {
@@ -118,7 +177,7 @@ class Context {
 			$this->logEvent(ContextEventLoggerEvent::Ready, $data);
 		}
 		catch (Exception $exception) {
-			$this->setDataFailed();
+			$this->setDataFailed($exception);
 			error_log(sprintf(
 				'ABsmartly SDK CRITICAL: Context initialization failed: %s in %s:%d. Context is in failed state.',
 				$exception->getMessage(),
@@ -171,20 +230,17 @@ class Context {
 		}
 	}
 
-	private function setDataFailed(): void {
+	private function setDataFailed(?Throwable $exception = null): void {
 		$this->indexVariables = [];
 		$this->index = [];
 		$this->data = null;
 		$this->failed = true;
+		$this->readyError = $exception;
 	}
 
 	public static function createFromContextConfig(ABsmartly $sdk, ContextConfig $contextConfig, ContextDataProvider $dataProvider, ContextEventHandler $handler, ?ContextData $contextData = null): Context {
 		$context = new Context($sdk, $contextConfig, $dataProvider, $contextData);
 		$context->setEventHandler($handler);
-
-		if ($logger = $contextConfig->getEventLogger()) {
-			$context->setEventLogger($logger);
-		}
 
 		return $context;
 	}
@@ -192,10 +248,6 @@ class Context {
 	public static function createPending(ABsmartly $sdk, ContextConfig $contextConfig, ContextDataProvider $dataProvider, ContextEventHandler $handler): Context {
 		$context = new Context($sdk, $contextConfig, $dataProvider, null, true);
 		$context->setEventHandler($handler);
-
-		if ($logger = $contextConfig->getEventLogger()) {
-			$context->setEventLogger($logger);
-		}
 
 		return $context;
 	}
@@ -211,7 +263,7 @@ class Context {
 			$this->ready = true;
 			$this->logEvent(ContextEventLoggerEvent::Ready, $contextData);
 		} catch (Exception $exception) {
-			$this->setDataFailed();
+			$this->setDataFailed($exception);
 			$this->logError($exception);
 		}
 	}
@@ -294,7 +346,7 @@ class Context {
 			return (int) $value;
 		}
 
-		if (str_starts_with($type ?? '', 'boolean') && is_string($value)) {
+		if (substr($type ?? '', 0, 7) === 'boolean' && is_string($value)) {
 			return $value === 'true' || $value === '1';
 		}
 
@@ -379,10 +431,9 @@ class Context {
 				$assignment->variant = 0;
 			}
 			else if (empty($experiment->data->fullOnVariant) && $uid = $this->units[$experiment->data->unitType] ?? null) {
-				//$unitHash = $this->getUnitHash($unitType, $uid);
 				$assigner = $this->getVariantAssigner($unitType, $uid);
 
-					$eligible = $assigner->assign(
+				$eligible = $assigner->assign(
 					$experiment->data->trafficSplit,
 					$experiment->data->trafficSeedHi,
 					$experiment->data->trafficSeedLo
@@ -768,15 +819,18 @@ class Context {
 	}
 
 	public function close(): void {
-		if ($this->getPendingCount() > 0) {
-			$this->flush();
-		}
 		if ($this->isClosed()) {
 			return;
 		}
 
+		$this->finalizing = true;
+		if ($this->getPendingCount() > 0) {
+			$this->flush();
+		}
+
 		$this->logEvent(ContextEventLoggerEvent::Finalize, null);
 		$this->closed = true;
+		$this->finalizing = false;
 	}
 
 }

@@ -2191,6 +2191,28 @@ class ContextTest extends TestCase {
 		self::assertNull($value);
 	}
 
+	public function testEventLoggerCalledOnceOnReady(): void {
+		$logger = new MockContextEventLoggerProxy();
+		$context = $this->createReadyContext('context.json', true, $logger);
+
+		$readyEvents = array_filter($logger->events, fn($e) => $e->getEvent() === ContextEventLoggerEvent::Ready);
+		self::assertCount(1, $readyEvents);
+	}
+
+	public function testCustomFieldValueBooleanPrefixType(): void {
+		$context = $this->createReadyContext('context_custom_fields.json');
+
+		$value = $context->customFieldValue('exp_test_ab', 'is_active');
+		self::assertFalse($value);
+	}
+
+	public function testCustomFieldValueBooleanFalseWithZero(): void {
+		$context = $this->createReadyContext('context_custom_fields.json');
+
+		$value = $context->customFieldValue('exp_test_ab', 'disabled');
+		self::assertFalse($value);
+	}
+
 	public function testGetTreatmentQueuesExposureWithAudienceMatchTrueOnAudienceMatch(): void {
 		$context = $this->createReadyContext('audience_context.json');
 		$context->setAttribute('age', 21);
@@ -2412,5 +2434,78 @@ class ContextTest extends TestCase {
 			$thrownForRefresh = true;
 		}
 		self::assertTrue($thrownForRefresh);
+	}
+
+	public function testReadyErrorReturnsNullOnSuccess(): void {
+		$context = $this->createReadyContext();
+		self::assertNull($context->readyError());
+	}
+
+	public function testIsFinalizingReturnsFalseWhenNotClosing(): void {
+		$context = $this->createReadyContext();
+		self::assertFalse($context->isFinalizing());
+	}
+
+	public function testIsFinalizingReturnsFalseAfterClose(): void {
+		$context = $this->createReadyContext();
+		$context->close();
+		self::assertFalse($context->isFinalizing());
+		self::assertTrue($context->isClosed());
+	}
+
+	public function testGetCustomFieldKeysReturnsAllKeys(): void {
+		$context = $this->createReadyContext('context_custom_fields.json');
+		$keys = $context->getCustomFieldKeys();
+		self::assertIsArray($keys);
+		self::assertContains('country', $keys);
+		self::assertContains('description', $keys);
+		self::assertContains('enabled', $keys);
+		self::assertContains('config', $keys);
+		self::assertContains('min_age', $keys);
+	}
+
+	public function testGetCustomFieldKeysDoesNotIncludeTypeKeys(): void {
+		$context = $this->createReadyContext('context_custom_fields.json');
+		$keys = $context->getCustomFieldKeys();
+		foreach ($keys as $key) {
+			self::assertStringNotContainsString('_type', $key);
+		}
+	}
+
+	public function testGetCustomFieldKeysReturnsEmptyArrayWithNoCustomFields(): void {
+		$context = $this->createReadyContext();
+		$keys = $context->getCustomFieldKeys();
+		self::assertIsArray($keys);
+		self::assertEmpty($keys);
+	}
+
+	public function testGetCustomFieldValueTypeReturnsType(): void {
+		$context = $this->createReadyContext('context_custom_fields.json');
+		self::assertSame('string', $context->getCustomFieldValueType('exp_test_ab', 'country'));
+		self::assertSame('text', $context->getCustomFieldValueType('exp_test_ab', 'description'));
+		self::assertSame('number', $context->getCustomFieldValueType('exp_test_ab', 'min_age'));
+		self::assertSame('boolean', $context->getCustomFieldValueType('exp_test_ab', 'enabled'));
+		self::assertSame('json', $context->getCustomFieldValueType('exp_test_ab', 'config'));
+	}
+
+	public function testGetCustomFieldValueTypeReturnsNullForUnknownField(): void {
+		$context = $this->createReadyContext('context_custom_fields.json');
+		self::assertNull($context->getCustomFieldValueType('exp_test_ab', 'nonexistent_field'));
+	}
+
+	public function testGetCustomFieldValueTypeReturnsNullForUnknownExperiment(): void {
+		$context = $this->createReadyContext('context_custom_fields.json');
+		self::assertNull($context->getCustomFieldValueType('nonexistent_experiment', 'country'));
+	}
+
+	public function testGetUnitReturnsUidForKnownUnitType(): void {
+		$context = $this->createReadyContext();
+		self::assertSame('e791e240fcd3df7d238cfc285f475e8152fcc0ec', $context->getUnit('session_id'));
+		self::assertSame('123456789', $context->getUnit('user_id'));
+	}
+
+	public function testGetUnitReturnsNullForUnknownUnitType(): void {
+		$context = $this->createReadyContext();
+		self::assertNull($context->getUnit('nonexistent_unit'));
 	}
 }
