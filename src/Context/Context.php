@@ -80,6 +80,14 @@ class Context {
 		return $this->finalizing && !$this->closed;
 	}
 
+	public function isFinalized(): bool {
+		return $this->isClosed();
+	}
+
+	public function finalize(): void {
+		$this->close();
+	}
+
 	public function readyError(): ?Throwable {
 		return $this->readyError;
 	}
@@ -270,7 +278,7 @@ class Context {
 
 	private function checkReady(): void {
 		if (!$this->isReady()) {
-			throw new LogicException('ABSmartly Context is not yet ready');
+			throw new LogicException('ABSmartly Context is not yet ready.');
 		}
 
 		$this->checkNotClosed();
@@ -719,7 +727,7 @@ class Context {
 
 	private function checkNotClosed(): void {
 		if ($this->isClosed()) {
-			throw new LogicException('ABSmartly Context is finalized');
+			throw new LogicException('ABSmartly Context is finalized.');
 		}
 	}
 
