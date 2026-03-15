@@ -490,7 +490,9 @@ class Context {
 	}
 
 	public function getVariableValue(string $key, $defaultValue = null) {
-		$this->checkReady();
+		if (!$this->isReady() || $this->isClosed()) {
+			return $defaultValue;
+		}
 		$assignment = $this->getVariableAssignment($key);
 
 		if ($assignment === null) {
@@ -562,7 +564,9 @@ class Context {
 	}
 
 	public function getTreatment(string $experimentName): int {
-		$this->checkReady();
+		if (!$this->isReady() || $this->isClosed()) {
+			return 0;
+		}
 		$assignment = $this->getAssignment($experimentName);
 		if (empty($assignment->exposed)) {
 			$this->queueExposure($assignment);
@@ -636,7 +640,9 @@ class Context {
 	}
 
 	public function peekTreatment(string $experimentName): int {
-		$this->checkReady();
+		if (!$this->isReady() || $this->isClosed()) {
+			return 0;
+		}
 		return $this->getAssignment($experimentName)->variant;
 	}
 

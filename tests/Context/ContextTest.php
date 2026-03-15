@@ -1783,12 +1783,12 @@ class ContextTest extends TestCase {
 		self::assertSame(42, $context->getVariableValue('completely_unknown_var', 42));
 	}
 
-	public function testVariableValueThrowsAfterFinalized(): void {
+	public function testVariableValueReturnsDefaultAfterFinalized(): void {
 		$context = $this->createReadyContext();
 		$context->close();
 
-		$this->expectException(\ABSmartly\SDK\Exception\LogicException::class);
-		$context->getVariableValue('banner.border', 0);
+		self::assertSame(0, $context->getVariableValue('banner.border', 0));
+		self::assertSame('default', $context->getVariableValue('nonexistent', 'default'));
 	}
 
 	public function testPeekVariableValueDefaultWhenUnassigned(): void {
@@ -2110,12 +2110,18 @@ class ContextTest extends TestCase {
 		$context->refresh();
 	}
 
-	public function testTreatmentThrowsAfterFinalized(): void {
+	public function testTreatmentReturnsZeroAfterFinalized(): void {
 		$context = $this->createReadyContext();
 		$context->close();
 
-		$this->expectException(\ABSmartly\SDK\Exception\LogicException::class);
-		$context->getTreatment('exp_test_ab');
+		self::assertSame(0, $context->getTreatment('exp_test_ab'));
+	}
+
+	public function testPeekTreatmentReturnsZeroAfterFinalized(): void {
+		$context = $this->createReadyContext();
+		$context->close();
+
+		self::assertSame(0, $context->peekTreatment('exp_test_ab'));
 	}
 
 	public function testCustomFieldKeysReturnsKeys(): void {
@@ -2397,19 +2403,14 @@ class ContextTest extends TestCase {
 		self::assertTrue($context->isFailed());
 	}
 
-	public function testClosedContextRejectsOperations(): void {
+	public function testClosedContextRejectsWriteOperations(): void {
 		$context = $this->createReadyContext();
 		$context->close();
 
 		self::assertTrue($context->isClosed());
 
-		$thrownForTreatment = false;
-		try {
-			$context->getTreatment('exp_test_ab');
-		} catch (\ABSmartly\SDK\Exception\LogicException $e) {
-			$thrownForTreatment = true;
-		}
-		self::assertTrue($thrownForTreatment);
+		self::assertSame(0, $context->getTreatment('exp_test_ab'));
+		self::assertSame(0, $context->peekTreatment('exp_test_ab'));
 
 		$thrownForTrack = false;
 		try {
