@@ -717,10 +717,10 @@ class Context {
 
 	public function setUnit(string $unitType, string $uid): Context {
 		if (isset($this->units[$unitType]) && $this->units[$unitType] !== $uid) {
-			throw new InvalidArgumentException(sprintf("Unit '%s' UID already set.", $unitType));
+			throw new InvalidArgumentException(sprintf('Unit "%s" UID is already set', $unitType));
 		}
 		if (trim($uid) === '') {
-			throw new InvalidArgumentException(sprintf("Unit '%s' UID must not be blank.", $unitType));
+			throw new InvalidArgumentException(sprintf('Unit "%s" UID must not be blank', $unitType));
 		}
 
 		$this->units[$unitType] = $uid;
