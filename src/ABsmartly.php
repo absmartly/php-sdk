@@ -10,6 +10,7 @@ use ABSmartly\SDK\Context\ContextConfig;
 use ABSmartly\SDK\Context\ContextData;
 use ABSmartly\SDK\Context\ContextDataProvider;
 use ABSmartly\SDK\Context\ContextEventHandler;
+use ABSmartly\SDK\Context\ContextEventLogger;
 use ABSmartly\SDK\Http\HTTPClient;
 use React\Promise\PromiseInterface;
 
@@ -20,11 +21,13 @@ class ABsmartly {
 	private Client $client;
 	private ContextEventHandler $handler;
 	private ContextDataProvider $provider;
+	private ?ContextEventLogger $eventLogger;
 
 	public function __construct(Config $config) {
 		$this->client = $config->getClient();
 		$this->provider = $config->getContextDataProvider();
 		$this->handler = $config->getContextEventHandler();
+		$this->eventLogger = $config->getContextEventLogger();
 	}
 
 	/**
@@ -109,14 +112,23 @@ class ABsmartly {
 	}
 
 	public function createContext(ContextConfig $contextConfig): Context {
+		$this->applyEventLogger($contextConfig);
 		return Context::createFromContextConfig($this, $contextConfig, $this->provider, $this->handler);
 	}
 
 	public function createContextWithData(ContextConfig $contextConfig, ContextData $contextData): Context {
+		$this->applyEventLogger($contextConfig);
 		return Context::createFromContextConfig($this, $contextConfig, $this->provider, $this->handler, $contextData);
 	}
 
+	private function applyEventLogger(ContextConfig $contextConfig): void {
+		if ($this->eventLogger !== null && $contextConfig->getEventLogger() === null) {
+			$contextConfig->setEventLogger($this->eventLogger);
+		}
+	}
+
 	public function createContextAsync(ContextConfig $contextConfig): PromiseInterface {
+		$this->applyEventLogger($contextConfig);
 		if (!$this->provider instanceof AsyncContextDataProvider) {
 			return resolve($this->createContext($contextConfig));
 		}
@@ -126,6 +138,7 @@ class ABsmartly {
 	}
 
 	public function createContextPending(ContextConfig $contextConfig): array {
+		$this->applyEventLogger($contextConfig);
 		$context = Context::createPending($this, $contextConfig, $this->provider, $this->handler);
 
 		if (!$this->provider instanceof AsyncContextDataProvider) {

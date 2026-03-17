@@ -95,7 +95,7 @@ class Client implements AsyncClientInterface {
 	}
 
 	public function decode(string $jsonString): object {
-		return json_decode($jsonString, false, 16, JSON_THROW_ON_ERROR);
+		return json_decode($jsonString, false, 512, JSON_THROW_ON_ERROR);
 	}
 
 	public function encode(object $object): string {

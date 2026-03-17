@@ -46,7 +46,11 @@
                 "config": "{\"color\":\"red\",\"size\":10}",
                 "config_type": "json",
                 "decimal_val": "3.14",
-                "decimal_val_type": "number"
+                "decimal_val_type": "number",
+                "is_active": "false",
+                "is_active_type": "boolean_flag",
+                "disabled": "0",
+                "disabled_type": "boolean"
             }
         },
         {

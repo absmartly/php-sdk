@@ -26,6 +26,7 @@ class MatchOperator extends BinaryOperator {
 
 	private function runRegexBounded(string $text, string $pattern): ?bool {
 		$pattern = trim($pattern, '/');
+		$pattern = str_replace('~', '\~', $pattern);
 
 		$matches = @preg_match('~'. $pattern . '~', $text);
 

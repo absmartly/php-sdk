@@ -22,7 +22,7 @@ class Experiment {
 	public array $trafficSplit;
 	public int $fullOnVariant;
 	public ?object $audience;
-	public bool $audienceStrict;
+	public bool $audienceStrict = false;
 	public array $applications;
 	public array $variants;
 	public ?object $customFieldValues = null;

@@ -30,6 +30,12 @@ class MatchOperatorTest extends TestCase {
 		self::assertFalse($this->operator->evaluate($this->evaluator, ["abcdefghijk", "xyz"]));
 	}
 
+	public function testRegexWithTildeDelimiterInPattern(): void {
+		self::assertTrue($this->operator->evaluate($this->evaluator, ["hello~world", "hello~world"]));
+		self::assertTrue($this->operator->evaluate($this->evaluator, ["test~value", "~"]));
+		self::assertFalse($this->operator->evaluate($this->evaluator, ["helloworld", "hello~world"]));
+	}
+
 	public function testRegexAutoBoundaries(): void {
 		self::assertTrue($this->operator->evaluate($this->evaluator, ["abcdefghijk", "//"]));
 		self::assertTrue($this->operator->evaluate($this->evaluator, ["abcdefghijk", "/abc/"]));

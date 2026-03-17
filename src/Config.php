@@ -5,11 +5,13 @@ namespace ABSmartly\SDK;
 use ABSmartly\SDK\Client\Client;
 use ABSmartly\SDK\Context\ContextDataProvider;
 use ABSmartly\SDK\Context\ContextEventHandler;
+use ABSmartly\SDK\Context\ContextEventLogger;
 
 class Config {
 	private Client $client;
 	private ContextDataProvider $contextDataProvider;
 	private ContextEventHandler $contextEventHandler;
+	private ?ContextEventLogger $contextEventLogger = null;
 
 	public function __construct(Client $client) {
 		$this->client = $client;
@@ -42,5 +44,14 @@ class Config {
 		}
 
 		return $this->contextEventHandler;
+	}
+
+	public function setContextEventLogger(?ContextEventLogger $logger): self {
+		$this->contextEventLogger = $logger;
+		return $this;
+	}
+
+	public function getContextEventLogger(): ?ContextEventLogger {
+		return $this->contextEventLogger;
 	}
 }
