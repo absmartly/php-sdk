@@ -26,6 +26,14 @@ class Config {
 		return $this;
 	}
 
+	public function setContextPublisher(ContextPublisher $contextEventHandler): Config {
+		$this->contextEventHandler = $contextEventHandler;
+		return $this;
+	}
+
+	/**
+	 * @deprecated Use setContextPublisher() instead.
+	 */
 	public function setContextEventHandler(ContextPublisher $contextEventHandler): Config {
 		$this->contextEventHandler = $contextEventHandler;
 		return $this;
