@@ -30,7 +30,7 @@ class InOperatorTest extends TestCase {
 		self::assertFalse($this->operator->evaluate($this->evaluator, [false, []]));
 		self::assertFalse($this->operator->evaluate($this->evaluator, ["1", []]));
 		self::assertFalse($this->operator->evaluate($this->evaluator, [true, []]));
-		self::assertFalse($this->operator->evaluate($this->evaluator, [false, []]));
+		self::assertFalse($this->operator->evaluate($this->evaluator, [0, []]));
 
 		self::assertNull($this->operator->evaluate($this->evaluator, [null, []]));
 	}

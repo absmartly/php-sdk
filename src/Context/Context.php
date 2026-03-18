@@ -112,7 +112,7 @@ class Context {
 				}
 
 				foreach (array_keys($customFieldValues) as $k) {
-					if (!str_ends_with($k, '_type')) {
+					if (substr($k, -5) !== '_type') {
 						$keys[$k] = true;
 					}
 				}

@@ -72,8 +72,9 @@ class HTTPClient implements HttpClientInterface {
 	private function fetchResponse(): Response {
 		$attempt = 0;
 		$lastException = null;
+		$maxAttempts = max(1, $this->retries);
 
-		while ($attempt < $this->retries) {
+		while ($attempt < $maxAttempts) {
 			try {
 				$returnedResponse = curl_exec($this->curlHandle);
 				$this->throwOnError($returnedResponse);
@@ -94,7 +95,7 @@ class HTTPClient implements HttpClientInterface {
 					$httpCode === 408 ||
 					$httpCode === 429;
 
-				if (!$isRetryable || $attempt >= $this->retries - 1) {
+				if (!$isRetryable || $attempt >= $maxAttempts - 1) {
 					throw $e;
 				}
 
