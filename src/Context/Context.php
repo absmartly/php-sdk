@@ -31,7 +31,7 @@ class Context {
 
 	private ABsmartly $sdk;
 
-	private ContextEventHandler $eventHandler;
+	private ContextPublisher $eventHandler;
 	private ContextEventLogger $eventLogger;
 	private ContextDataProvider $dataProvider;
 	private VariableParser $variableParser;
@@ -201,7 +201,7 @@ class Context {
 		return $this;
 	}
 
-	private function setEventHandler(ContextEventHandler $eventHandler): Context {
+	private function setEventHandler(ContextPublisher $eventHandler): Context {
 		$this->eventHandler = $eventHandler;
 		return $this;
 	}
@@ -246,14 +246,14 @@ class Context {
 		$this->readyError = $exception;
 	}
 
-	public static function createFromContextConfig(ABsmartly $sdk, ContextConfig $contextConfig, ContextDataProvider $dataProvider, ContextEventHandler $handler, ?ContextData $contextData = null): Context {
+	public static function createFromContextConfig(ABsmartly $sdk, ContextConfig $contextConfig, ContextDataProvider $dataProvider, ContextPublisher $handler, ?ContextData $contextData = null): Context {
 		$context = new Context($sdk, $contextConfig, $dataProvider, $contextData);
 		$context->setEventHandler($handler);
 
 		return $context;
 	}
 
-	public static function createPending(ABsmartly $sdk, ContextConfig $contextConfig, ContextDataProvider $dataProvider, ContextEventHandler $handler): Context {
+	public static function createPending(ABsmartly $sdk, ContextConfig $contextConfig, ContextDataProvider $dataProvider, ContextPublisher $handler): Context {
 		$context = new Context($sdk, $contextConfig, $dataProvider, null, true);
 		$context->setEventHandler($handler);
 

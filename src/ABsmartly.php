@@ -9,7 +9,7 @@ use ABSmartly\SDK\Context\Context;
 use ABSmartly\SDK\Context\ContextConfig;
 use ABSmartly\SDK\Context\ContextData;
 use ABSmartly\SDK\Context\ContextDataProvider;
-use ABSmartly\SDK\Context\ContextEventHandler;
+use ABSmartly\SDK\Context\ContextPublisher;
 use ABSmartly\SDK\Context\ContextEventLogger;
 use ABSmartly\SDK\Http\HTTPClient;
 use React\Promise\PromiseInterface;
@@ -19,7 +19,7 @@ use function React\Promise\resolve;
 class ABsmartly {
 
 	private Client $client;
-	private ContextEventHandler $handler;
+	private ContextPublisher $handler;
 	private ContextDataProvider $provider;
 	private ?ContextEventLogger $eventLogger;
 
