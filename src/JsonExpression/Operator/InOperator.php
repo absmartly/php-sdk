@@ -15,30 +15,27 @@ use function strpos;
 
 class InOperator extends BinaryOperator {
 
-	public function binary(Evaluator $evaluator, $lhs, $rhs): ?bool {
-		if ($lhs === null) {
+	public function binary(Evaluator $evaluator, $haystack, $needle): ?bool {
+		if ($needle === null) {
 			return null;
 		}
 
-		if (is_array($rhs)) {
-			return in_array($lhs, $rhs, false);
+		if (is_array($haystack)) {
+			return in_array($needle, $haystack, true);
 		}
 
-		if (is_string($rhs)) {
-			if (!is_string($lhs)) {
-				return null;
-			}
+		if (is_string($haystack)) {
 			//@codeCoverageIgnoreStart
 			// due to version-dependent code
 			if (function_exists('str_contains')) {
-				return str_contains($rhs, $lhs);
+				return str_contains($haystack, $needle); // Allows empty strings
 			}
-			return strpos($rhs, $lhs) !== false;
+			return strpos($haystack, $needle) !== false;
 			// @codeCoverageIgnoreEnd
 		}
 
-		if (is_object($rhs)) {
-			return property_exists($rhs, (string) $lhs);
+		if (is_object($haystack)) {
+			return property_exists($haystack, (string) $needle); // Not using isset() to account for possible null values.
 		}
 
 		return null;
