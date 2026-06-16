@@ -25,7 +25,7 @@ class Experiment {
 	public bool $audienceStrict = false;
 	public array $applications;
 	public array $variants;
-	public ?object $customFieldValues = null;
+	public ?array $customFieldValues = null;
 
 	public function __construct(object $data) {
 		$requiredFields = ['id', 'name', 'unitType', 'iteration', 'seedHi', 'seedLo', 'split',
