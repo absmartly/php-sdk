@@ -96,24 +96,14 @@ class Context {
 		$keys = [];
 		if (!empty($this->data->experiments)) {
 			foreach ($this->data->experiments as $experiment) {
-				if (!isset($experiment->customFieldValues)) {
+				if (empty($experiment->customFieldValues)) {
 					continue;
 				}
 
-				$customFieldValues = $experiment->customFieldValues;
-				if (is_string($customFieldValues)) {
-					$customFieldValues = json_decode($customFieldValues, true) ?? [];
-				}
-				if (is_object($customFieldValues)) {
-					$customFieldValues = get_object_vars($customFieldValues);
-				}
-				if (!is_array($customFieldValues)) {
-					continue;
-				}
-
-				foreach (array_keys($customFieldValues) as $k) {
-					if (substr($k, -5) !== '_type') {
-						$keys[$k] = true;
+				// customFieldValues is the collector's array of {name,type,value} objects.
+				foreach ($experiment->customFieldValues as $field) {
+					if (isset($field->name)) {
+						$keys[$field->name] = true;
 					}
 				}
 			}
@@ -123,22 +113,17 @@ class Context {
 
 	public function getCustomFieldValueType(string $experimentName, string $key): ?string {
 		$experiment = $this->getExperiment($experimentName);
-		if ($experiment === null || !isset($experiment->data->customFieldValues)) {
+		if ($experiment === null || empty($experiment->data->customFieldValues)) {
 			return null;
 		}
 
-		$customFieldValues = $experiment->data->customFieldValues;
-		if (is_string($customFieldValues)) {
-			$customFieldValues = json_decode($customFieldValues, true) ?? [];
-		}
-		if (is_object($customFieldValues)) {
-			$customFieldValues = get_object_vars($customFieldValues);
-		}
-		if (!is_array($customFieldValues)) {
-			return null;
+		foreach ($experiment->data->customFieldValues as $field) {
+			if (isset($field->name) && $field->name === $key) {
+				return $field->type ?? null;
+			}
 		}
 
-		return $customFieldValues[$key . '_type'] ?? null;
+		return null;
 	}
 
 	public function pending(): int {
@@ -302,35 +287,25 @@ class Context {
 
 	public function customFieldValue(string $experimentName, string $fieldName) {
 		$experiment = $this->getExperiment($experimentName);
-		if ($experiment === null || !isset($experiment->data->customFieldValues)) {
+		if ($experiment === null || empty($experiment->data->customFieldValues)) {
 			return null;
 		}
 
-		$customFieldValues = $experiment->data->customFieldValues;
-		if (is_string($customFieldValues)) {
-			try {
-				$customFieldValues = json_decode($customFieldValues, true, 512, JSON_THROW_ON_ERROR);
-			}
-			catch (\JsonException $e) {
-				error_log(sprintf(
-					'ABsmartly SDK Error: Failed to decode custom field values for experiment "%s": %s',
-					$experimentName,
-					$e->getMessage()
-				));
-				return null;
+		// customFieldValues is the collector's array of {name,type,value} objects.
+		$field = null;
+		foreach ($experiment->data->customFieldValues as $candidate) {
+			if (isset($candidate->name) && $candidate->name === $fieldName) {
+				$field = $candidate;
+				break;
 			}
 		}
 
-		if (is_object($customFieldValues)) {
-			$customFieldValues = get_object_vars($customFieldValues);
-		}
-
-		if (!isset($customFieldValues[$fieldName])) {
+		if ($field === null || !isset($field->value)) {
 			return null;
 		}
 
-		$value = $customFieldValues[$fieldName];
-		$type = $customFieldValues[$fieldName . '_type'] ?? null;
+		$value = $field->value;
+		$type = $field->type ?? null;
 
 		if ($type === 'json' && is_string($value)) {
 			try {
