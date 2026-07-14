@@ -2,7 +2,7 @@
 
 namespace ABSmartly\SDK\Context;
 
-use InvalidArgumentException;
+use ABSmartly\SDK\Exception\InvalidArgumentException;
 
 use function gettype;
 use function is_int;

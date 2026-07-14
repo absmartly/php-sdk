@@ -3,15 +3,16 @@
 namespace ABSmartly\SDK\Context;
 
 use ABSmartly\SDK\Client\ClientInterface;
+use ABSmartly\SDK\PublishEvent;
 
-class ContextDataProvider {
+class ContextPublisher {
 	private ClientInterface $client;
 
 	public function __construct(ClientInterface $client) {
 		$this->client = $client;
 	}
 
-	public function getContextData(): ContextData {
-		return $this->client->getContextData();
+	public function publish(PublishEvent $event): void {
+		$this->client->publish($event);
 	}
 }

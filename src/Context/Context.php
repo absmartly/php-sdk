@@ -11,7 +11,7 @@ use ABSmartly\SDK\ExperimentVariables;
 use ABSmartly\SDK\Exposure;
 use ABSmartly\SDK\GoalAchievement;
 use ABSmartly\SDK\PublishEvent;
-use ABSmartly\SDK\SDK;
+use ABSmartly\SDK\ABsmartly;
 use ABSmartly\SDK\VariableParser;
 use ABSmartly\SDK\VariantAssigner;
 
@@ -29,9 +29,9 @@ use function trim;
 
 class Context {
 
-	private SDK $sdk;
+	private ABsmartly $sdk;
 
-	private ContextEventHandler $eventHandler;
+	private ContextPublisher $eventHandler;
 	private ContextEventLogger $eventLogger;
 	private ContextDataProvider $dataProvider;
 	private VariableParser $variableParser;
@@ -59,7 +59,10 @@ class Context {
 
 	private int $pendingCount = 0;
 	private bool $closed = false;
+	private bool $finalizing = false;
 	private bool $ready;
+	private int $attrsSeq = 0;
+	private ?Throwable $readyError = null;
 
 	public function isReady(): bool {
 		return $this->ready;
@@ -73,11 +76,65 @@ class Context {
 		return $this->closed;
 	}
 
+	public function isFinalizing(): bool {
+		return $this->finalizing && !$this->closed;
+	}
+
+	public function isFinalized(): bool {
+		return $this->isClosed();
+	}
+
+	public function finalize(): void {
+		$this->close();
+	}
+
+	public function readyError(): ?Throwable {
+		return $this->readyError;
+	}
+
+	public function getCustomFieldKeys(): array {
+		$keys = [];
+		if (!empty($this->data->experiments)) {
+			foreach ($this->data->experiments as $experiment) {
+				if (empty($experiment->customFieldValues)) {
+					continue;
+				}
+
+				// customFieldValues is the collector's array of {name,type,value} objects.
+				foreach ($experiment->customFieldValues as $field) {
+					if (isset($field->name)) {
+						$keys[$field->name] = true;
+					}
+				}
+			}
+		}
+		return array_keys($keys);
+	}
+
+	public function getCustomFieldValueType(string $experimentName, string $key): ?string {
+		$experiment = $this->getExperiment($experimentName);
+		if ($experiment === null || empty($experiment->data->customFieldValues)) {
+			return null;
+		}
+
+		foreach ($experiment->data->customFieldValues as $field) {
+			if (isset($field->name) && $field->name === $key) {
+				return $field->type ?? null;
+			}
+		}
+
+		return null;
+	}
+
+	public function pending(): int {
+		return $this->pendingCount;
+	}
+
 	public static function getTime(): int {
 		return (int) (microtime(true) * 1000);
 	}
 
-	private function __construct(SDK $sdk, ContextConfig $contextConfig, ContextDataProvider $dataProvider, ?ContextData $contextData = null) {
+	private function __construct(ABsmartly $sdk, ContextConfig $contextConfig, ContextDataProvider $dataProvider, ?ContextData $contextData = null, bool $pending = false) {
 		$this->sdk = $sdk;
 		$this->dataProvider = $dataProvider;
 		$this->setUnits($contextConfig->getUnits());
@@ -92,6 +149,14 @@ class Context {
 		$this->audienceMatcher = new AudienceMatcher();
 		$this->variableParser = new VariableParser();
 
+		if ($pending) {
+			$this->ready = false;
+			$this->data = null;
+			$this->index = [];
+			$this->indexVariables = [];
+			return;
+		}
+
 		try {
 			$this->ready = true;
 			if (!$contextData) {
@@ -105,7 +170,13 @@ class Context {
 			$this->logEvent(ContextEventLoggerEvent::Ready, $data);
 		}
 		catch (Exception $exception) {
-			$this->setDataFailed();
+			$this->setDataFailed($exception);
+			error_log(sprintf(
+				'ABsmartly SDK CRITICAL: Context initialization failed: %s in %s:%d. Context is in failed state.',
+				$exception->getMessage(),
+				$exception->getFile(),
+				$exception->getLine()
+			));
 			$this->logError($exception);
 		}
 	}
@@ -115,7 +186,7 @@ class Context {
 		return $this;
 	}
 
-	private function setEventHandler(ContextEventHandler $eventHandler): Context {
+	private function setEventHandler(ContextPublisher $eventHandler): Context {
 		$this->eventHandler = $eventHandler;
 		return $this;
 	}
@@ -152,27 +223,47 @@ class Context {
 		}
 	}
 
-	private function setDataFailed(): void {
+	private function setDataFailed(?Throwable $exception = null): void {
 		$this->indexVariables = [];
 		$this->index = [];
 		$this->data = null;
 		$this->failed = true;
+		$this->readyError = $exception;
 	}
 
-	public static function createFromContextConfig(SDK $sdk, ContextConfig $contextConfig, ContextDataProvider $dataProvider, ContextEventHandler $handler, ?ContextData $contextData = null): Context {
+	public static function createFromContextConfig(ABsmartly $sdk, ContextConfig $contextConfig, ContextDataProvider $dataProvider, ContextPublisher $handler, ?ContextData $contextData = null): Context {
 		$context = new Context($sdk, $contextConfig, $dataProvider, $contextData);
 		$context->setEventHandler($handler);
-
-		if ($logger = $contextConfig->getEventLogger()) {
-			$context->setEventLogger($logger);
-		}
 
 		return $context;
 	}
 
+	public static function createPending(ABsmartly $sdk, ContextConfig $contextConfig, ContextDataProvider $dataProvider, ContextPublisher $handler): Context {
+		$context = new Context($sdk, $contextConfig, $dataProvider, null, true);
+		$context->setEventHandler($handler);
+
+		return $context;
+	}
+
+	public function setContextData(ContextData $contextData): void {
+		if ($this->ready) {
+			return;
+		}
+
+		try {
+			$this->data = $contextData;
+			$this->setData($contextData);
+			$this->ready = true;
+			$this->logEvent(ContextEventLoggerEvent::Ready, $contextData);
+		} catch (Exception $exception) {
+			$this->setDataFailed($exception);
+			$this->logError($exception);
+		}
+	}
+
 	private function checkReady(): void {
 		if (!$this->isReady()) {
-			throw new LogicException('ABSmartly Context is not yet ready');
+			throw new LogicException('ABsmartly Context is not yet ready.');
 		}
 
 		$this->checkNotClosed();
@@ -194,6 +285,57 @@ class Context {
 		return $return;
 	}
 
+	public function customFieldValue(string $experimentName, string $fieldName) {
+		$experiment = $this->getExperiment($experimentName);
+		if ($experiment === null || empty($experiment->data->customFieldValues)) {
+			return null;
+		}
+
+		// customFieldValues is the collector's array of {name,type,value} objects.
+		$field = null;
+		foreach ($experiment->data->customFieldValues as $candidate) {
+			if (isset($candidate->name) && $candidate->name === $fieldName) {
+				$field = $candidate;
+				break;
+			}
+		}
+
+		if ($field === null || !isset($field->value)) {
+			return null;
+		}
+
+		$value = $field->value;
+		$type = $field->type ?? null;
+
+		if ($type === 'json' && is_string($value)) {
+			try {
+				return json_decode($value, true, 512, JSON_THROW_ON_ERROR);
+			}
+			catch (\JsonException $e) {
+				error_log(sprintf(
+					'ABsmartly SDK Error: Failed to decode JSON custom field "%s" for experiment "%s": %s',
+					$fieldName,
+					$experimentName,
+					$e->getMessage()
+				));
+				return null;
+			}
+		}
+
+		if ($type === 'number' && is_string($value)) {
+			if (strpos($value, '.') !== false) {
+				return (float) $value;
+			}
+			return (int) $value;
+		}
+
+		if (substr($type ?? '', 0, 7) === 'boolean' && is_string($value)) {
+			return $value === 'true' || $value === '1';
+		}
+
+		return $value;
+	}
+
 	private function experimentMatches(Experiment $experiment, Assignment $assignment): bool {
 		return $experiment->id === $assignment->id &&
 			$experiment->unitType === $assignment->unitType &&
@@ -202,12 +344,30 @@ class Context {
 			$experiment->trafficSplit === $assignment->trafficSplit;
 	}
 
+	private function audienceMatches(Experiment $experiment, Assignment $assignment): bool {
+		if (!empty($experiment->audience) && !empty((array) $experiment->audience)) {
+			if ($this->attrsSeq > ($assignment->attrsSeq ?? 0)) {
+				$attrs = $this->getAttributes();
+				$result = $this->audienceMatcher->evaluate($experiment->audience, $attrs);
+				$newAudienceMismatch = !$result;
+
+				if ($newAudienceMismatch !== $assignment->audienceMismatch) {
+					return false;
+				}
+
+				$assignment->attrsSeq = $this->attrsSeq;
+			}
+		}
+		return true;
+	}
+
 	private function getAssignment(string $experimentName): Assignment {
 		$experiment = $this->getExperiment($experimentName);
 
 		if (isset($this->assignmentCache[$experimentName])) {
 			$assignment = $this->assignmentCache[$experimentName];
-			if ($override = $this->overrides[$experimentName] ?? false) {
+			if (array_key_exists($experimentName, $this->overrides)) {
+				$override = $this->overrides[$experimentName];
 				if ($assignment->overridden && $assignment->variant === $override) {
 					// override up-to-date
 					return $assignment;
@@ -219,7 +379,7 @@ class Context {
 					return $assignment;
 				}
 			} else if (!isset($this->cassignments[$experimentName]) || $this->cassignments[$experimentName] === $assignment->variant) {
-				if ($this->experimentMatches($experiment->data, $assignment)) {
+				if ($this->experimentMatches($experiment->data, $assignment) && $this->audienceMatches($experiment->data, $assignment)) {
 					// assignment up-to-date
 					return $assignment;
 				}
@@ -250,17 +410,16 @@ class Context {
 				$assignment->audienceMismatch = !$result;
 			}
 
-			if (isset($experiment->data->audienceStrict) && !empty($assignment->audienceMismatch)) {
+			if (!empty($experiment->data->audienceStrict) && !empty($assignment->audienceMismatch)) {
 				$assignment->variant = 0;
 			}
 			else if (empty($experiment->data->fullOnVariant) && $uid = $this->units[$experiment->data->unitType] ?? null) {
-				//$unitHash = $this->getUnitHash($unitType, $uid);
 				$assigner = $this->getVariantAssigner($unitType, $uid);
 
 				$eligible = $assigner->assign(
 					$experiment->data->trafficSplit,
-					$experiment->data->seedHi,
-					$experiment->data->seedLo
+					$experiment->data->trafficSeedHi,
+					$experiment->data->trafficSeedLo
 				);
 				if ($eligible === 1) {
 					$custom = $this->cassignments[$experimentName] ?? null;
@@ -296,26 +455,36 @@ class Context {
 			$assignment->fullOnVariant = $experiment->data->fullOnVariant;
 		}
 
-		if (($experiment !== null) && ($assignment->variant < count($experiment->data->variants))) {
+		if (($experiment !== null) && $assignment->variant >= 0 && ($assignment->variant < count($experiment->data->variants))) {
 			$assignment->variables = $experiment->variables[$assignment->variant];
 		}
+
+		$assignment->attrsSeq = $this->attrsSeq;
 
 		return $assignment;
 	}
 
 	public function getVariableValue(string $key, $defaultValue = null) {
-		$this->checkReady();
+		if (!$this->isReady() || $this->isClosed()) {
+			return $defaultValue;
+		}
 		$assignment = $this->getVariableAssignment($key);
 
 		if ($assignment === null) {
 			return $defaultValue;
 		}
 
-		if (empty($assignment->exposed)) {
-			$this->queueExposure($assignment);
+		if ($assignment->variables !== null) {
+			if (empty($assignment->exposed)) {
+				$this->queueExposure($assignment);
+			}
+
+			if (isset($assignment->variables->{$key}) && ($assignment->assigned || $assignment->overridden)) {
+				return $assignment->variables->{$key};
+			}
 		}
 
-		return $assignment->variables->{$key} ?? $defaultValue;
+		return $defaultValue;
 	}
 
 	public function getVariableKeys(): array {
@@ -327,12 +496,13 @@ class Context {
 		return $return;
 	}
 
-	public function setAttribute(string $name, string $value): Context {
+	public function setAttribute(string $name, $value): Context {
 		$this->attributes[] = (object) [
 			'name' => $name,
 			'value' => $value,
 			'setAt' => self::getTime(),
 		];
+		++$this->attrsSeq;
 
 		return $this;
 	}
@@ -369,7 +539,9 @@ class Context {
 	}
 
 	public function getTreatment(string $experimentName): int {
-		$this->checkReady();
+		if (!$this->isReady() || $this->isClosed()) {
+			return 0;
+		}
 		$assignment = $this->getAssignment($experimentName);
 		if (empty($assignment->exposed)) {
 			$this->queueExposure($assignment);
@@ -403,6 +575,12 @@ class Context {
 
 	private function logError(Throwable $throwable): void {
 		if (!isset($this->eventLogger)) {
+			error_log(sprintf(
+				'ABsmartly SDK Error: %s in %s:%d',
+				$throwable->getMessage(),
+				$throwable->getFile(),
+				$throwable->getLine()
+			));
 			return;
 		}
 
@@ -437,7 +615,9 @@ class Context {
 	}
 
 	public function peekTreatment(string $experimentName): int {
-		$this->checkReady();
+		if (!$this->isReady() || $this->isClosed()) {
+			return 0;
+		}
 		return $this->getAssignment($experimentName)->variant;
 	}
 
@@ -455,6 +635,14 @@ class Context {
 		}
 
 		return $this;
+	}
+
+	public function getUnit(string $unitType) {
+		return $this->units[$unitType] ?? null;
+	}
+
+	public function getUnits(): array {
+		return $this->units;
 	}
 
 	public function setOverrides(array $overrides): Context {
@@ -520,12 +708,24 @@ class Context {
 
 	private function checkNotClosed(): void {
 		if ($this->isClosed()) {
-			throw new LogicException('ABSmartly Context is closed');
+			throw new LogicException('ABsmartly Context is finalized.');
 		}
 	}
 
 	public function flush(): void {
 		if ($this->isFailed()) {
+			$errorMsg = sprintf(
+				'ABsmartly SDK Warning: Discarding %d exposures and %d goals due to failed context state',
+				count($this->exposures),
+				count($this->achievements)
+			);
+			error_log($errorMsg);
+			if (isset($this->eventLogger)) {
+				$this->eventLogger->handleEvent($this, new ContextEventLoggerEvent(
+					ContextEventLoggerEvent::Error,
+					new \RuntimeException($errorMsg)
+				));
+			}
 			$this->exposures = [];
 			$this->achievements = [];
 			$this->pendingCount = 0;
@@ -542,11 +742,19 @@ class Context {
 		try {
 			$this->eventHandler->publish($event);
 			$this->logEvent(ContextEventLoggerEvent::Publish, $event);
+			$this->exposures = [];
+			$this->achievements = [];
 			$this->pendingCount = 0;
 		}
 		catch (Exception $exception) {
-			$this->failed = true;
+			error_log(sprintf(
+				'ABsmartly SDK Error: Failed to publish %d exposures and %d goals: %s. Events preserved for retry.',
+				count($this->exposures),
+				count($this->achievements),
+				$exception->getMessage()
+			));
 			$this->logError($exception);
+			throw $exception;
 		}
 	}
 
@@ -576,28 +784,47 @@ class Context {
 
 	public function refresh(): void {
 		$this->checkNotClosed();
+		$oldData = $this->data;
+		$oldIndex = $this->index;
+		$oldIndexVariables = $this->indexVariables;
 		try {
 			$data = $this->dataProvider->getContextData();
 			$this->setData($data);
 			$this->logEvent(ContextEventLoggerEvent::Refresh, $data);
 		}
 		catch (Exception $exception) {
-			$this->setDataFailed();
+			$this->data = $oldData;
+			$this->index = $oldIndex;
+			$this->indexVariables = $oldIndexVariables;
+			$this->failed = true;
+			error_log(sprintf(
+				'ABsmartly SDK Error: Failed to refresh context, keeping existing data: %s in %s:%d',
+				$exception->getMessage(),
+				$exception->getFile(),
+				$exception->getLine()
+			));
 			$this->logError($exception);
 		}
 	}
 
 	public function close(): void {
-		if ($this->getPendingCount() > 0) {
-			$this->flush();
-		}
 		if ($this->isClosed()) {
 			return;
 		}
 
-		$this->logEvent(ContextEventLoggerEvent::Close, null);
+		$this->finalizing = true;
+		if ($this->getPendingCount() > 0) {
+			try {
+				$this->flush();
+			}
+			catch (Exception $exception) {
+				// error already logged by flush(); close() must still complete.
+			}
+		}
+
+		$this->logEvent(ContextEventLoggerEvent::Finalize, null);
 		$this->closed = true;
-		$this->sdk->close();
+		$this->finalizing = false;
 	}
 
 }

@@ -4,12 +4,14 @@ namespace ABSmartly\SDK;
 
 use ABSmartly\SDK\Client\Client;
 use ABSmartly\SDK\Context\ContextDataProvider;
-use ABSmartly\SDK\Context\ContextEventHandler;
+use ABSmartly\SDK\Context\ContextPublisher;
+use ABSmartly\SDK\Context\ContextEventLogger;
 
 class Config {
 	private Client $client;
 	private ContextDataProvider $contextDataProvider;
-	private ContextEventHandler $contextEventHandler;
+	private ContextPublisher $contextEventHandler;
+	private ?ContextEventLogger $contextEventLogger = null;
 
 	public function __construct(Client $client) {
 		$this->client = $client;
@@ -24,7 +26,15 @@ class Config {
 		return $this;
 	}
 
-	public function setContextEventHandler(ContextEventHandler $contextEventHandler): Config {
+	public function setContextPublisher(ContextPublisher $contextEventHandler): Config {
+		$this->contextEventHandler = $contextEventHandler;
+		return $this;
+	}
+
+	/**
+	 * @deprecated Use setContextPublisher() instead.
+	 */
+	public function setContextEventHandler(ContextPublisher $contextEventHandler): Config {
 		$this->contextEventHandler = $contextEventHandler;
 		return $this;
 	}
@@ -36,11 +46,20 @@ class Config {
 		return $this->contextDataProvider;
 	}
 
-	public function getContextEventHandler(): ContextEventHandler {
+	public function getContextEventHandler(): ContextPublisher {
 		if (!isset($this->contextEventHandler)) {
-			$this->contextEventHandler = new ContextEventHandler($this->client);
+			$this->contextEventHandler = new ContextPublisher($this->client);
 		}
 
 		return $this->contextEventHandler;
+	}
+
+	public function setContextEventLogger(?ContextEventLogger $logger): self {
+		$this->contextEventLogger = $logger;
+		return $this;
+	}
+
+	public function getContextEventLogger(): ?ContextEventLogger {
+		return $this->contextEventLogger;
 	}
 }
