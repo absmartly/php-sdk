@@ -747,14 +747,14 @@ class Context {
 			$this->pendingCount = 0;
 		}
 		catch (Exception $exception) {
-			$this->failed = true;
 			error_log(sprintf(
-				'ABsmartly SDK Error: Failed to publish %d exposures and %d goals: %s. Data will be lost.',
+				'ABsmartly SDK Error: Failed to publish %d exposures and %d goals: %s. Events preserved for retry.',
 				count($this->exposures),
 				count($this->achievements),
 				$exception->getMessage()
 			));
 			$this->logError($exception);
+			throw $exception;
 		}
 	}
 
@@ -814,7 +814,12 @@ class Context {
 
 		$this->finalizing = true;
 		if ($this->getPendingCount() > 0) {
-			$this->flush();
+			try {
+				$this->flush();
+			}
+			catch (Exception $exception) {
+				// error already logged by flush(); close() must still complete.
+			}
 		}
 
 		$this->logEvent(ContextEventLoggerEvent::Finalize, null);

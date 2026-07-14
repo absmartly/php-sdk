@@ -762,7 +762,12 @@ class ContextTest extends TestCase {
 
 		$logger->clear();
 
-		$context->publish();
+		try {
+			$context->publish();
+			self::fail('Expected publish() to throw');
+		} catch (\RuntimeException $exception) {
+			self::assertSame('Trigger failure', $exception->getMessage());
+		}
 
 		self::assertSame(ContextEventLoggerEvent::Error, $logger->events[0]->getEvent());
 	}
@@ -1353,9 +1358,16 @@ class ContextTest extends TestCase {
 		};
 
 		$context->track('goal1');
-		$context->publish();
 
-		self::assertTrue($context->isFailed());
+		try {
+			$context->publish();
+			self::fail('Expected publish() to throw');
+		} catch (\RuntimeException $exception) {
+			self::assertSame('Network timeout', $exception->getMessage());
+		}
+
+		self::assertFalse($context->isFailed());
+		self::assertSame(1, $context->getPendingCount());
 
 		$errorEvents = array_filter($logger->events, fn($e) => $e->getEvent() === ContextEventLoggerEvent::Error);
 		self::assertNotEmpty($errorEvents);
@@ -1415,7 +1427,13 @@ class ContextTest extends TestCase {
 		};
 
 		$context->track('goal1');
-		$context->publish();
+
+		try {
+			$context->publish();
+			self::fail('Expected publish() to throw');
+		} catch (\RuntimeException $exception) {
+			self::assertSame('Handler error', $exception->getMessage());
+		}
 
 		$errorEvents = array_filter($logger->events, fn($e) => $e->getEvent() === ContextEventLoggerEvent::Error);
 		self::assertNotEmpty($errorEvents);
@@ -1949,9 +1967,15 @@ class ContextTest extends TestCase {
 		};
 
 		$context->track('goal1');
-		$context->publish();
 
-		self::assertTrue($context->isFailed());
+		try {
+			$context->publish();
+			self::fail('Expected publish() to throw');
+		} catch (\RuntimeException $exception) {
+			self::assertSame('Publish failed', $exception->getMessage());
+		}
+
+		self::assertSame(1, $context->getPendingCount());
 	}
 
 	public function testPublishThrowsAfterFinalized(): void {
@@ -2355,7 +2379,13 @@ class ContextTest extends TestCase {
 
 		$context->track('goal1');
 		$logger->clear();
-		$context->publish();
+
+		try {
+			$context->publish();
+			self::fail('Expected publish() to throw');
+		} catch (\RuntimeException $exception) {
+			self::assertSame('Connection refused', $exception->getMessage());
+		}
 
 		$errorEvents = array_filter($logger->events, fn($e) => $e->getEvent() === ContextEventLoggerEvent::Error);
 		self::assertNotEmpty($errorEvents);
