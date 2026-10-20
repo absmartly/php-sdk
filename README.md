@@ -298,28 +298,12 @@ Sometimes it is necessary to ensure all events have been published to the A/B Sm
 $context->publish();
 ```
 
-With async HTTP client:
-
-```php
-$context->publish()->then(function() {
-    header('Location: https://www.absmartly.com');
-});
-```
-
 ### Finalizing
 
 The `close()` method will ensure all events have been published to the A/B Smartly collector, like `Context->publish()`, and will also "seal" the context, throwing an error if any method that could generate an event is called.
 
 ```php
 $context->close();
-```
-
-With async HTTP client:
-
-```php
-$context->close()->then(function() {
-    header('Location: https://www.absmartly.com');
-});
 ```
 
 ### Custom Event Logger
