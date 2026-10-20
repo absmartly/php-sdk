@@ -84,7 +84,6 @@ $clientConfig = new ClientConfig($endpoint, $apiKey, $application, $environment)
 
 $reactHttpClient = new ReactHttpClient();
 $reactHttpClient->timeout = 3000;
-$reactHttpClient->retries = 5;
 
 $client = new Client($clientConfig, $reactHttpClient);
 $config = new Config($client);
@@ -92,7 +91,7 @@ $config = new Config($client);
 $sdk = new ABsmartly($config);
 ```
 
-The async HTTP client uses ReactPHP promises and allows for non-blocking I/O operations.
+The async HTTP client uses ReactPHP promises and allows for non-blocking I/O operations. It performs a single request per call and does not retry; the `retries` option applies to the default synchronous HTTP client only.
 
 **SDK Options**
 
