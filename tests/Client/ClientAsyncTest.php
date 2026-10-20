@@ -56,7 +56,7 @@ class ClientAsyncTest extends TestCase {
 		$httpClient = $this->createMockAsyncHttpClient();
 		$response = $this->createContextDataResponse();
 
-		$httpClient->method('getAsync')
+		$httpClient->expects(self::once())->method('getAsync')
 			->willReturn(resolve($response));
 
 		$config = new ClientConfig('https://example.com', 'api-key', 'app', 'env');
@@ -66,6 +66,12 @@ class ClientAsyncTest extends TestCase {
 
 		$promise = $client->getContextDataAsync();
 		self::assertInstanceOf(PromiseInterface::class, $promise);
+
+		$result = null;
+		$promise->then(function($data) use (&$result) {
+			$result = $data;
+		});
+		self::assertInstanceOf(ContextData::class, $result);
 	}
 
 	public function testGetContextDataAsyncWithSyncClientReturnsResolvedPromise(): void {
@@ -97,7 +103,7 @@ class ClientAsyncTest extends TestCase {
 		$response->status = 200;
 		$response->content = '{}';
 
-		$httpClient->method('putAsync')
+		$httpClient->expects(self::once())->method('putAsync')
 			->willReturn(resolve($response));
 
 		$config = new ClientConfig('https://example.com', 'api-key', 'app', 'env');
@@ -107,6 +113,11 @@ class ClientAsyncTest extends TestCase {
 		$promise = $client->publishAsync($publishEvent);
 
 		self::assertInstanceOf(PromiseInterface::class, $promise);
+		$settled = false;
+		$promise->then(function() use (&$settled) {
+			$settled = true;
+		});
+		self::assertTrue($settled);
 	}
 
 	public function testPublishAsyncWithSyncClientReturnsResolvedPromise(): void {

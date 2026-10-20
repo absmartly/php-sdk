@@ -94,7 +94,18 @@ class ABsmartly {
 		int $timeout = 3000,
 		?callable $eventLogger = null
 	): ABsmartly {
+		return new ABsmartly(static::buildConfig($endpoint, $apiKey, $application, $environment, $retries, $timeout, $eventLogger));
+	}
 
+	protected static function buildConfig(
+		string $endpoint,
+		string $apiKey,
+		string $application,
+		string $environment,
+		int $retries,
+		int $timeout,
+		?callable $eventLogger
+	): Config {
 		$clientConfig = new ClientConfig(
 			$endpoint,
 			$apiKey,
@@ -109,7 +120,7 @@ class ABsmartly {
 		if ($eventLogger !== null) {
 			$sdkConfig->setContextEventLogger(new \ABSmartly\SDK\Context\ContextEventLoggerCallback($eventLogger));
 		}
-		return new ABsmartly($sdkConfig);
+		return $sdkConfig;
 	}
 
 	public function createContext(ContextConfig $contextConfig): Context {
