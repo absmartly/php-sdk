@@ -132,9 +132,7 @@ use React\Promise\PromiseInterface;
 $contextConfig = new ContextConfig();
 $contextConfig->setUnit('session_id', '5ebf06d8cb5d8137290c4abb64155584fbdb64d8');
 
-$context = $sdk->createContext($contextConfig);
-
-$context->ready()->then(
+$sdk->createContextAsync($contextConfig)->then(
     function($context) {
         $treatment = $context->getTreatment('exp_test_experiment');
     },
@@ -615,13 +613,11 @@ $sdk = new ABsmartly($config);
 $contextConfig = new ContextConfig();
 $contextConfig->setUnit('session_id', 'abc123');
 
-$context = $sdk->createContext($contextConfig);
-
-$timeout = Loop::addTimer(1.5, function() use ($context) {
+$timeout = Loop::addTimer(1.5, function() {
     echo "Context creation timed out\n";
 });
 
-$context->ready()->then(
+$sdk->createContextAsync($contextConfig)->then(
     function($ctx) use ($timeout) {
         Loop::cancelTimer($timeout);
         echo "Context ready!\n";

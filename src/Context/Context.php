@@ -798,7 +798,6 @@ class Context {
 			$this->data = $oldData;
 			$this->index = $oldIndex;
 			$this->indexVariables = $oldIndexVariables;
-			$this->failed = true;
 			error_log(sprintf(
 				'ABsmartly SDK Error: Failed to refresh context, keeping existing data: %s in %s:%d',
 				$exception->getMessage(),

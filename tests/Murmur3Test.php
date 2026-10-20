@@ -6,7 +6,11 @@ use PHPUnit\Framework\TestCase;
 
 class Murmur3Test extends TestCase {
 	private function murmur3Hash(string $input, int $seed = 0): int {
-		return hexdec(hash('murmur3a', $input, false, ['seed' => $seed]));
+		if (PHP_VERSION_ID >= 80100) {
+			return hexdec(hash('murmur3a', $input, false, ['seed' => $seed]));
+		}
+
+		return \lastguest\Murmur::hash3_int($input, $seed);
 	}
 
 	public static function murmur3Seed0Provider(): array {

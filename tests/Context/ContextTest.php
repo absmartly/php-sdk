@@ -2404,7 +2404,7 @@ class ContextTest extends TestCase {
 		$logger->clear();
 		$context->refresh();
 
-		self::assertTrue($context->isFailed());
+		self::assertFalse($context->isFailed());
 		$errorEvents = array_filter($logger->events, fn($e) => $e->getEvent() === ContextEventLoggerEvent::Error);
 		self::assertNotEmpty($errorEvents);
 	}
@@ -2430,7 +2430,8 @@ class ContextTest extends TestCase {
 
 		$context->refresh();
 
-		self::assertTrue($context->isFailed());
+		self::assertFalse($context->isFailed());
+		self::assertTrue($context->isReady());
 	}
 
 	public function testClosedContextRejectsWriteOperations(): void {
