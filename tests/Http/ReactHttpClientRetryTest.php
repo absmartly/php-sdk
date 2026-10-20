@@ -44,4 +44,21 @@ class ReactHttpClientRetryTest extends TestCase {
 
 		self::assertInstanceOf(\ABSmartly\SDK\Exception\HttpClientError::class, $error);
 	}
+
+	public function testCancellingDuringBackoffPreventsFurtherRequests(): void {
+		$client = new ReactHttpClient($this->browser([
+			reject(new \RuntimeException('Connection refused')),
+		]));
+		$client->retries = 3;
+
+		$promise = $client->getAsync('http://x');
+		$error = null;
+		$promise->then(null, function($e) use (&$error) { $error = $e; });
+		$promise->cancel();
+
+		\React\EventLoop\Loop::addTimer(1.3, fn() => \React\EventLoop\Loop::stop());
+		\React\EventLoop\Loop::run();
+
+		self::assertInstanceOf(\RuntimeException::class, $error);
+	}
 }

@@ -6,7 +6,7 @@ use ABSmartly\SDK\Exception\HttpClientError;
 use React\EventLoop\Loop;
 use React\Http\Browser;
 use React\Http\Message\ResponseException;
-use React\Promise\Deferred;
+use React\Promise\Promise;
 use React\Promise\PromiseInterface;
 
 use function http_build_query;
@@ -64,27 +64,55 @@ class ReactHttpClient implements AsyncHttpClientInterface {
 		return await($this->postAsync($url, $query, $headers, $body));
 	}
 
-	private function withRetries(callable $request, int $attempt = 0): PromiseInterface {
+	private function withRetries(callable $request): PromiseInterface {
 		$maxAttempts = max(1, $this->retries);
-		return $request()->then(null, function($error) use ($request, $attempt, $maxAttempts) {
-			if (!$this->isRetryable($error) || $attempt >= $maxAttempts - 1) {
-				throw $error;
+		$current = null;
+		$timer = null;
+		$cancelled = false;
+
+		return new Promise(
+			function($resolve, $reject) use ($request, $maxAttempts, &$current, &$timer, &$cancelled) {
+				$attempt = function(int $n) use (&$attempt, $request, $maxAttempts, $resolve, $reject, &$current, &$timer, &$cancelled) {
+					if ($cancelled) {
+						return;
+					}
+					$current = $request();
+					$current->then($resolve, function($error) use (&$attempt, $n, $maxAttempts, $reject, &$timer, &$cancelled) {
+						if ($cancelled) {
+							return;
+						}
+						if (!$this->isRetryable($error) || $n >= $maxAttempts - 1) {
+							$reject($error);
+							return;
+						}
+						$backoffMs = min(1000 * pow(2, $n), 10000);
+						error_log(sprintf(
+							'ABsmartly SDK: Retrying HTTP request (attempt %d/%d) after %dms due to error: %s',
+							$n + 1,
+							$maxAttempts,
+							$backoffMs,
+							$error->getMessage()
+						));
+						$timer = Loop::addTimer($backoffMs / 1000, function() use (&$attempt, $n, &$timer) {
+							$timer = null;
+							$attempt($n + 1);
+						});
+					});
+				};
+				$attempt(0);
+			},
+			function() use (&$current, &$timer, &$cancelled) {
+				$cancelled = true;
+				if ($timer !== null) {
+					Loop::cancelTimer($timer);
+					$timer = null;
+				}
+				if ($current !== null) {
+					$current->cancel();
+				}
+				throw new \RuntimeException('HTTP request cancelled');
 			}
-			$nextAttempt = $attempt + 1;
-			$backoffMs = min(1000 * pow(2, $nextAttempt - 1), 10000);
-			error_log(sprintf(
-				'ABsmartly SDK: Retrying HTTP request (attempt %d/%d) after %dms due to error: %s',
-				$nextAttempt,
-				$maxAttempts,
-				$backoffMs,
-				$error->getMessage()
-			));
-			$deferred = new Deferred();
-			Loop::addTimer($backoffMs / 1000, function() use ($deferred, $request, $nextAttempt) {
-				$deferred->resolve($this->withRetries($request, $nextAttempt));
-			});
-			return $deferred->promise();
-		});
+		);
 	}
 
 	private function isRetryable(\Throwable $error): bool {
