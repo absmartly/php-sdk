@@ -14,6 +14,7 @@ use ABSmartly\SDK\Context\ContextEventLogger;
 use ABSmartly\SDK\Http\HTTPClient;
 use React\Promise\PromiseInterface;
 
+use function React\Promise\reject;
 use function React\Promise\resolve;
 
 class ABsmartly {
@@ -130,7 +131,11 @@ class ABsmartly {
 	public function createContextAsync(ContextConfig $contextConfig): PromiseInterface {
 		$this->applyEventLogger($contextConfig);
 		if (!$this->provider instanceof AsyncContextDataProvider) {
-			return resolve($this->createContext($contextConfig));
+			try {
+				return resolve($this->createContext($contextConfig));
+			} catch (\Throwable $e) {
+				return reject($e);
+			}
 		}
 
 		return $this->provider->getContextDataAsync()

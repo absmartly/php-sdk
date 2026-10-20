@@ -1564,13 +1564,13 @@ class ContextTest extends TestCase {
 		$context = $this->createReadyContext('audience_context.json');
 
 		$context->setAttribute('age', 15);
-		$treatmentBefore = $context->getTreatment('exp_test_ab');
+		$context->getTreatment('exp_test_ab');
 
 		$context->publish();
 		$this->eventHandler->submitted = [];
 
 		$context->setAttribute('age', 25);
-		$treatmentAfter = $context->getTreatment('exp_test_ab');
+		$context->getTreatment('exp_test_ab');
 
 		$context->publish();
 

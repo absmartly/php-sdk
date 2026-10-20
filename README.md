@@ -384,7 +384,7 @@ The data parameter depends on the type of event. Currently, the SDK logs the fol
 | `Publish`  | `Context->publish()` method succeeds                        | `PublishEvent` data sent to the A/B Smartly event collector |
 | `Exposure` | `Context->getTreatment()` method succeeds on first exposure | `Exposure` data enqueued for publishing                     |
 | `Goal`     | `Context->track()` method succeeds                          | `GoalAchievement` goal data enqueued for publishing         |
-| `Close`    | `Context->close()` method succeeds the first time           | `null`                                                      |
+| `Finalize` | `Context->close()` method succeeds the first time           | `null`                                                      |
 
 ## Platform-Specific Examples
 

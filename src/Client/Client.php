@@ -11,6 +11,7 @@ use React\Promise\PromiseInterface;
 
 use function json_decode;
 use function json_encode;
+use function React\Promise\reject;
 use function React\Promise\resolve;
 use function rtrim;
 
@@ -70,27 +71,45 @@ class Client implements AsyncClientInterface {
 
 	public function getContextDataAsync(): PromiseInterface {
 		if (!$this->httpClient instanceof AsyncHttpClientInterface) {
-			return resolve($this->getContextData());
+			try {
+				return resolve($this->getContextData());
+			} catch (\Throwable $e) {
+				return reject($e);
+			}
 		}
 
-		$this->authRequest();
+		try {
+			$this->authRequest();
+		} catch (\Throwable $e) {
+			return reject($e);
+		}
 		return $this->httpClient
 			->getAsync($this->url, $this->query, $this->headers)
 			->then(fn($response) => new ContextData($this->decode($response->content)->experiments));
 	}
 
 	public function publish(PublishEvent $publishEvent): void {
+		$this->authRequest();
 		$data = $this->encode($publishEvent);
 		$this->httpClient->put($this->url, $this->query, $this->headers, $data);
 	}
 
 	public function publishAsync(PublishEvent $publishEvent): PromiseInterface {
 		if (!$this->httpClient instanceof AsyncHttpClientInterface) {
-			$this->publish($publishEvent);
-			return resolve(null);
+			try {
+				$this->publish($publishEvent);
+				return resolve(null);
+			} catch (\Throwable $e) {
+				return reject($e);
+			}
 		}
 
-		$data = $this->encode($publishEvent);
+		try {
+			$this->authRequest();
+			$data = $this->encode($publishEvent);
+		} catch (\Throwable $e) {
+			return reject($e);
+		}
 		return $this->httpClient->putAsync($this->url, $this->query, $this->headers, $data);
 	}
 

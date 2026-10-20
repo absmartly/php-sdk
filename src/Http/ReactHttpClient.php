@@ -12,7 +12,6 @@ use function strpos;
 
 class ReactHttpClient implements AsyncHttpClientInterface {
 	private Browser $browser;
-	public int $retries = 5;
 	public int $timeout = 3000;
 
 	public function __construct(?Browser $browser = null) {

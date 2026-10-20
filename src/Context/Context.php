@@ -253,6 +253,7 @@ class Context {
 		try {
 			$this->data = $contextData;
 			$this->setData($contextData);
+			$this->failed = false;
 			$this->ready = true;
 			$this->logEvent(ContextEventLoggerEvent::Ready, $contextData);
 		} catch (Exception $exception) {
@@ -378,7 +379,7 @@ class Context {
 					// previously not-running experiment
 					return $assignment;
 				}
-			} else if (!isset($this->cassignments[$experimentName]) || $this->cassignments[$experimentName] === $assignment->variant) {
+			} else if (!array_key_exists($experimentName, $this->cassignments) || ($assignment->custom && $this->cassignments[$experimentName] === $assignment->variant)) {
 				if ($this->experimentMatches($experiment->data, $assignment) && $this->audienceMatches($experiment->data, $assignment)) {
 					// assignment up-to-date
 					return $assignment;
@@ -790,6 +791,7 @@ class Context {
 		try {
 			$data = $this->dataProvider->getContextData();
 			$this->setData($data);
+			$this->failed = false;
 			$this->logEvent(ContextEventLoggerEvent::Refresh, $data);
 		}
 		catch (Exception $exception) {
