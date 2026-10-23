@@ -10,6 +10,10 @@ The A/B Smartly PHP SDK is compatible with PHP versions 7.4 and later. For the b
 
 The main SDK class has been renamed from `SDK` to `ABsmartly` to standardize naming across all ABSmartly SDKs. The old `SDK` class name is still available as a deprecated alias for backwards compatibility, but it is recommended to migrate to the new `ABsmartly` class name in new projects.
 
+### Migrating to 2.0 (breaking)
+
+Context read methods (`getTreatment`, `peekTreatment`, `getVariableValue`, `peekVariableValue`, `getVariableKeys`, `getExperiments`, `getCustomFieldKeys`, `customFieldValue`, `getCustomFieldValueType`) now throw `ABSmartly\SDK\Exception\LogicException` when the context is not ready (`ABsmartly Context is not yet ready.`) or has been finalized (`ABsmartly Context is finalized.`; `getExperiments` is still allowed after finalize). Previously some of them returned a default value. Check `$context->isReady()` / `$context->isFinalized()` or catch the exception. See [CHANGELOG.md](CHANGELOG.md).
+
 ## Installation
 
 A/B Smartly PHP SDK can be installed with [`composer`](https://getcomposer.org):

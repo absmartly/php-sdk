@@ -18,7 +18,7 @@ use function rtrim;
 use const JSON_THROW_ON_ERROR;
 
 class Client implements AsyncClientInterface {
-	protected const VERSION = '1.0.3';
+	protected const VERSION = '2.0.0';
 	private HttpClientInterface $httpClient;
 	private string $url;
 	private array $query;

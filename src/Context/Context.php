@@ -93,6 +93,7 @@ class Context {
 	}
 
 	public function getCustomFieldKeys(): array {
+		$this->checkReady();
 		$keys = [];
 		if (!empty($this->data->experiments)) {
 			foreach ($this->data->experiments as $experiment) {
@@ -112,6 +113,7 @@ class Context {
 	}
 
 	public function getCustomFieldValueType(string $experimentName, string $key): ?string {
+		$this->checkReady();
 		$experiment = $this->getExperiment($experimentName);
 		if ($experiment === null || empty($experiment->data->customFieldValues)) {
 			return null;
@@ -226,8 +228,9 @@ class Context {
 	private function setDataFailed(?Throwable $exception = null): void {
 		$this->indexVariables = [];
 		$this->index = [];
-		$this->data = null;
+		$this->data = new ContextData();
 		$this->failed = true;
+		$this->ready = true;
 		$this->readyError = $exception;
 	}
 
@@ -262,12 +265,19 @@ class Context {
 		}
 	}
 
-	private function checkReady(): void {
+	/**
+	 * Mirrors the JS SDK `_checkReady(expectNotFinalized)`: reads throw before
+	 * the context is ready and, unless $expectNotFinalized is false, after it
+	 * has been finalized.
+	 */
+	private function checkReady(bool $expectNotFinalized = true): void {
 		if (!$this->isReady()) {
 			throw new LogicException('ABsmartly Context is not yet ready.');
 		}
 
-		$this->checkNotClosed();
+		if ($expectNotFinalized) {
+			$this->checkNotClosed();
+		}
 	}
 
 	public function getExperiment(string $experimentName): ?ExperimentVariables {
@@ -275,6 +285,7 @@ class Context {
 	}
 
 	public function getExperiments(): array {
+		$this->checkReady(false);
 		$return = [];
 
 		if (!empty($this->data->experiments)) {
@@ -287,6 +298,7 @@ class Context {
 	}
 
 	public function customFieldValue(string $experimentName, string $fieldName) {
+		$this->checkReady();
 		$experiment = $this->getExperiment($experimentName);
 		if ($experiment === null || empty($experiment->data->customFieldValues)) {
 			return null;
@@ -350,7 +362,7 @@ class Context {
 			if ($this->attrsSeq > ($assignment->attrsSeq ?? 0)) {
 				$attrs = $this->getAttributes();
 				$result = $this->audienceMatcher->evaluate($experiment->audience, $attrs);
-				$newAudienceMismatch = !$result;
+				$newAudienceMismatch = $result !== null ? !$result : $assignment->audienceMismatch;
 
 				if ($newAudienceMismatch !== $assignment->audienceMismatch) {
 					return false;
@@ -408,7 +420,9 @@ class Context {
 				$attrs = $this->getAttributes();
 
 				$result = $this->audienceMatcher->evaluate($experiment->data->audience, $attrs);
-				$assignment->audienceMismatch = !$result;
+				if (is_bool($result)) {
+					$assignment->audienceMismatch = !$result;
+				}
 			}
 
 			if (!empty($experiment->data->audienceStrict) && !empty($assignment->audienceMismatch)) {
@@ -466,9 +480,7 @@ class Context {
 	}
 
 	public function getVariableValue(string $key, $defaultValue = null) {
-		if (!$this->isReady() || $this->isClosed()) {
-			return $defaultValue;
-		}
+		$this->checkReady();
 		$assignment = $this->getVariableAssignment($key);
 
 		if ($assignment === null) {
@@ -489,6 +501,7 @@ class Context {
 	}
 
 	public function getVariableKeys(): array {
+		$this->checkReady();
 		$return = [];
 		foreach ($this->indexVariables as $variable => $experimentVars) {
 			$return[$variable] = $experimentVars->data->name;
@@ -498,6 +511,7 @@ class Context {
 	}
 
 	public function setAttribute(string $name, $value): Context {
+		$this->checkNotClosed();
 		$this->attributes[] = (object) [
 			'name' => $name,
 			'value' => $value,
@@ -540,9 +554,7 @@ class Context {
 	}
 
 	public function getTreatment(string $experimentName): int {
-		if (!$this->isReady() || $this->isClosed()) {
-			return 0;
-		}
+		$this->checkReady();
 		$assignment = $this->getAssignment($experimentName);
 		if (empty($assignment->exposed)) {
 			$this->queueExposure($assignment);
@@ -590,6 +602,7 @@ class Context {
 
 
 	public function peekVariableValue(string $key, $default) {
+		$this->checkReady();
 		$assignment = $this->getVariableAssignment($key);
 		if ($assignment && isset($assignment->variables->{$key})) {
 			return $assignment->variables->{$key};
@@ -616,9 +629,7 @@ class Context {
 	}
 
 	public function peekTreatment(string $experimentName): int {
-		if (!$this->isReady() || $this->isClosed()) {
-			return 0;
-		}
+		$this->checkReady();
 		return $this->getAssignment($experimentName)->variant;
 	}
 
@@ -692,6 +703,7 @@ class Context {
 	}
 
 	public function setUnit(string $unitType, string $uid): Context {
+		$this->checkNotClosed();
 		if (isset($this->units[$unitType]) && $this->units[$unitType] !== $uid) {
 			throw new InvalidArgumentException(sprintf('Unit "%s" UID is already set', $unitType));
 		}
@@ -785,6 +797,9 @@ class Context {
 
 	public function refresh(): void {
 		$this->checkNotClosed();
+		if ($this->failed) {
+			return;
+		}
 		$oldData = $this->data;
 		$oldIndex = $this->index;
 		$oldIndexVariables = $this->indexVariables;

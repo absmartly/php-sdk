@@ -473,6 +473,23 @@ class ContextTest extends TestCase {
 	}
 
 	// Function name yikes!
+	public function testInvalidAudienceFilterDoesNotFlagAudienceMismatch(): void {
+		// The matcher returns null (undecided) for a non-object/array filter; JS
+		// context.ts only sets audienceMismatch for a boolean result.
+		$context = $this->createReadyContext('audience_invalid_filter_context.json');
+
+		self::assertSame("large", $context->getVariableValue('banner.size', 'small'));
+
+		$context->setAttribute('age', 21);
+		self::assertSame("large", $context->getVariableValue('banner.size', 'small'));
+		self::assertSame(1, $context->getPendingCount());
+
+		$context->publish();
+		self::assertSame('exp_test_ab', $this->eventHandler->submitted[0]->exposures[0]->name);
+		self::assertFalse($this->eventHandler->submitted[0]->exposures[0]->audienceMismatch);
+	}
+
+	// Function name yikes!
 	public function testGetVariableValueQueuesExposureWithAudienceMismatchFalseAndControlVariantOnAudienceMismatchInStrictMode(): void {
 		$context = $this->createReadyContext('audience_strict_context.json');
 
@@ -1245,8 +1262,56 @@ class ContextTest extends TestCase {
 		self::assertTrue($context->isFailed());
 		self::assertSame(1, $callCount);
 
+		// Refresh on a failed context is a successful no-op (matches JS SDK).
 		$context->refresh();
-		self::assertSame(2, $callCount);
+		self::assertSame(1, $callCount);
+		self::assertTrue($context->isFailed());
+		self::assertTrue($context->isReady());
+	}
+
+	public function testFailedContextIsReadyWithEmptyData(): void {
+		$clientConfig = new ClientConfig('https://demo.absmartly.io/v1', '', '', '');
+		$client = new Client($clientConfig);
+		$config = new Config($client);
+
+		$dataProvider = new ContextDataProviderMock($client);
+		$dataProvider->prerun = static function() {
+			throw new \RuntimeException('Server unavailable');
+		};
+		$config->setContextDataProvider($dataProvider);
+
+		$eventHandler = new ContextEventHandlerMock($client);
+		$contextConfig = new ContextConfig();
+		$contextConfig->setEventHandler($eventHandler);
+		$contextConfig->setUnits($this->units);
+		$context = (new SDK($config))->createContext($contextConfig);
+
+		self::assertTrue($context->isReady());
+		self::assertTrue($context->isFailed());
+		self::assertInstanceOf(\ABSmartly\SDK\Context\ContextData::class, $context->getContextData());
+		self::assertSame([], $context->getContextData()->experiments);
+		self::assertSame(0, $context->getTreatment('exp_test_ab'));
+		self::assertSame(17, $context->getVariableValue('banner.size', 17));
+	}
+
+	public function testPendingContextFailureBecomesReady(): void {
+		$clientConfig = new ClientConfig('https://demo.absmartly.io/v1', '', '', '');
+		$client = new Client($clientConfig);
+		$config = new Config($client);
+		$dataProvider = new ContextDataProviderMock($client);
+		$eventHandler = new ContextEventHandlerMock($client);
+		$contextConfig = new ContextConfig();
+		$contextConfig->setUnits($this->units);
+		$context = \ABSmartly\SDK\Context\Context::createPending(new SDK($config), $contextConfig, $dataProvider, $eventHandler);
+		self::assertFalse($context->isReady());
+
+		$method = new \ReflectionMethod($context, 'setDataFailed');
+		$method->setAccessible(true);
+		$method->invoke($context, new \RuntimeException('boom'));
+
+		self::assertTrue($context->isReady());
+		self::assertTrue($context->isFailed());
+		self::assertSame(0, $context->getTreatment('exp_test_ab'));
 	}
 
 	/*
@@ -1669,8 +1734,18 @@ class ContextTest extends TestCase {
 		$context = $this->createReadyContext();
 		$context->close();
 
+		$this->expectException(\LogicException::class);
+		$this->expectExceptionMessage('ABsmartly Context is finalized.');
 		$context->setUnit('new_unit', 'value');
-		self::assertSame('value', $context->getUnit('new_unit'));
+	}
+
+	public function testSetAttributeAfterFinalized(): void {
+		$context = $this->createReadyContext();
+		$context->close();
+
+		$this->expectException(\LogicException::class);
+		$this->expectExceptionMessage('ABsmartly Context is finalized.');
+		$context->setAttribute('attr1', 'value1');
 	}
 
 	public function testSetAttributeBeforeReady(): void {
@@ -1801,12 +1876,13 @@ class ContextTest extends TestCase {
 		self::assertSame(42, $context->getVariableValue('completely_unknown_var', 42));
 	}
 
-	public function testVariableValueReturnsDefaultAfterFinalized(): void {
+	public function testVariableValueThrowsAfterFinalized(): void {
 		$context = $this->createReadyContext();
 		$context->close();
 
-		self::assertSame(0, $context->getVariableValue('banner.border', 0));
-		self::assertSame('default', $context->getVariableValue('nonexistent', 'default'));
+		$this->expectException(\ABSmartly\SDK\Exception\LogicException::class);
+		$this->expectExceptionMessage('ABsmartly Context is finalized.');
+		$context->getVariableValue('banner.border', 0);
 	}
 
 	public function testPeekVariableValueDefaultWhenUnassigned(): void {
@@ -2134,18 +2210,73 @@ class ContextTest extends TestCase {
 		$context->refresh();
 	}
 
-	public function testTreatmentReturnsZeroAfterFinalized(): void {
+	public function testTreatmentThrowsAfterFinalized(): void {
 		$context = $this->createReadyContext();
 		$context->close();
 
-		self::assertSame(0, $context->getTreatment('exp_test_ab'));
+		$this->expectException(\ABSmartly\SDK\Exception\LogicException::class);
+		$this->expectExceptionMessage('ABsmartly Context is finalized.');
+		$context->getTreatment('exp_test_ab');
 	}
 
-	public function testPeekTreatmentReturnsZeroAfterFinalized(): void {
+	public function testPeekTreatmentThrowsAfterFinalized(): void {
 		$context = $this->createReadyContext();
 		$context->close();
 
-		self::assertSame(0, $context->peekTreatment('exp_test_ab'));
+		$this->expectException(\ABSmartly\SDK\Exception\LogicException::class);
+		$this->expectExceptionMessage('ABsmartly Context is finalized.');
+		$context->peekTreatment('exp_test_ab');
+	}
+
+	/**
+	 * D1: reads before ready throw, matching JS context.ts _checkReady.
+	 * @dataProvider readMethodsProvider
+	 */
+	public function testReadsThrowBeforeReady(string $method, array $args): void {
+		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', '', '', ''));
+		$config = new Config($client);
+		$dataProvider = new ContextDataProviderMock($client);
+		$eventHandler = new ContextEventHandlerMock($client);
+		$config->setContextDataProvider($dataProvider);
+		$config->setContextEventHandler($eventHandler);
+		$context = Context::createPending(new SDK($config), new ContextConfig(), $dataProvider, $eventHandler);
+		self::assertFalse($context->isReady());
+
+		$this->expectException(\ABSmartly\SDK\Exception\LogicException::class);
+		$this->expectExceptionMessage('ABsmartly Context is not yet ready.');
+		$context->{$method}(...$args);
+	}
+
+	/**
+	 * D1: reads after finalize throw, except getExperiments (JS experiments() uses _checkReady() without finalize check).
+	 * @dataProvider readMethodsProvider
+	 */
+	public function testReadsThrowAfterFinalized(string $method, array $args): void {
+		$context = $this->createReadyContext('context_custom_fields.json');
+		$context->close();
+
+		if ($method === 'getExperiments') {
+			self::assertIsArray($context->getExperiments());
+			return;
+		}
+
+		$this->expectException(\ABSmartly\SDK\Exception\LogicException::class);
+		$this->expectExceptionMessage('ABsmartly Context is finalized.');
+		$context->{$method}(...$args);
+	}
+
+	public function readMethodsProvider(): array {
+		return [
+			'getTreatment' => ['getTreatment', ['exp_test_ab']],
+			'peekTreatment' => ['peekTreatment', ['exp_test_ab']],
+			'getVariableValue' => ['getVariableValue', ['banner.border', 0]],
+			'peekVariableValue' => ['peekVariableValue', ['banner.border', 0]],
+			'getVariableKeys' => ['getVariableKeys', []],
+			'getExperiments' => ['getExperiments', []],
+			'getCustomFieldKeys' => ['getCustomFieldKeys', []],
+			'customFieldValue' => ['customFieldValue', ['exp_test_ab', 'country']],
+			'getCustomFieldValueType' => ['getCustomFieldValueType', ['exp_test_ab', 'country']],
+		];
 	}
 
 	public function testCustomFieldKeysReturnsKeys(): void {
@@ -2440,8 +2571,13 @@ class ContextTest extends TestCase {
 
 		self::assertTrue($context->isClosed());
 
-		self::assertSame(0, $context->getTreatment('exp_test_ab'));
-		self::assertSame(0, $context->peekTreatment('exp_test_ab'));
+		$thrownForTreatment = false;
+		try {
+			$context->getTreatment('exp_test_ab');
+		} catch (\ABSmartly\SDK\Exception\LogicException $e) {
+			$thrownForTreatment = true;
+		}
+		self::assertTrue($thrownForTreatment);
 
 		$thrownForTrack = false;
 		try {

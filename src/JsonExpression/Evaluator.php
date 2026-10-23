@@ -19,7 +19,10 @@ use function is_object;
 use function is_resource;
 use function is_scalar;
 use function property_exists;
-use function serialize;
+use function array_keys;
+use function range;
+use function is_float;
+use function is_int;
 use function strcmp;
 
 class Evaluator {
@@ -207,37 +210,66 @@ class Evaluator {
 	}
 
 	protected static function isEqualsDeep($a, $b): ?bool {
-		if ($a === $b) {
-			return true;
+		if (is_object($a)) {
+			$a = get_object_vars($a);
+			if (!is_array($b) && !is_object($b)) {
+				return false;
+			}
+			$b = is_object($b) ? get_object_vars($b) : $b;
+			if (self::isList($b) && $b !== []) {
+				return false;
+			}
+			return self::isEqualsDeepMap($a, $b);
+		}
+		if (is_object($b)) {
+			return self::isEqualsDeep($b, $a);
 		}
 
-		if (gettype($a) !== gettype($b)) {
-			return false;
-		}
-
-		switch (gettype($a)) {
-			case 'boolean':
-			case 'string':
-				return $a === $b; // Always false
-			case 'integer':
-			case 'double':
-				if (is_nan($a) || is_nan($b)) {
-					return false;
-				}
-
-				return $a === $b; // Always false.
-			case 'array':
+		if (is_array($a) || is_array($b)) {
+			if (!is_array($a) || !is_array($b)) {
+				return false;
+			}
+			if (self::isList($a) && self::isList($b)) {
 				if (count($a) !== count($b)) {
 					return false;
 				}
-				return serialize($a) === serialize($b);
-			case 'NULL': // Making this clause visible.
+				foreach ($a as $index => $value) {
+					if (!self::isEqualsDeep($value, $b[$index])) {
+						return false;
+					}
+				}
+				return true;
+			}
+			if (self::isList($a) !== self::isList($b)) {
 				return false;
-			case 'object':
-				return serialize($a) === serialize($b);
-
-			default:
-				return false;
+			}
+			return self::isEqualsDeepMap($a, $b);
 		}
+
+		if (is_float($a) && is_nan($a)) {
+			return is_float($b) && is_nan($b);
+		}
+
+		if ((is_int($a) || is_float($a)) && (is_int($b) || is_float($b))) {
+			return (float) $a === (float) $b;
+		}
+
+		return $a === $b;
+	}
+
+	private static function isEqualsDeepMap(array $a, array $b): bool {
+		if (count($a) !== count($b)) {
+			return false;
+		}
+		foreach ($a as $key => $value) {
+			if (!array_key_exists($key, $b) || !self::isEqualsDeep($value, $b[$key])) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	private static function isList(array $value): bool {
+		return $value === [] || array_keys($value) === range(0, count($value) - 1);
 	}
 }

@@ -124,5 +124,17 @@ class EvaluatorComparisonTest extends TestCase {
 		self::assertSame(1, $this->evaluator->compare(9007199254740991.0, 0));
 		self::assertSame(1, $this->evaluator->compare(9007199254740991.0, 0.0));
 	}
-}
 
+	public function testCompareDeepEqualsCollections(): void {
+		self::assertSame(0, $this->evaluator->compare([1, [2, 3], 4], [1, [2, 3], 4]));
+		self::assertSame(0, $this->evaluator->compare((object) ['b' => 2, 'a' => 1], (object) ['a' => 1, 'b' => 2]));
+		self::assertSame(0, $this->evaluator->compare(['b' => 2, 'a' => 1], (object) ['a' => 1, 'b' => 2]));
+		self::assertSame(0, $this->evaluator->compare(
+			(object) ['a' => (object) ['x' => 1], 'b' => [1, 2]],
+			['a' => ['x' => 1], 'b' => [1, 2]]
+		));
+		self::assertSame(0, $this->evaluator->compare([1, 2.0], [1.0, 2]));
+		self::assertNull($this->evaluator->compare([1, 2], [2, 1]));
+		self::assertNull($this->evaluator->compare((object) ['a' => 1], (object) ['a' => 2]));
+	}
+}
