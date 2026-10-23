@@ -218,7 +218,7 @@ class Evaluator {
 			if (is_object($b)) {
 				return self::isEqualsDeepMap($a, get_object_vars($b));
 			}
-			if (self::isList($b) && $b !== []) {
+			if (self::isList($b)) {
 				return false;
 			}
 			return self::isEqualsDeepMap($a, $b);

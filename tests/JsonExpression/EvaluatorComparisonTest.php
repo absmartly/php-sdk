@@ -143,5 +143,9 @@ class EvaluatorComparisonTest extends TestCase {
 		self::assertSame(0, $this->evaluator->compare(json_decode('{"0":"x","1":"y"}'), json_decode('{"1":"y","0":"x"}')));
 		self::assertNull($this->evaluator->compare(json_decode('{"0":"x"}'), json_decode('["x"]')));
 		self::assertNull($this->evaluator->compare(json_decode('["x"]'), json_decode('{"0":"x"}')));
+		self::assertNull($this->evaluator->compare(json_decode('{}'), json_decode('[]')));
+		self::assertNull($this->evaluator->compare(json_decode('[]'), json_decode('{}')));
+		self::assertNull($this->evaluator->compare(json_decode('{"items":{}}'), json_decode('{"items":[]}')));
+		self::assertSame(0, $this->evaluator->compare(json_decode('{}'), json_decode('{}')));
 	}
 }
