@@ -209,13 +209,15 @@ class Evaluator {
 		return $lhs > $rhsValue ? 1 : -1;
 	}
 
-	protected static function isEqualsDeep($a, $b): ?bool {
+	protected static function isEqualsDeep($a, $b): bool {
 		if (is_object($a)) {
 			$a = get_object_vars($a);
 			if (!is_array($b) && !is_object($b)) {
 				return false;
 			}
-			$b = is_object($b) ? get_object_vars($b) : $b;
+			if (is_object($b)) {
+				return self::isEqualsDeepMap($a, get_object_vars($b));
+			}
 			if (self::isList($b) && $b !== []) {
 				return false;
 			}
