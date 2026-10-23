@@ -1,0 +1,121 @@
+{
+  "experiments": [
+    {
+      "id": 1,
+      "name": "exp_test_ab",
+      "iteration": 1,
+      "unitType": "session_id",
+      "seedHi": 3603515,
+      "seedLo": 233373850,
+      "split": [
+        0.5,
+        0.5
+      ],
+      "trafficSeedHi": 449867249,
+      "trafficSeedLo": 455443629,
+      "trafficSplit": [
+        0.0,
+        1.0
+      ],
+      "fullOnVariant": 0,
+      "applications": [
+        {
+          "name": "website"
+        }
+      ],
+      "variants": [
+        {
+          "name": "A",
+          "config": null
+        },
+        {
+          "name": "B",
+          "config": "{\"banner.border\":1,\"banner.size\":\"large\"}"
+        }
+      ],
+      "audience": null,
+      "customFieldValues": [
+        {
+          "name": "country",
+          "type": "string",
+          "value": "US,UK,ES"
+        },
+        {
+          "name": "description",
+          "type": "text",
+          "value": "Test experiment for AB testing"
+        },
+        {
+          "name": "min_age",
+          "type": "number",
+          "value": "18"
+        },
+        {
+          "name": "enabled",
+          "type": "boolean",
+          "value": "true"
+        },
+        {
+          "name": "config",
+          "type": "json",
+          "value": "{\"color\":\"red\",\"size\":10}"
+        },
+        {
+          "name": "decimal_val",
+          "type": "number",
+          "value": "3.14"
+        },
+        {
+          "name": "is_active",
+          "type": "boolean_flag",
+          "value": "false"
+        },
+        {
+          "name": "disabled",
+          "type": "boolean",
+          "value": "0"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "exp_test_no_custom_fields",
+      "iteration": 1,
+      "unitType": "session_id",
+      "seedHi": 55006150,
+      "seedLo": 47189152,
+      "split": [
+        0.34,
+        0.33,
+        0.33
+      ],
+      "trafficSeedHi": 705671872,
+      "trafficSeedLo": 212903484,
+      "trafficSplit": [
+        0.0,
+        1.0
+      ],
+      "fullOnVariant": 0,
+      "applications": [
+        {
+          "name": "website"
+        }
+      ],
+      "variants": [
+        {
+          "name": "A",
+          "config": null
+        },
+        {
+          "name": "B",
+          "config": "{\"button.color\":\"blue\"}"
+        },
+        {
+          "name": "C",
+          "config": "{\"button.color\":\"red\"}"
+        }
+      ],
+      "audience": ""
+    }
+  ]
+}

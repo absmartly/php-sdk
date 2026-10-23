@@ -17,6 +17,10 @@ class AudienceMatcher {
 			return null;
 		}
 
+		if (!is_array($audience->filter) && !is_object($audience->filter)) {
+			return null;
+		}
+
 		return $this->expression->evaluateBooleanExpr($audience->filter, (object) $attributes);
 	}
 }
