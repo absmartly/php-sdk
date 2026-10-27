@@ -278,7 +278,7 @@ class ContextTest extends TestCase {
 		$context = $this->createReadyContext();
 
 		$this->expectException(\InvalidArgumentException::class);
-		$this->expectExceptionMessage('Unit "db_user_id" UID must not be blank');
+		$this->expectExceptionMessage("Unit 'db_user_id' UID must not be blank.");
 		$context->setUnit('db_user_id', '');
 	}
 
@@ -289,7 +289,7 @@ class ContextTest extends TestCase {
 		$context->setUnit('session_id', $this->units['session_id']); // This should be allowed
 
 		$this->expectException(\InvalidArgumentException::class);
-		$this->expectExceptionMessage('Unit "session_id" UID is already set');
+		$this->expectExceptionMessage("Unit 'session_id' UID already set.");
 		$context->setUnit('session_id', 'new-uid');
 	}
 
@@ -918,7 +918,13 @@ class ContextTest extends TestCase {
 
 		$logger->clear();
 
-		$context->close();
+		try {
+			$context->close();
+			self::fail('close() must surface the publish error');
+		} catch (\RuntimeException $e) {
+		}
+		self::assertFalse($context->isClosed());
+		self::assertSame(1, $context->getPendingCount());
 		self::assertSame(ContextEventLoggerEvent::Error, $logger->events[0]->getEvent());
 	}
 
@@ -2468,7 +2474,13 @@ class ContextTest extends TestCase {
 
 		$context->track('goal1');
 		$logger->clear();
-		$context->close();
+		try {
+			$context->close();
+			self::fail('close() must surface the publish error');
+		} catch (\RuntimeException $e) {
+		}
+		self::assertFalse($context->isClosed());
+		self::assertSame(1, $context->getPendingCount());
 
 		self::assertSame(ContextEventLoggerEvent::Error, $logger->events[0]->getEvent());
 	}
@@ -2493,7 +2505,13 @@ class ContextTest extends TestCase {
 
 		$context->track('goal1');
 		$logger->clear();
-		$context->close();
+		try {
+			$context->close();
+			self::fail('close() must surface the publish error');
+		} catch (\RuntimeException $e) {
+		}
+		self::assertFalse($context->isClosed());
+		self::assertSame(1, $context->getPendingCount());
 
 		$errorEvents = array_filter($logger->events, fn($e) => $e->getEvent() === ContextEventLoggerEvent::Error);
 		self::assertNotEmpty($errorEvents);

@@ -149,8 +149,19 @@ class ABsmartly {
 			}
 		}
 
+		$context = Context::createPending($this, $contextConfig, $this->provider, $this->handler);
+
 		return $this->provider->getContextDataAsync()
-			->then(fn($data) => $this->createContextWithData($contextConfig, $data));
+			->then(
+				function($data) use ($context) {
+					$context->setContextData($data);
+					return $context;
+				},
+				function(\Throwable $error) use ($context) {
+					$context->setContextDataFailed($error);
+					return $context;
+				}
+			);
 	}
 
 	public function createContextPending(ContextConfig $contextConfig): array {
@@ -159,16 +170,27 @@ class ABsmartly {
 
 		if (!$this->provider instanceof AsyncContextDataProvider) {
 			$promise = resolve(null)->then(function() use ($context) {
-				$data = $this->provider->getContextData();
+				try {
+					$data = $this->provider->getContextData();
+				} catch (\Throwable $error) {
+					$context->setContextDataFailed($error);
+					return $context;
+				}
 				$context->setContextData($data);
 				return $context;
 			});
 		} else {
 			$promise = $this->provider->getContextDataAsync()
-				->then(function($data) use ($context) {
-					$context->setContextData($data);
-					return $context;
-				});
+				->then(
+					function($data) use ($context) {
+						$context->setContextData($data);
+						return $context;
+					},
+					function(\Throwable $error) use ($context) {
+						$context->setContextDataFailed($error);
+						return $context;
+					}
+				);
 		}
 
 		return ['context' => $context, 'promise' => $promise];

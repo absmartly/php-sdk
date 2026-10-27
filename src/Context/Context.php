@@ -11,6 +11,7 @@ use ABSmartly\SDK\ExperimentVariables;
 use ABSmartly\SDK\Exposure;
 use ABSmartly\SDK\GoalAchievement;
 use ABSmartly\SDK\PublishEvent;
+use ABSmartly\SDK\Utils;
 use ABSmartly\SDK\ABsmartly;
 use ABSmartly\SDK\VariableParser;
 use ABSmartly\SDK\VariantAssigner;
@@ -248,6 +249,19 @@ class Context {
 		return $context;
 	}
 
+	/**
+	 * Marks a pending context ready and failed after its data could not be
+	 * loaded: reads return control/defaults and an error event is logged.
+	 */
+	public function setContextDataFailed(Throwable $error): void {
+		if ($this->ready) {
+			return;
+		}
+
+		$this->setDataFailed($error);
+		$this->logError($error);
+	}
+
 	public function setContextData(ContextData $contextData): void {
 		if ($this->ready) {
 			return;
@@ -428,7 +442,7 @@ class Context {
 			if (!empty($experiment->data->audienceStrict) && !empty($assignment->audienceMismatch)) {
 				$assignment->variant = 0;
 			}
-			else if (empty($experiment->data->fullOnVariant) && $uid = $this->units[$experiment->data->unitType] ?? null) {
+			else if (empty($experiment->data->fullOnVariant) && ($uid = $this->units[$experiment->data->unitType] ?? null) !== null) {
 				$assigner = $this->getVariantAssigner($unitType, $uid);
 
 				$eligible = $assigner->assign(
@@ -549,7 +563,10 @@ class Context {
 		return $result;
 	}
 
-	private function getVariantAssigner(string $unitType, string $unitHash): VariantAssigner {
+	/**
+	 * @param string|int|float $unitHash
+	 */
+	private function getVariantAssigner(string $unitType, $unitHash): VariantAssigner {
 		return $this->assigners[$unitType] ?? ($this->assigners[$unitType] = new VariantAssigner($unitHash));
 	}
 
@@ -634,16 +651,12 @@ class Context {
 	}
 
 
+	/**
+	 * @param array<string, string|int|float> $units
+	 */
 	public function setUnits(array $units): Context {
-		// It could have been possible to simply array_merge here, but we need
-		// to verify strict-types, hence the foreach loop.
-		foreach ($units as $key => $value) {
-			if (!is_string($value)) {
-				throw new InvalidArgumentException(
-					sprintf('Unit set value with key "%s" must be of type string, %s passed', $key, gettype($value)));
-			}
-
-			$this->setUnit($key, $value);
+		foreach ($units as $unitType => $uid) {
+			$this->setUnit((string) $unitType, $uid);
 		}
 
 		return $this;
@@ -702,17 +715,42 @@ class Context {
 		return $this->cassignments[$experimentName] ?? null;
 	}
 
-	public function setUnit(string $unitType, string $uid): Context {
+	/**
+	 * Units may be strings or numbers; the value is kept as given, like the
+	 * JavaScript SDK. String UIDs are trimmed.
+	 *
+	 * @param string|int|float $uid
+	 */
+	public function setUnit(string $unitType, $uid): Context {
 		$this->checkNotClosed();
-		if (isset($this->units[$unitType]) && $this->units[$unitType] !== $uid) {
-			throw new InvalidArgumentException(sprintf('Unit "%s" UID is already set', $unitType));
-		}
-		if (trim($uid) === '') {
-			throw new InvalidArgumentException(sprintf('Unit "%s" UID must not be blank', $unitType));
+		$uid = self::validateUnit($unitType, $uid);
+
+		if (array_key_exists($unitType, $this->units) && $this->units[$unitType] !== $uid) {
+			throw new InvalidArgumentException(sprintf("Unit '%s' UID already set.", $unitType));
 		}
 
 		$this->units[$unitType] = $uid;
 		return $this;
+	}
+
+	/**
+	 * @param mixed $uid
+	 * @return string|int|float
+	 */
+	public static function validateUnit(string $unitType, $uid) {
+		if (is_string($uid)) {
+			$uid = trim($uid);
+			if ($uid === '') {
+				throw new InvalidArgumentException(sprintf("Unit '%s' UID must not be blank.", $unitType));
+			}
+			return $uid;
+		}
+
+		if (is_int($uid) || is_float($uid)) {
+			return $uid;
+		}
+
+		throw new InvalidArgumentException(sprintf("Unit '%s' must be a string or a number.", $unitType));
 	}
 
 	public function getPendingCount(): int {
@@ -781,13 +819,37 @@ class Context {
 		return $event;
 	}
 
-	public function track(string $goalName, ?object $properties = null): void {
+	/**
+	 * @param object|array|null $properties a plain object (stdClass) or an
+	 *   associative array; any other value raises an error.
+	 */
+	public function track(string $goalName, $properties = null): void {
 		$this->checkNotClosed();
+		$properties = $this->validateGoal($goalName, $properties);
 		$achievement = new GoalAchievement($goalName, static::getTime(), $properties);
 		$this->achievements[] = $achievement;
 		++$this->pendingCount;
 
 		$this->logEvent(ContextEventLoggerEvent::Goal, $achievement);
+	}
+
+	/**
+	 * @param mixed $properties
+	 */
+	private function validateGoal(string $goalName, $properties): ?object {
+		if ($properties === null) {
+			return null;
+		}
+
+		if (Utils::isObject($properties)) {
+			return clone $properties;
+		}
+
+		if (is_array($properties) && $properties !== [] && array_keys($properties) !== range(0, count($properties) - 1)) {
+			return (object) $properties;
+		}
+
+		throw new InvalidArgumentException(sprintf("Goal '%s' properties must be of type object.", $goalName));
 	}
 
 	public function publish(): void {
@@ -834,7 +896,10 @@ class Context {
 				$this->flush();
 			}
 			catch (Exception $exception) {
-				// error already logged by flush(); close() must still complete.
+				// flush() logged the error and kept the events queued: stay
+				// open so close() can be retried.
+				$this->finalizing = false;
+				throw $exception;
 			}
 		}
 

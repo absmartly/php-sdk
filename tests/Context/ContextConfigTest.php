@@ -15,13 +15,13 @@ class ContextConfigTest extends TestCase {
 	public function testUnits(): void {
 		$contextConfig = new ContextConfig();
 		$contextConfig->setUnit('foo', 'foo-value'); // Value retention
-		$contextConfig->setUnit('bar', 2); // Automatic casting to string
+		$contextConfig->setUnit('bar', 2); // Numbers keep their type
 		$contextConfig->setUnit('baz', 'old-baz-value'); // Old value
 		$contextConfig->setUnit('baz', 'new-baz-value'); // New value is overwritten
 		$contextConfig->setUnit('baz', 'new-baz-value'); // New value is overwritten
 
 		self::assertSame('foo-value', $contextConfig->getUnit('foo'));
-		self::assertSame('2', $contextConfig->getUnit('bar'));
+		self::assertSame(2, $contextConfig->getUnit('bar'));
 		self::assertSame('new-baz-value', $contextConfig->getUnit('baz'));
 
 		self::assertNull($contextConfig->getUnit('does-not-exist'));
@@ -37,11 +37,11 @@ class ContextConfigTest extends TestCase {
 
 		self::assertCount(5, $contextConfig->getUnits());
 
-		self::assertSame('1', $contextConfig->getUnit('x'));
+		self::assertSame(1, $contextConfig->getUnit('x'));
 		self::assertSame('mango', $contextConfig->getUnit('y'));
 
 		$this->expectException(\InvalidArgumentException::class);
-		$this->expectExceptionMessage('Unit set value with key "x" must be of type string, array passed');
+		$this->expectExceptionMessage("Unit 'x' must be a string or a number.");
 
 		$contextConfig->setUnits(
 			[
