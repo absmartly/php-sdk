@@ -737,8 +737,9 @@ class Context {
 	}
 
 	/**
-	 * Numbers compare by value (125 equals 125.0, as JavaScript has a single
-	 * number type); strings and numbers never compare equal.
+	 * Numbers that are the same value and hash the same compare equal (125
+	 * equals 125.0, as JavaScript has a single number type); distinct integers
+	 * and strings vs numbers never do.
 	 *
 	 * @param string|int|float $a
 	 * @param string|int|float $b
@@ -748,7 +749,11 @@ class Context {
 			return $a === $b;
 		}
 
-		return (float) $a === (float) $b;
+		if (is_int($a) && is_int($b)) {
+			return $a === $b;
+		}
+
+		return Utils::unitToString($a) === Utils::unitToString($b) && (float) $a === (float) $b;
 	}
 
 	/**

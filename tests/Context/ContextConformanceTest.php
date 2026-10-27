@@ -122,6 +122,13 @@ class ContextConformanceTest extends TestCase {
 		$context->setUnit('user_id', '125');
 	}
 
+	public function testDistinctLargeIntegerUnitsConflict(): void {
+		$context = $this->context();
+		$context->setUnit('user_id', 9007199254740992);
+		$this->expectExceptionMessage("Unit 'user_id' UID already set.");
+		$context->setUnit('user_id', 9007199254740993);
+	}
+
 	public function testInvalidUnitTypeIsRejected(): void {
 		$context = $this->context();
 		$this->expectExceptionMessage("Unit 'x' must be a string or a number.");
