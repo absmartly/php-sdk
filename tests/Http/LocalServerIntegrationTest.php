@@ -50,19 +50,15 @@ class LocalServerIntegrationTest extends TestCase {
 			2 => ['pipe', 'w'],
 		];
 
-		$cmd = sprintf(
-			'%s -S 127.0.0.1:%d %s',
-			escapeshellarg(PHP_BINARY),
-			$this->port,
-			escapeshellarg($router)
-		);
-
-		$env = ['ABSMARTLY_TEST_LOG' => $this->logFile] + $_ENV;
+		// Array form avoids a cmd.exe wrapper on Windows; getenv() (not $_ENV, often
+		// empty) keeps SystemRoot etc., without which the server can't open sockets.
+		$cmd = [PHP_BINARY, '-S', "127.0.0.1:{$this->port}", $router];
+		$env = ['ABSMARTLY_TEST_LOG' => $this->logFile] + getenv();
 		$this->serverProcess = proc_open($cmd, $descriptors, $this->pipes, null, $env);
 		self::assertIsResource($this->serverProcess, 'failed to start PHP built-in server');
 
 		// Wait for the server to accept connections.
-		$deadline = microtime(true) + 5.0;
+		$deadline = microtime(true) + 15.0;
 		while (microtime(true) < $deadline) {
 			$conn = @stream_socket_client("tcp://127.0.0.1:{$this->port}", $errno, $errstr, 0.2);
 			if (is_resource($conn)) {
