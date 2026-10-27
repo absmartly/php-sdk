@@ -111,6 +111,20 @@ class ContextConformanceTest extends TestCase {
 		self::assertSame('999999999999999868928', Utils::unitToString(999999999999999868928.0));
 	}
 
+	public function testLargeNumericUnitIgnoresSerializePrecision(): void {
+		$previous = ini_get('serialize_precision');
+		try {
+			foreach (['17', '14', '-1'] as $precision) {
+				ini_set('serialize_precision', $precision);
+				self::assertSame('1e+23', Utils::unitToString(1e23));
+				self::assertSame('C2kIOZMVyzHIQ9hfVjhzvw', Utils::hashUnit(1e23));
+				self::assertSame($precision, ini_get('serialize_precision'));
+			}
+		} finally {
+			ini_set('serialize_precision', $previous);
+		}
+	}
+
 	public function testEqualNumericUnitsAreNotAConflict(): void {
 		$cfg = new ContextConfig();
 		$cfg->setUnit('user_id', 125);

@@ -14,6 +14,7 @@ use function is_object;
 use function abs;
 use function explode;
 use function floor;
+use function ini_set;
 use function is_infinite;
 use function is_nan;
 use function ltrim;
@@ -82,7 +83,14 @@ final class Utils {
 		}
 
 		if ($abs >= 1e21) {
-			$repr = strtolower(var_export($abs, true));
+			// Shortest round-trip form, like JavaScript, whatever the host's
+			// serialize_precision setting is.
+			$previous = ini_set('serialize_precision', '-1');
+			try {
+				$repr = strtolower(var_export($abs, true));
+			} finally {
+				ini_set('serialize_precision', (string) $previous);
+			}
 			[$mantissa, $exponent] = explode('e', $repr);
 			if (substr($mantissa, -2) === '.0') {
 				$mantissa = substr($mantissa, 0, -2);

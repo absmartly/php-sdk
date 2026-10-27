@@ -749,11 +749,7 @@ class Context {
 			return $a === $b;
 		}
 
-		if (is_int($a) && is_int($b)) {
-			return $a === $b;
-		}
-
-		return Utils::unitToString($a) === Utils::unitToString($b) && (float) $a === (float) $b;
+		return $a == $b && Utils::unitToString($a) === Utils::unitToString($b);
 	}
 
 	/**
