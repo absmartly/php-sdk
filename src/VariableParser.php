@@ -14,6 +14,11 @@ class VariableParser {
 			return json_decode($config, false, 512, JSON_THROW_ON_ERROR);
 		}
 		catch (Exception $exception) {
+			error_log(sprintf(
+				'ABsmartly SDK Error: Failed to parse variant config for experiment "%s": %s',
+				$experimentName,
+				$exception->getMessage()
+			));
 			return null;
 		}
 	}

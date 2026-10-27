@@ -2,11 +2,10 @@
 
 namespace ABSmartly\SDK\Context;
 
-use InvalidArgumentException;
+use ABSmartly\SDK\Exception\InvalidArgumentException;
 
 use function gettype;
 use function is_int;
-use function is_scalar;
 use function sprintf;
 
 class ContextConfig {
@@ -55,31 +54,29 @@ class ContextConfig {
 		return $this;
 	}
 
-	public function setUnit(string $unitType, string $uid): ContextConfig {
-		if ($uid === '') {
-			throw new InvalidArgumentException(sprintf('Unit "%s" UID must not be blank', $unitType));
-		}
-
-		$this->units[$unitType] = $uid;
+	/**
+	 * @param string|int|float $uid
+	 */
+	public function setUnit(string $unitType, $uid): ContextConfig {
+		$this->units[$unitType] = Context::validateUnit($unitType, $uid);
 		return $this;
 	}
 
+	/**
+	 * @param array<string, string|int|float> $units
+	 */
 	public function setUnits(array $units): ContextConfig {
-		// It could have been possible to simply array_merge here, but we need
-		// to verify strict-types, hence the foreach loop.
 		foreach ($units as $unitType => $uid) {
-			if (!is_scalar($uid)) {
-				throw new InvalidArgumentException(
-					sprintf('Unit set value with key "%s" must be of type string, %s passed', $unitType, gettype($uid)));
-			}
-
-			$this->setUnit($unitType, (string) $uid);
+			$this->setUnit((string) $unitType, $uid);
 		}
 
 		return $this;
 	}
 
-	public function getUnit(string $unitType): ?string {
+	/**
+	 * @return string|int|float|null
+	 */
+	public function getUnit(string $unitType) {
 		return $this->units[$unitType] ?? null;
 	}
 

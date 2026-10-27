@@ -27,17 +27,11 @@ final class VariantAssigner {
 	 */
 	private int $unitHash;
 
-	public function __construct(string $unit) {
-		$hash = hash('md5', $unit, true);
-
-		// Removing padding and +/ characters in the base64 encoded string.
-		$hash = strtr(base64_encode($hash), [
-			'+' => '-',
-			'/' => '_',
-			'=' => '',
-		]);
-
-		$this->unitHash = $this->digest($hash);
+	/**
+	 * @param string|int|float $unit
+	 */
+	public function __construct($unit) {
+		$this->unitHash = $this->digest(Utils::hashUnit($unit));
 	}
 
 	/**

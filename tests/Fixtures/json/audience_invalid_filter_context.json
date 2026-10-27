@@ -1,0 +1,39 @@
+{
+    "experiments": [
+        {
+            "id": 1,
+            "name": "exp_test_ab",
+            "iteration": 1,
+            "unitType": "session_id",
+            "seedHi": 3603515,
+            "seedLo": 233373850,
+            "split": [
+                0.5,
+                0.5
+            ],
+            "trafficSeedHi": 449867249,
+            "trafficSeedLo": 455443629,
+            "trafficSplit": [
+                0.0,
+                1.0
+            ],
+            "fullOnVariant": 0,
+            "applications": [
+                {
+                    "name": "website"
+                }
+            ],
+            "variants": [
+                {
+                    "name": "A",
+                    "config": null
+                },
+                {
+                    "name": "B",
+                    "config": "{\"banner.border\":1,\"banner.size\":\"large\"}"
+                }
+            ],
+            "audience": "{\"filter\":\"invalid\"}"
+        }
+    ]
+}

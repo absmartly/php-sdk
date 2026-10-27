@@ -18,17 +18,11 @@ class PublishEvent implements JsonSerializable {
 		$this->publishedAt = Context::getTime();
 	}
 
-	public function hashUnit(string $unit): string {
-		$hash = hash('md5', $unit, true);
-
-		// Removing padding and +/ characters in the base64 encoded string.
-		$hash = strtr(base64_encode($hash), [
-			'+' => '-',
-			'/' => '_',
-			'=' => '',
-		]);
-
-		return substr($hash, 0, 22);
+	/**
+	 * @param string|int|float $unit
+	 */
+	public function hashUnit($unit): string {
+		return Utils::hashUnit($unit);
 	}
 
 	public function setUnits(array $units): void {

@@ -16,7 +16,14 @@ abstract class BinaryOperator implements OperatorInterface {
 		}
 
 		$lhs = $evaluator->evaluate($args[0]);
+		if ($lhs === null) {
+			return null;
+		}
+
 		$rhs = $evaluator->evaluate($args[1]);
+		if ($rhs === null) {
+			return null;
+		}
 
 		return $this->binary($evaluator, $lhs, $rhs);
 	}
