@@ -52,27 +52,11 @@ class ABsmartly {
 		int $timeout = 3000,
 		?callable $eventLogger = null
 	): ABsmartly {
-		$clientConfig = new ClientConfig(
-			$endpoint,
-			$apiKey,
-			$application,
-			$environment,
-		);
-		$clientConfig->setRetries($retries);
-		$clientConfig->setTimeout($timeout);
-
-		$client = new Client($clientConfig, new HTTPClient());
-		$sdkConfig = new Config($client);
-		if ($eventLogger !== null) {
-			$sdkConfig->setContextEventLogger(new \ABSmartly\SDK\Context\ContextEventLoggerCallback($eventLogger));
-		}
-		return new ABsmartly($sdkConfig);
+		return new ABsmartly(static::buildConfig($endpoint, $apiKey, $application, $environment, $retries, $timeout, $eventLogger));
 	}
 
 	/**
-	 * @deprecated Use createSimple() instead. This method has $environment and $application in the wrong order
-	 *             relative to ClientConfig::__construct(). createSimple() fixes this with the correct order:
-	 *             endpoint, apiKey, application, environment.
+	 * @deprecated Use createSimple(); this legacy signature takes environment before application.
 	 *
 	 * @param string $endpoint URL to your API endpoint. Most commonly "your-company.absmartly.io".
 	 * @param string $apiKey API key which can be found on the Web Console.
@@ -149,19 +133,7 @@ class ABsmartly {
 			}
 		}
 
-		$context = Context::createPending($this, $contextConfig, $this->provider, $this->handler);
-
-		return $this->provider->getContextDataAsync()
-			->then(
-				function($data) use ($context) {
-					$context->setContextData($data);
-					return $context;
-				},
-				function(\Throwable $error) use ($context) {
-					$context->setContextDataFailed($error);
-					return $context;
-				}
-			);
+		return $this->createContextPending($contextConfig)['promise'];
 	}
 
 	public function createContextPending(ContextConfig $contextConfig): array {

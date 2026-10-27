@@ -11,15 +11,7 @@ use ABSmartly\SDK\Http\ReactHttpClient;
 use PHPUnit\Framework\TestCase;
 
 /**
- * Hermetic integration test: spins up a real local HTTP server (PHP built-in
- * server) on an ephemeral port, points the SDK's client endpoint at it, and
- * drives the PUBLIC SDK API so a REAL HTTP client (the SDK's ReactHttpClient,
- * which supports plain http unlike the HTTPS-locked curl HTTPClient) performs a
- * GET /context (createContext) and a PUT /context (getTreatment + track ->
- * publish). Asserts the wire contract.
- *
- * Requests received by the server are appended to a JSON-lines log file the
- * test reads back after publishing.
+ * ReactHttpClient supports the loopback HTTP server; curl HTTPClient requires HTTPS.
  */
 class LocalServerIntegrationTest extends TestCase {
 	/** @var resource|null */
@@ -57,7 +49,6 @@ class LocalServerIntegrationTest extends TestCase {
 		$this->serverProcess = proc_open($cmd, $descriptors, $this->pipes, null, $env);
 		self::assertIsResource($this->serverProcess, 'failed to start PHP built-in server');
 
-		// Wait for the server to accept connections.
 		$deadline = microtime(true) + 15.0;
 		while (microtime(true) < $deadline) {
 			$conn = @stream_socket_client("tcp://127.0.0.1:{$this->port}", $errno, $errstr, 0.2);
@@ -93,8 +84,6 @@ class LocalServerIntegrationTest extends TestCase {
 	public function testRealGetAndPutContext(): void {
 		$endpoint = "http://127.0.0.1:{$this->port}";
 
-		// Build the SDK with the SDK's own ReactHttpClient (a real HTTP client
-		// that talks plain http) injected into the real Client.
 		$clientConfig = new ClientConfig($endpoint, 'test-api-key', 'website', 'dev');
 		$client = new Client($clientConfig, new ReactHttpClient());
 		$sdk = new ABsmartly(new Config($client));
@@ -105,7 +94,6 @@ class LocalServerIntegrationTest extends TestCase {
 		$context = $sdk->createContext($contextConfig);
 		self::assertTrue($context->isReady());
 
-		// --- assert the real GET /context ---
 		$requests = $this->recordedRequests();
 		$get = null;
 		foreach ($requests as $r) {
@@ -119,7 +107,6 @@ class LocalServerIntegrationTest extends TestCase {
 		self::assertSame('website', $get['query']['application'] ?? null);
 		self::assertSame('dev', $get['query']['environment'] ?? null);
 
-		// --- queue an event then publish ---
 		$context->track('payment', (object) ['value' => 99]);
 		$context->publish();
 
@@ -143,7 +130,6 @@ class LocalServerIntegrationTest extends TestCase {
 		self::assertNotEmpty($h['x-agent'] ?? null);
 		self::assertStringContainsString('application/json', $h['content-type'] ?? '');
 
-		// --- body ---
 		$body = json_decode($put['body'], true, 512, JSON_THROW_ON_ERROR);
 		self::assertArrayHasKey('hashed', $body);
 		self::assertIsArray($body['units']);

@@ -212,13 +212,10 @@ class Evaluator {
 	protected static function isEqualsDeep($a, $b): bool {
 		if (is_object($a)) {
 			$a = get_object_vars($a);
-			if (!is_array($b) && !is_object($b)) {
-				return false;
-			}
 			if (is_object($b)) {
 				return self::isEqualsDeepMap($a, get_object_vars($b));
 			}
-			if (self::isList($b)) {
+			if (!is_array($b) || self::isList($b)) {
 				return false;
 			}
 			return self::isEqualsDeepMap($a, $b);
@@ -231,18 +228,12 @@ class Evaluator {
 			if (!is_array($a) || !is_array($b)) {
 				return false;
 			}
-			if (self::isList($a) && self::isList($b)) {
-				if (count($a) !== count($b)) {
-					return false;
-				}
-				foreach ($a as $index => $value) {
-					if (!self::isEqualsDeep($value, $b[$index])) {
-						return false;
-					}
-				}
-				return true;
+			if (count($a) !== count($b)) {
+				return false;
 			}
-			if (self::isList($a) !== self::isList($b)) {
+			$aIsList = self::isList($a);
+			$bIsList = self::isList($b);
+			if ($aIsList !== $bIsList) {
 				return false;
 			}
 			return self::isEqualsDeepMap($a, $b);

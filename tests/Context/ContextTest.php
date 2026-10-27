@@ -472,7 +472,6 @@ class ContextTest extends TestCase {
 		self::assertTrue($this->eventHandler->submitted[0]->exposures[0]->audienceMismatch);
 	}
 
-	// Function name yikes!
 	public function testInvalidAudienceFilterDoesNotFlagAudienceMismatch(): void {
 		// The matcher returns null (undecided) for a non-object/array filter; JS
 		// context.ts only sets audienceMismatch for a boolean result.

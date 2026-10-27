@@ -140,11 +140,7 @@ class ReactHttpClient implements AsyncHttpClientInterface {
 	}
 
 	private function flattenHeaders(array $headers): array {
-		$result = [];
-		foreach ($headers as $key => $value) {
-			$result[$key] = $value;
-		}
-		return $result;
+		return $headers;
 	}
 
 	private function toResponse($reactResponse): Response {

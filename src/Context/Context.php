@@ -163,10 +163,10 @@ class Context {
 		try {
 			$this->ready = true;
 			if (!$contextData) {
-				$data = $this->data = $this->dataProvider->getContextData();
+				$data = $this->dataProvider->getContextData();
 			}
 			else {
-				$data = $this->data = $contextData;
+				$data = $contextData;
 			}
 
 			$this->setData($data);
@@ -249,10 +249,6 @@ class Context {
 		return $context;
 	}
 
-	/**
-	 * Marks a pending context ready and failed after its data could not be
-	 * loaded: reads return control/defaults and an error event is logged.
-	 */
 	public function setContextDataFailed(Throwable $error): void {
 		if ($this->ready) {
 			return;
@@ -268,7 +264,6 @@ class Context {
 		}
 
 		try {
-			$this->data = $contextData;
 			$this->setData($contextData);
 			$this->failed = false;
 			$this->ready = true;
@@ -915,8 +910,6 @@ class Context {
 				$this->flush();
 			}
 			catch (Exception $exception) {
-				// flush() logged the error and kept the events queued: stay
-				// open so close() can be retried.
 				$this->finalizing = false;
 				throw $exception;
 			}

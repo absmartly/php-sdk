@@ -1,10 +1,6 @@
 <?php
 /**
  * Router for the PHP built-in server used by LocalServerIntegrationTest.
- *
- * It records every request (method, path, query, headers, body) as a JSON line
- * in the file named by the ABSMARTLY_TEST_LOG env var, then returns the minimal
- * responses the SDK expects: {"experiments":[]} on GET, {} on PUT.
  */
 
 $logFile = getenv('ABSMARTLY_TEST_LOG');

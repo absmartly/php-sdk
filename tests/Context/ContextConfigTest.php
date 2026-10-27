@@ -15,7 +15,7 @@ class ContextConfigTest extends TestCase {
 	public function testUnits(): void {
 		$contextConfig = new ContextConfig();
 		$contextConfig->setUnit('foo', 'foo-value'); // Value retention
-		$contextConfig->setUnit('bar', 2); // Numbers keep their type
+		$contextConfig->setUnit('bar', 2);
 		$contextConfig->setUnit('baz', 'old-baz-value'); // Old value
 		$contextConfig->setUnit('baz', 'new-baz-value'); // New value is overwritten
 		$contextConfig->setUnit('baz', 'new-baz-value'); // New value is overwritten
