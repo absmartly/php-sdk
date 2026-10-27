@@ -11,7 +11,16 @@ use function hash;
 use function is_float;
 use function is_int;
 use function is_object;
-use function number_format;
+use function abs;
+use function explode;
+use function floor;
+use function is_infinite;
+use function is_nan;
+use function ltrim;
+use function sprintf;
+use function strtolower;
+use function substr;
+use function var_export;
 use function strtr;
 use function unpack;
 
@@ -50,10 +59,41 @@ final class Utils {
 	 */
 	public static function unitToString($unit): string {
 		if (is_float($unit)) {
-			return number_format($unit, 0, '.', '');
+			return self::toFixed0($unit);
 		}
 
 		return (string) $unit;
+	}
+
+	/**
+	 * JavaScript `Number.prototype.toFixed(0)`: halves round away from zero,
+	 * negative values keep their sign ("-0"), and magnitudes of 1e21 or more
+	 * use JavaScript's exponent notation ("1e+21").
+	 */
+	private static function toFixed0(float $value): string {
+		if (is_nan($value)) {
+			return 'NaN';
+		}
+
+		$sign = $value < 0 ? '-' : '';
+		$abs = abs($value);
+		if (is_infinite($abs)) {
+			return $sign . 'Infinity';
+		}
+
+		if ($abs >= 1e21) {
+			$repr = strtolower(var_export($abs, true));
+			[$mantissa, $exponent] = explode('e', $repr);
+			if (substr($mantissa, -2) === '.0') {
+				$mantissa = substr($mantissa, 0, -2);
+			}
+			return $sign . $mantissa . 'e' . ($exponent[0] === '-' ? '' : '+') . ltrim($exponent, '+');
+		}
+
+		$floor = floor($abs);
+		$rounded = ($abs - $floor) >= 0.5 ? $floor + 1 : $floor;
+
+		return $sign . sprintf('%.0f', $rounded);
 	}
 
 	/**

@@ -725,12 +725,30 @@ class Context {
 		$this->checkNotClosed();
 		$uid = self::validateUnit($unitType, $uid);
 
-		if (array_key_exists($unitType, $this->units) && $this->units[$unitType] !== $uid) {
-			throw new InvalidArgumentException(sprintf("Unit '%s' UID already set.", $unitType));
+		if (array_key_exists($unitType, $this->units)) {
+			if (!self::sameUnit($this->units[$unitType], $uid)) {
+				throw new InvalidArgumentException(sprintf("Unit '%s' UID already set.", $unitType));
+			}
+			return $this;
 		}
 
 		$this->units[$unitType] = $uid;
 		return $this;
+	}
+
+	/**
+	 * Numbers compare by value (125 equals 125.0, as JavaScript has a single
+	 * number type); strings and numbers never compare equal.
+	 *
+	 * @param string|int|float $a
+	 * @param string|int|float $b
+	 */
+	private static function sameUnit($a, $b): bool {
+		if (is_string($a) || is_string($b)) {
+			return $a === $b;
+		}
+
+		return (float) $a === (float) $b;
 	}
 
 	/**

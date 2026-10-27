@@ -90,9 +90,36 @@ class ContextConformanceTest extends TestCase {
 	}
 
 	public function testNumericUnitHashesLikeItsRoundedIntegerString(): void {
-		self::assertSame(Utils::hashUnit('126'), Utils::hashUnit(125.75));
-		self::assertSame(Utils::hashUnit('125'), Utils::hashUnit(125));
-		self::assertSame(Utils::hashUnit('126'), (new PublishEvent())->hashUnit(125.75));
+		// Expected values are the JavaScript SDK's hashUnit() output.
+		self::assertSame('BpBZt--EDwx0qBTskje27A', Utils::hashUnit(125.75));
+		self::assertSame('BpBZt--EDwx0qBTskje27A', Utils::hashUnit('126'));
+		self::assertSame('815ubasUW2p7sFI440lKaw', Utils::hashUnit(-0.1));
+		self::assertSame('BpBZt--EDwx0qBTskje27A', (new PublishEvent())->hashUnit(125.75));
+		self::assertNotSame(Utils::hashUnit(125), Utils::hashUnit(125.75));
+	}
+
+	public function testNumericUnitStringFormMatchesJavascriptToFixed(): void {
+		self::assertSame('126', Utils::unitToString(125.75));
+		self::assertSame('125', Utils::unitToString(125));
+		self::assertSame('-0', Utils::unitToString(-0.1));
+		self::assertSame('0', Utils::unitToString(-0.0));
+		self::assertSame('-1', Utils::unitToString(-0.5));
+		self::assertSame('1', Utils::unitToString(0.5));
+		self::assertSame('1e+21', Utils::unitToString(1e21));
+		self::assertSame('1.5e+21', Utils::unitToString(1.5e21));
+		self::assertSame('-1e+21', Utils::unitToString(-1e21));
+		self::assertSame('999999999999999868928', Utils::unitToString(999999999999999868928.0));
+	}
+
+	public function testEqualNumericUnitsAreNotAConflict(): void {
+		$cfg = new ContextConfig();
+		$cfg->setUnit('user_id', 125);
+		$context = $this->sdk(new EmptyProvider())->createContext($cfg);
+		$context->setUnit('user_id', 125.0);
+		self::assertSame(125, $context->getUnit('user_id'));
+
+		$this->expectExceptionMessage("Unit 'user_id' UID already set.");
+		$context->setUnit('user_id', '125');
 	}
 
 	public function testInvalidUnitTypeIsRejected(): void {
