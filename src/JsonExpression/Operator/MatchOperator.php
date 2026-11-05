@@ -19,6 +19,10 @@ class MatchOperator extends BinaryOperator {
 		if ($text === null) {
 			return false;
 		}
+		$text = $evaluator::stringConvert($text);
+		if ($text === null) {
+			return null;
+		}
 		$pattern = $evaluator::stringConvert($pattern);
 		if ($pattern === null) {
 			return null;
