@@ -24,6 +24,7 @@ use function strpos;
 use function usleep;
 
 use const CURL_SSLVERSION_TLSv1_2;
+use const PHP_VERSION_ID;
 use const CURLE_HTTP_RETURNED_ERROR;
 use const CURLINFO_EFFECTIVE_URL;
 use const CURLINFO_HTTP_CODE;
@@ -201,7 +202,8 @@ class HTTPClient {
 	}
 
 	public function close(): void {
-		if (isset($this->curlHandle)) {
+		// curl_close() is a no-op since PHP 8.0 and deprecated since 8.5.
+		if (isset($this->curlHandle) && PHP_VERSION_ID < 80000) {
 			curl_close($this->curlHandle);
 		}
 	}
