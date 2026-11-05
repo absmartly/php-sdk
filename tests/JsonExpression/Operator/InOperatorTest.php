@@ -30,7 +30,7 @@ class InOperatorTest extends TestCase {
 		self::assertFalse($this->operator->evaluate($this->evaluator, [false, []]));
 		self::assertFalse($this->operator->evaluate($this->evaluator, ["1", []]));
 		self::assertFalse($this->operator->evaluate($this->evaluator, [true, []]));
-		self::assertFalse($this->operator->evaluate($this->evaluator, [false, []]));
+		self::assertFalse($this->operator->evaluate($this->evaluator, [0, []]));
 
 		self::assertNull($this->operator->evaluate($this->evaluator, [null, []]));
 	}
@@ -61,7 +61,7 @@ class InOperatorTest extends TestCase {
 		self::assertTrue($this->operator->evaluate($this->evaluator, [0, $haystackbc]));
 	}
 
-	public function testArrayDiffNull(): void {
+	public function testArrayNotContainedInArray(): void {
 		self::assertFalse($this->operator->evaluate($this->evaluator, [[2, 3], [1, 2, 3]]));
 		self::assertFalse($this->operator->evaluate($this->evaluator, [[5, 6], [1, 2, 3]]));
 	}

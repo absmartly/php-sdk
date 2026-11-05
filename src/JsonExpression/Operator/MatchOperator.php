@@ -6,6 +6,7 @@ use ABSmartly\SDK\JsonExpression\Evaluator;
 
 use function preg_last_error;
 use function preg_match;
+use function preg_replace;
 use function trim;
 
 use const PREG_NO_ERROR;
@@ -25,14 +26,24 @@ class MatchOperator extends BinaryOperator {
 	}
 
 	private function runRegexBounded(string $text, string $pattern): ?bool {
-		$pattern = trim($pattern, '/');
+		$flags = '';
+		if (preg_match('/^\/(.*)\/([imsxu]*)$/s', $pattern, $parts) === 1) {
+			// Conventional "/pattern/flags" form: keep the flags instead of folding them into the pattern.
+			[, $pattern, $flags] = $parts;
+		}
+		else {
+			$pattern = trim($pattern, '/');
+		}
 
-		$matches = @preg_match('~'. $pattern . '~', $text);
+		// "~" is used as the delimiter, so escape any unescaped "~" inside the pattern.
+		$pattern = preg_replace('/(?<!\\\\)((?:\\\\\\\\)*)~/', '$1\\~', $pattern);
 
-		if (preg_last_error() !== PREG_NO_ERROR) {
+		$matches = @preg_match('~' . $pattern . '~' . $flags, $text);
+
+		if (preg_last_error() !== PREG_NO_ERROR || $matches === false) {
 			return null;
 		}
 
-		return !empty($matches);
+		return $matches === 1;
 	}
 }

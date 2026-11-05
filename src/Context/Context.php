@@ -16,6 +16,7 @@ use ABSmartly\SDK\VariableParser;
 use ABSmartly\SDK\VariantAssigner;
 
 use Exception;
+use JsonException;
 use Throwable;
 
 use function count;
@@ -23,6 +24,7 @@ use function get_object_vars;
 use function gettype;
 use function hash;
 use function is_int;
+use function json_decode;
 use function microtime;
 use function sprintf;
 use function trim;
@@ -200,6 +202,8 @@ class Context {
 	}
 
 	public function customFieldValue(string $experimentName, string $fieldName) {
+		$this->checkReady();
+
 		$experiment = $this->getExperiment($experimentName);
 		if ($experiment === null || !isset($experiment->data->customFieldValues)) {
 			return null;
@@ -207,7 +211,7 @@ class Context {
 
 		$customFieldValues = $experiment->data->customFieldValues;
 		if (is_string($customFieldValues)) {
-			$customFieldValues = json_decode($customFieldValues, true);
+			$customFieldValues = $this->decodeCustomFieldJson($customFieldValues, $experimentName, $fieldName);
 		}
 
 		if (is_object($customFieldValues)) {
@@ -222,7 +226,7 @@ class Context {
 		$type = $customFieldValues[$fieldName . '_type'] ?? null;
 
 		if ($type === 'json' && is_string($value)) {
-			return json_decode($value, true);
+			return $this->decodeCustomFieldJson($value, $experimentName, $fieldName);
 		}
 
 		if ($type === 'number' && is_string($value)) {
@@ -239,6 +243,24 @@ class Context {
 		return $value;
 	}
 
+	/**
+	 * Decodes a JSON custom field payload. Malformed JSON is reported through the event logger as an Error event
+	 * and yields null, instead of being silently treated as a missing value.
+	 */
+	private function decodeCustomFieldJson(string $json, string $experimentName, string $fieldName) {
+		try {
+			return json_decode($json, true, 512, JSON_THROW_ON_ERROR);
+		}
+		catch (JsonException $exception) {
+			$this->logError(new InvalidArgumentException(
+				sprintf('Failed to parse JSON custom field value "%s" for experiment "%s": %s', $fieldName, $experimentName, $exception->getMessage()),
+				0,
+				$exception
+			));
+			return null;
+		}
+	}
+
 	private function experimentMatches(Experiment $experiment, Assignment $assignment): bool {
 		return $experiment->id === $assignment->id &&
 			$experiment->unitType === $assignment->unitType &&
@@ -252,6 +274,8 @@ class Context {
 			if ($this->attrsSeq > ($assignment->attrsSeq ?? 0)) {
 				$attrs = $this->getAttributes();
 				$result = $this->audienceMatcher->evaluate($experiment->audience, $attrs);
+				// evaluate() returns null when the audience has no filter; that is treated as a mismatch here,
+				// exactly as in the initial assignment in getAssignment(), so the two paths stay comparable.
 				$newAudienceMismatch = !$result;
 
 				if ($newAudienceMismatch !== $assignment->audienceMismatch) {

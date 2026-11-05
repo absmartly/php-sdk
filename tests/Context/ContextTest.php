@@ -1553,6 +1553,8 @@ class ContextTest extends TestCase {
 
 		$context->setAttribute('age', 25);
 		$treatmentAfter = $context->getTreatment('exp_test_ab');
+		// exp_test_ab has a non-strict audience, so re-evaluating it after an attribute change keeps the variant.
+		self::assertSame($treatmentBefore, $treatmentAfter);
 
 		$context->publish();
 
@@ -2189,6 +2191,25 @@ class ContextTest extends TestCase {
 
 		$value = $context->customFieldValue('nonexistent_experiment', 'any_field');
 		self::assertNull($value);
+	}
+
+	public function testCustomFieldValueThrowsOnClosedContext(): void {
+		$context = $this->createReadyContext('context_custom_fields.json');
+		$context->close();
+
+		$this->expectException(\ABSmartly\SDK\Exception\LogicException::class);
+		$context->customFieldValue('exp_test_ab', 'country');
+	}
+
+	public function testCustomFieldValueLogsErrorOnMalformedJson(): void {
+		$logger = new MockContextEventLoggerProxy();
+		$context = $this->createReadyContext('context_custom_fields.json', true, $logger);
+		$context->getExperiment('exp_test_ab')->data->customFieldValues->config = '{not json';
+		$logger->clear();
+
+		self::assertNull($context->customFieldValue('exp_test_ab', 'config'));
+		self::assertSame(1, $logger->called);
+		self::assertSame(ContextEventLoggerEvent::Error, $logger->events[0]->getEvent());
 	}
 
 	public function testGetTreatmentQueuesExposureWithAudienceMatchTrueOnAudienceMatch(): void {

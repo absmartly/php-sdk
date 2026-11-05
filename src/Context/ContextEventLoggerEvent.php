@@ -12,6 +12,9 @@ class ContextEventLoggerEvent {
 	public const Publish = 'Publish';
 	public const Exposure = 'Exposure';
 	public const Goal = 'Goal';
+	/**
+	 * @deprecated No longer emitted; Context::close() emits ContextEventLoggerEvent::Finalize instead.
+	 */
 	public const Close = 'Close';
 	public const Finalize = 'Finalize';
 

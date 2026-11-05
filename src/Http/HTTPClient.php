@@ -15,8 +15,10 @@ use function curl_setopt_array;
 use function curl_strerror;
 use function http_build_query;
 use function rtrim;
+use function min;
 use function sprintf;
 use function strpos;
+use function usleep;
 
 use const CURL_SSLVERSION_TLSv1_2;
 use const CURLE_HTTP_RETURNED_ERROR;
@@ -34,6 +36,7 @@ use const CURLOPT_RETURNTRANSFER;
 use const CURLOPT_SSL_VERIFYHOST;
 use const CURLOPT_SSL_VERIFYPEER;
 use const CURLOPT_SSLVERSION;
+use const CURLOPT_TIMEOUT_MS;
 use const CURLOPT_URL;
 use const CURLPROTO_HTTPS;
 
@@ -42,8 +45,17 @@ class HTTPClient {
 	 * @var CurlHandle|resource
 	 */
 	private $curlHandle;
+	/**
+	 * Number of times a request is retried after a transport error or an HTTP 5xx response.
+	 */
 	public int $retries = 5;
+	/**
+	 * Timeout in milliseconds, applied both to the connection phase and to the whole request.
+	 */
 	public int $timeout = 3000;
+
+	private const RETRY_BASE_DELAY_MS = 50;
+	private const RETRY_MAX_DELAY_MS = 1000;
 
 	private function setupRequest(string $url, array $query = [], array $headers = [], string $type = 'GET', ?string $data = null): void {
 		$this->curlInit();
@@ -68,11 +80,22 @@ class HTTPClient {
 		curl_setopt($this->curlHandle, CURLOPT_HTTPHEADER, $flatHeaders);
 		curl_setopt($this->curlHandle, CURLOPT_CUSTOMREQUEST, $type);
 		curl_setopt($this->curlHandle, CURLOPT_POSTFIELDS, $data);
+		curl_setopt($this->curlHandle, CURLOPT_CONNECTTIMEOUT_MS, $this->timeout);
+		curl_setopt($this->curlHandle, CURLOPT_TIMEOUT_MS, $this->timeout);
 	}
 
 	private function fetchResponse(): Response {
-		$returnedResponse = curl_exec($this->curlHandle);
-		$this->throwOnError($returnedResponse);
+		$attempt = 0;
+		while (true) {
+			$returnedResponse = curl_exec($this->curlHandle);
+			if ($attempt >= $this->retries || !$this->isRetryable()) {
+				break;
+			}
+			usleep(min(self::RETRY_BASE_DELAY_MS << $attempt, self::RETRY_MAX_DELAY_MS) * 1000);
+			++$attempt;
+		}
+
+		$this->throwOnError($returnedResponse === false ? null : $returnedResponse);
 
 		$response = new Response();
 		$response->content = (string) $returnedResponse;
@@ -94,6 +117,14 @@ class HTTPClient {
 	public function post(string $url, array $query = [], array $headers = [], string $body = ''): Response {
 		$this->setupRequest($url, $query, $headers, 'POST', $body);
 		return $this->fetchResponse();
+	}
+
+	private function isRetryable(): bool {
+		if (curl_errno($this->curlHandle) !== 0) {
+			return true;
+		}
+
+		return (int) curl_getinfo($this->curlHandle, CURLINFO_HTTP_CODE) >= 500;
 	}
 
 	private function throwOnError(?string $responseBody): void {
@@ -126,7 +157,6 @@ class HTTPClient {
 			CURLOPT_PROTOCOLS => CURLPROTO_HTTPS, // Always use HTTPS, never HTTP
 			CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTPS,
 			CURLOPT_MAXREDIRS => 3,
-			CURLOPT_CONNECTTIMEOUT_MS => $this->timeout,
 			CURLOPT_SSL_VERIFYHOST => 2,
 			CURLOPT_SSL_VERIFYPEER => true,
 			CURLOPT_SSLVERSION => CURL_SSLVERSION_TLSv1_2,

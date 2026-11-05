@@ -76,31 +76,6 @@ $contextConfig->setEventLogger(new ContextEventLoggerCallback(
 $context = $sdk->createContext($contextConfig);
 ```
 
-#### Using Async HTTP Client
-
-For non-blocking operations, you can use the ReactPHP-based async HTTP client:
-
-```php
-use ABSmartly\SDK\Client\ClientConfig;
-use ABSmartly\SDK\Client\Client;
-use ABSmartly\SDK\Http\ReactHttpClient;
-use ABSmartly\SDK\Config;
-use ABSmartly\SDK\ABsmartly;
-
-$clientConfig = new ClientConfig($endpoint, $apiKey, $environment, $application);
-
-$reactHttpClient = new ReactHttpClient();
-$reactHttpClient->timeout = 3000;
-$reactHttpClient->retries = 5;
-
-$client = new Client($clientConfig, $reactHttpClient);
-$config = new Config($client);
-
-$sdk = new ABsmartly($config);
-```
-
-The async HTTP client uses ReactPHP promises and allows for non-blocking I/O operations.
-
 **SDK Options**
 
 | Config                  | Type                                           | Required? | Default                                       | Description                                                                                                                                                                   |
@@ -181,7 +156,7 @@ The data parameter depends on the type of event. Currently, the SDK logs the fol
 | `Publish`  | `Context->publish()` method succeeds                        | `PublishEvent` data sent to the A/B Smartly event collector|
 | `Exposure` | `Context->getTreatment()` method succeeds on first exposure | `Exposure` data enqueued for publishing                     |
 | `Goal`     | `Context->track()` method succeeds                          | `GoalAchievement` goal data enqueued for publishing         |
-| `Close`    | `Context->close()` method succeeds the first time           | `null`                                                      |  
+| `Finalize` | `Context->close()` method succeeds the first time           | `null`                                                      |
 
 ## Create a New Context Request
 
@@ -194,32 +169,6 @@ $contextConfig = new ContextConfig();
 $contextConfig->setUnit('session_id', '5ebf06d8cb5d8137290c4abb64155584fbdb64d8');
 
 $context = $sdk->createContext($contextConfig);
-```
-
-### Asynchronously (with ReactPHP)
-
-When using the async HTTP client, context creation is non-blocking:
-
-```php
-use ABSmartly\SDK\Context\ContextConfig;
-use React\Promise\PromiseInterface;
-
-$contextConfig = new ContextConfig();
-$contextConfig->setUnit('session_id', '5ebf06d8cb5d8137290c4abb64155584fbdb64d8');
-
-$context = $sdk->createContext($contextConfig);
-
-// Use promises for async operations
-$context->ready()->then(
-    function($context) {
-        // Context is ready
-        $treatment = $context->getTreatment('exp_test_experiment');
-    },
-    function($error) {
-        // Handle error
-        error_log('Context failed: ' . $error->getMessage());
-    }
-);
 ```
 
 ### With Prefetched Data
@@ -267,7 +216,7 @@ $context->setUnits([
 ]);
 ```
 
-> **Note:** You cannot override an already set unit type as that would be a change of identity and would throw an exception. In this case, you must create a new context instead. The `Context->setUnit()` and `Context->setUnits()` methods can be called before the context is ready.  
+> **Note:** You cannot override an already set unit type as that would be a change of identity, and would throw an exception. In this case, you must create a new context instead. The `Context->setUnit()` and `Context->setUnits()` methods can be called before the context is ready.  
 
 ## Basic Usage
 
@@ -393,11 +342,11 @@ class ABSmartlyContext
         $context = $this->sdk->createContext($contextConfig);
         $request->attributes->set('absmartly_context', $context);
 
-        $response = $next($request);
-
-        $context->close();
-
-        return $response;
+        try {
+            return $next($request);
+        } finally {
+            $context->close();
+        }
     }
 }
 
@@ -543,49 +492,6 @@ $contextConfig->setUnit('session_id', 'abc123');
 $context = $sdk->createContext($contextConfig);
 ```
 
-### Async Request with ReactPHP
-
-For non-blocking operations with cancellation support:
-
-```php
-use ABSmartly\SDK\Client\ClientConfig;
-use ABSmartly\SDK\Client\Client;
-use ABSmartly\SDK\Http\ReactHttpClient;
-use ABSmartly\SDK\Config;
-use ABSmartly\SDK\ABsmartly;
-use ABSmartly\SDK\Context\ContextConfig;
-use React\EventLoop\Loop;
-
-$reactHttpClient = new ReactHttpClient();
-$reactHttpClient->timeout = 1500;
-
-$clientConfig = new ClientConfig($endpoint, $apiKey, $environment, $application);
-$client = new Client($clientConfig, $reactHttpClient);
-
-$config = new Config($client);
-$sdk = new ABsmartly($config);
-
-$contextConfig = new ContextConfig();
-$contextConfig->setUnit('session_id', 'abc123');
-
-$context = $sdk->createContext($contextConfig);
-
-$timeout = Loop::addTimer(1.5, function() use ($context) {
-    echo "Context creation timed out\n";
-});
-
-$context->ready()->then(
-    function($ctx) use ($timeout) {
-        Loop::cancelTimer($timeout);
-        echo "Context ready!\n";
-    },
-    function($error) use ($timeout) {
-        Loop::cancelTimer($timeout);
-        echo "Context failed: " . $error->getMessage() . "\n";
-    }
-);
-```
-
 ## Advanced
 
 ### Context Attributes
@@ -641,30 +547,12 @@ Sometimes it is necessary to ensure all events have been published to the A/B Sm
 $context->publish();
 ```
 
-With async HTTP client:
-
-```php
-$context->publish()->then(function() {
-    // All events published
-    header('Location: https://www.absmartly.com');
-});
-```
-
 ### Finalize
 
 The `close()` method will ensure all events have been published to the A/B Smartly collector, like `Context->publish()`, and will also "seal" the context, throwing an error if any method that could generate an event is called.
 
 ```php
 $context->close();
-```
-
-With async HTTP client:
-
-```php
-$context->close()->then(function() {
-    // Context closed and all events published
-    header('Location: https://www.absmartly.com');
-});
 ```
 
 ## About A/B Smartly

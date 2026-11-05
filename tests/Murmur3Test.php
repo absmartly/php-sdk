@@ -4,6 +4,9 @@ namespace ABSmartly\SDK\Tests;
 
 use PHPUnit\Framework\TestCase;
 
+/**
+ * @requires PHP 8.1
+ */
 class Murmur3Test extends TestCase {
 	private function murmur3Hash(string $input, int $seed = 0): int {
 		return hexdec(hash('murmur3a', $input, false, ['seed' => $seed]));
