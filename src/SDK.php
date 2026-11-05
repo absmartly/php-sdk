@@ -1,6 +1,6 @@
 <?php
 
-namespace ABSmartly\SDK;
+namespace ABSmartly;
 
 use ABSmartly\SDK\Client\Client;
 use ABSmartly\SDK\Client\ClientConfig;
@@ -9,8 +9,14 @@ use ABSmartly\SDK\Context\ContextConfig;
 use ABSmartly\SDK\Context\ContextData;
 use ABSmartly\SDK\Context\ContextDataProvider;
 use ABSmartly\SDK\Context\ContextEventHandler;
+use ABSmartly\SDK\Config;
 use ABSmartly\SDK\Http\HTTPClient;
 
+/**
+ * Entry point of the A/B Smartly PHP SDK.
+ *
+ * Earlier releases named this class ABSmartly\SDK\SDK. That name is kept as an alias at the bottom of this file.
+ */
 final class SDK {
 
 	private Client $client;
@@ -69,3 +75,5 @@ final class SDK {
 		$this->client->close();
 	}
 }
+
+class_alias(SDK::class, 'ABSmartly\\SDK\\SDK');

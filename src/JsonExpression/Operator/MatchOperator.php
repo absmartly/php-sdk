@@ -7,6 +7,8 @@ use ABSmartly\SDK\JsonExpression\Evaluator;
 use function preg_last_error;
 use function preg_match;
 use function preg_replace;
+use function rtrim;
+use function strlen;
 use function trim;
 
 use const PREG_NO_ERROR;
@@ -27,8 +29,10 @@ class MatchOperator extends BinaryOperator {
 
 	private function runRegexBounded(string $text, string $pattern): ?bool {
 		$flags = '';
-		if (preg_match('/^\/(.*)\/([imsxu]*)$/s', $pattern, $parts) === 1) {
+		if (preg_match('/^\/(.*)\/([imsxu]*)$/s', $pattern, $parts) === 1
+			&& (strlen($parts[1]) - strlen(rtrim($parts[1], '\\'))) % 2 === 0) {
 			// Conventional "/pattern/flags" form: keep the flags instead of folding them into the pattern.
+			// An odd number of backslashes before the last "/" escapes it, so it is not a closing delimiter.
 			[, $pattern, $flags] = $parts;
 		}
 		else {

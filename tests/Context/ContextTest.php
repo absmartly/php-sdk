@@ -15,7 +15,7 @@ use ABSmartly\SDK\Context\ContextEventLoggerEvent;
 use ABSmartly\SDK\Exposure;
 use ABSmartly\SDK\GoalAchievement;
 use ABSmartly\SDK\PublishEvent;
-use ABSmartly\SDK\SDK;
+use ABSmartly\SDK;
 use ABSmartly\SDK\Tests\Mocks\ContextDataProviderMock;
 use ABSmartly\SDK\Tests\Mocks\ContextEventHandlerMock;
 use ABSmartly\SDK\Tests\Mocks\MockContextEventLoggerProxy;

@@ -55,6 +55,13 @@ class MatchOperatorTest extends TestCase {
 		self::assertFalse($this->operator->evaluate($this->evaluator, ["foobar", "foo~bar"]));
 	}
 
+	public function testEscapedClosingSlashIsNotADelimiter(): void {
+		self::assertTrue($this->operator->evaluate($this->evaluator, ["foo/i", "/foo\\/i"]));
+		self::assertFalse($this->operator->evaluate($this->evaluator, ["FOO", "/foo\\/i"]));
+		// Two backslashes are an escaped backslash, so the slash after them still closes the pattern.
+		self::assertTrue($this->operator->evaluate($this->evaluator, ["FOO\\", "/foo\\\\/i"]));
+	}
+
 	public function testInvalidRegexReturnsNull(): void {
 		self::assertNull($this->operator->evaluate($this->evaluator, ["abc", "("]));
 	}

@@ -13,7 +13,10 @@ use function curl_init;
 use function curl_setopt;
 use function curl_setopt_array;
 use function curl_strerror;
+use function ceil;
+use function hrtime;
 use function http_build_query;
+use function max;
 use function rtrim;
 use function min;
 use function sprintf;
@@ -50,12 +53,14 @@ class HTTPClient {
 	 */
 	public int $retries = 5;
 	/**
-	 * Timeout in milliseconds, applied both to the connection phase and to the whole request.
+	 * Timeout in milliseconds for the complete request, including retries and backoff.
 	 */
 	public int $timeout = 3000;
 
 	private const RETRY_BASE_DELAY_MS = 50;
 	private const RETRY_MAX_DELAY_MS = 1000;
+	// 50ms << 5 already exceeds the 1s cap; capping the shift keeps it from overflowing on large retry counts.
+	private const RETRY_MAX_SHIFT = 5;
 
 	private function setupRequest(string $url, array $query = [], array $headers = [], string $type = 'GET', ?string $data = null): void {
 		$this->curlInit();
@@ -80,18 +85,32 @@ class HTTPClient {
 		curl_setopt($this->curlHandle, CURLOPT_HTTPHEADER, $flatHeaders);
 		curl_setopt($this->curlHandle, CURLOPT_CUSTOMREQUEST, $type);
 		curl_setopt($this->curlHandle, CURLOPT_POSTFIELDS, $data);
-		curl_setopt($this->curlHandle, CURLOPT_CONNECTTIMEOUT_MS, $this->timeout);
-		curl_setopt($this->curlHandle, CURLOPT_TIMEOUT_MS, $this->timeout);
 	}
 
+	/**
+	 * Sends the request, retrying transport errors and 5xx responses. $timeout bounds the whole sequence: each
+	 * attempt only gets the time that is left, and no retry starts once the remaining time cannot cover its back-off.
+	 * A $timeout of 0 or less means no limit.
+	 */
 	private function fetchResponse(): Response {
+		$hasDeadline = $this->timeout > 0;
+		$deadline = $this->nowMs() + $this->timeout;
 		$attempt = 0;
 		while (true) {
-			$returnedResponse = curl_exec($this->curlHandle);
+			// cURL treats a timeout of 0 as "no timeout", so never pass less than 1ms when a deadline applies.
+			$attemptTimeout = $hasDeadline ? max(1, (int) ceil($deadline - $this->nowMs())) : 0;
+			$returnedResponse = $this->transfer($attemptTimeout);
+
 			if ($attempt >= $this->retries || !$this->isRetryable()) {
 				break;
 			}
-			usleep(min(self::RETRY_BASE_DELAY_MS << $attempt, self::RETRY_MAX_DELAY_MS) * 1000);
+
+			$delay = min(self::RETRY_BASE_DELAY_MS << min($attempt, self::RETRY_MAX_SHIFT), self::RETRY_MAX_DELAY_MS);
+			if ($hasDeadline && $deadline - $this->nowMs() <= $delay) {
+				break;
+			}
+
+			$this->sleepMs($delay);
 			++$attempt;
 		}
 
@@ -119,7 +138,25 @@ class HTTPClient {
 		return $this->fetchResponse();
 	}
 
-	private function isRetryable(): bool {
+	/**
+	 * @return string|false
+	 */
+	protected function transfer(int $timeoutMs) {
+		curl_setopt($this->curlHandle, CURLOPT_CONNECTTIMEOUT_MS, $timeoutMs);
+		curl_setopt($this->curlHandle, CURLOPT_TIMEOUT_MS, $timeoutMs);
+
+		return curl_exec($this->curlHandle);
+	}
+
+	protected function nowMs(): float {
+		return hrtime(true) / 1e6;
+	}
+
+	protected function sleepMs(int $milliseconds): void {
+		usleep($milliseconds * 1000);
+	}
+
+	protected function isRetryable(): bool {
 		if (curl_errno($this->curlHandle) !== 0) {
 			return true;
 		}

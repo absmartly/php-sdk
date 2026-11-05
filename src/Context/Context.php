@@ -11,7 +11,7 @@ use ABSmartly\SDK\ExperimentVariables;
 use ABSmartly\SDK\Exposure;
 use ABSmartly\SDK\GoalAchievement;
 use ABSmartly\SDK\PublishEvent;
-use ABSmartly\SDK\SDK;
+use ABSmartly\SDK;
 use ABSmartly\SDK\VariableParser;
 use ABSmartly\SDK\VariantAssigner;
 
@@ -26,6 +26,7 @@ use function hash;
 use function is_int;
 use function json_decode;
 use function microtime;
+use function strpos;
 use function sprintf;
 use function trim;
 
@@ -236,7 +237,7 @@ class Context {
 			return (int) $value;
 		}
 
-		if (str_starts_with($type ?? '', 'boolean') && is_string($value)) {
+		if (strpos($type ?? '', 'boolean') === 0 && is_string($value)) {
 			return $value === 'true' || $value === '1';
 		}
 
