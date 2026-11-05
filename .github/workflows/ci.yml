@@ -39,3 +39,9 @@ jobs:
 
       - name: Run unit tests
         run: vendor/bin/phpunit --coverage-text
+
+      - name: Dump an authoritative classmap
+        run: composer dump-autoload --classmap-authoritative --no-interaction
+
+      - name: Check legacy class name with an authoritative classmap
+        run: php .github/scripts/legacy-alias-smoke.php
