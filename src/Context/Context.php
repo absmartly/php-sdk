@@ -11,12 +11,13 @@ use ABSmartly\SDK\ExperimentVariables;
 use ABSmartly\SDK\Exposure;
 use ABSmartly\SDK\GoalAchievement;
 use ABSmartly\SDK\PublishEvent;
+use ABSmartly\SDK;
 use ABSmartly\SDK\Utils;
-use ABSmartly\SDK\ABsmartly;
 use ABSmartly\SDK\VariableParser;
 use ABSmartly\SDK\VariantAssigner;
 
 use Exception;
+use JsonException;
 use Throwable;
 
 use function count;
@@ -24,13 +25,15 @@ use function get_object_vars;
 use function gettype;
 use function hash;
 use function is_int;
+use function json_decode;
 use function microtime;
+use function strpos;
 use function sprintf;
 use function trim;
 
 class Context {
 
-	private ABsmartly $sdk;
+	private SDK $sdk;
 
 	private ContextEventHandler $eventHandler;
 	private ContextEventLogger $eventLogger;
@@ -137,7 +140,7 @@ class Context {
 		return (int) (microtime(true) * 1000);
 	}
 
-	private function __construct(ABsmartly $sdk, ContextConfig $contextConfig, ContextDataProvider $dataProvider, ?ContextData $contextData = null, bool $pending = false) {
+	private function __construct(SDK $sdk, ContextConfig $contextConfig, ContextDataProvider $dataProvider, ?ContextData $contextData = null, bool $pending = false) {
 		$this->sdk = $sdk;
 		$this->dataProvider = $dataProvider;
 		$this->setUnits($contextConfig->getUnits());
@@ -235,14 +238,14 @@ class Context {
 		$this->readyError = $exception;
 	}
 
-	public static function createFromContextConfig(ABsmartly $sdk, ContextConfig $contextConfig, ContextDataProvider $dataProvider, ContextEventHandler $handler, ?ContextData $contextData = null): Context {
+	public static function createFromContextConfig(SDK $sdk, ContextConfig $contextConfig, ContextDataProvider $dataProvider, ContextEventHandler $handler, ?ContextData $contextData = null): Context {
 		$context = new Context($sdk, $contextConfig, $dataProvider, $contextData);
 		$context->setEventHandler($handler);
 
 		return $context;
 	}
 
-	public static function createPending(ABsmartly $sdk, ContextConfig $contextConfig, ContextDataProvider $dataProvider, ContextEventHandler $handler): Context {
+	public static function createPending(SDK $sdk, ContextConfig $contextConfig, ContextDataProvider $dataProvider, ContextEventHandler $handler): Context {
 		$context = new Context($sdk, $contextConfig, $dataProvider, null, true);
 		$context->setEventHandler($handler);
 
@@ -330,18 +333,7 @@ class Context {
 		$type = $field->type ?? null;
 
 		if ($type === 'json' && is_string($value)) {
-			try {
-				return json_decode($value, true, 512, JSON_THROW_ON_ERROR);
-			}
-			catch (\JsonException $e) {
-				error_log(sprintf(
-					'ABsmartly SDK Error: Failed to decode JSON custom field "%s" for experiment "%s": %s',
-					$fieldName,
-					$experimentName,
-					$e->getMessage()
-				));
-				return null;
-			}
+			return $this->decodeCustomFieldJson($value, $experimentName, $fieldName);
 		}
 
 		if ($type === 'number' && is_string($value)) {
@@ -351,11 +343,29 @@ class Context {
 			return (int) $value;
 		}
 
-		if (substr($type ?? '', 0, 7) === 'boolean' && is_string($value)) {
+		if (strpos($type ?? '', 'boolean') === 0 && is_string($value)) {
 			return $value === 'true' || $value === '1';
 		}
 
 		return $value;
+	}
+
+	/**
+	 * Decodes a JSON custom field payload. Malformed JSON is reported through the event logger as an Error event
+	 * and yields null, instead of being silently treated as a missing value.
+	 */
+	private function decodeCustomFieldJson(string $json, string $experimentName, string $fieldName) {
+		try {
+			return json_decode($json, true, 512, JSON_THROW_ON_ERROR);
+		}
+		catch (JsonException $exception) {
+			$this->logError(new InvalidArgumentException(
+				sprintf('Failed to parse JSON custom field value "%s" for experiment "%s": %s', $fieldName, $experimentName, $exception->getMessage()),
+				0,
+				$exception
+			));
+			return null;
+		}
 	}
 
 	private function experimentMatches(Experiment $experiment, Assignment $assignment): bool {

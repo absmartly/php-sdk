@@ -2,7 +2,7 @@
 
 namespace ABSmartly\SDK\Tests;
 
-use ABSmartly\SDK\ABsmartly;
+use ABSmartly\SDK;
 use ABSmartly\SDK\Client\Client;
 use ABSmartly\SDK\Client\ClientConfig;
 use ABSmartly\SDK\Config;
@@ -16,9 +16,9 @@ use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
 use ReflectionProperty;
 
-class ABsmartlyTest extends TestCase {
+class SDKTest extends TestCase {
 	public function testCreateSimpleParameterOrderMatchesClientConfig(): void {
-		$reflection = new ReflectionMethod(ABsmartly::class, 'createSimple');
+		$reflection = new ReflectionMethod(SDK::class, 'createSimple');
 		$params = $reflection->getParameters();
 
 		self::assertSame('endpoint', $params[0]->getName());
@@ -28,21 +28,21 @@ class ABsmartlyTest extends TestCase {
 	}
 
 	public function testCreateSimpleIsNotDeprecated(): void {
-		$reflection = new ReflectionMethod(ABsmartly::class, 'createSimple');
+		$reflection = new ReflectionMethod(SDK::class, 'createSimple');
 		$docComment = $reflection->getDocComment();
 
 		self::assertStringNotContainsString('@deprecated', $docComment);
 	}
 
 	public function testCreateWithDefaultsIsDeprecated(): void {
-		$reflection = new ReflectionMethod(ABsmartly::class, 'createWithDefaults');
+		$reflection = new ReflectionMethod(SDK::class, 'createWithDefaults');
 		$docComment = $reflection->getDocComment();
 
 		self::assertStringContainsString('@deprecated', $docComment);
 	}
 
 	public function testCreateWithDefaultsParameterOrderIsPreservedForBackwardCompatibility(): void {
-		$reflection = new ReflectionMethod(ABsmartly::class, 'createWithDefaults');
+		$reflection = new ReflectionMethod(SDK::class, 'createWithDefaults');
 		$params = $reflection->getParameters();
 
 		self::assertSame('endpoint', $params[0]->getName());
@@ -59,9 +59,9 @@ class ABsmartlyTest extends TestCase {
 		$logger = new MockContextEventLoggerProxy();
 		$config->setContextEventLogger($logger);
 
-		$sdk = new ABsmartly($config);
+		$sdk = new SDK($config);
 
-		$prop = new ReflectionProperty(ABsmartly::class, 'eventLogger');
+		$prop = new ReflectionProperty(SDK::class, 'eventLogger');
 		$prop->setAccessible(true);
 		self::assertSame($logger, $prop->getValue($sdk));
 	}
@@ -81,7 +81,7 @@ class ABsmartlyTest extends TestCase {
 		$logger = new MockContextEventLoggerProxy();
 		$config->setContextEventLogger($logger);
 
-		$sdk = new ABsmartly($config);
+		$sdk = new SDK($config);
 		$contextConfig = new ContextConfig();
 		$contextConfig->setUnits([
 			'session_id' => 'e791e240fcd3df7d238cfc285f475e8152fcc0ec',
@@ -112,7 +112,7 @@ class ABsmartlyTest extends TestCase {
 
 		$contextLogger = new MockContextEventLoggerProxy();
 
-		$sdk = new ABsmartly($config);
+		$sdk = new SDK($config);
 		$contextConfig = new ContextConfig();
 		$contextConfig->setUnits([
 			'session_id' => 'e791e240fcd3df7d238cfc285f475e8152fcc0ec',

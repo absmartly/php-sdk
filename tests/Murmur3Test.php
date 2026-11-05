@@ -4,6 +4,9 @@ namespace ABSmartly\SDK\Tests;
 
 use PHPUnit\Framework\TestCase;
 
+/**
+ * @requires PHP 8.1
+ */
 class Murmur3Test extends TestCase {
 	private function murmur3Hash(string $input, int $seed = 0): int {
 		if (PHP_VERSION_ID >= 80100) {

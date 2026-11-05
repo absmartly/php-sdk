@@ -8,13 +8,13 @@ The A/B Smartly PHP SDK is compatible with PHP versions 7.4 and later. For the b
 
 ### Backwards Compatibility Note
 
-The main SDK class has been renamed from `SDK` to `ABsmartly` to standardize naming across all ABSmartly SDKs. The old `SDK` class name is still available as a deprecated alias for backwards compatibility, but it is recommended to migrate to the new `ABsmartly` class name in new projects.
+The SDK entry class is now `ABSmartly\SDK`. The previous fully qualified name, `ABSmartly\SDK\SDK`, is still available as an alias, so existing code keeps working without changes.
 
 ### Migrating to 2.0 (breaking)
 
 Context reads now throw `ABSmartly\SDK\Exception\LogicException` before readiness (`ABsmartly Context is not yet ready.`); previously some returned defaults. Check `$context->isReady()` before reading a pending context. Existing non-exposing reads (`peekVariableValue`, `getVariableKeys`, `customFieldValue`, `getExperiments`) remain available after finalization. Treatment/exposing reads still reject finalized contexts.
 
-Numeric units retain their type and floats use cross-SDK integer-rounded hashing. Nonblank string unit IDs retain their original bytes, preserving existing assignments. Failed final publishes now throw and leave the context open for retry. The legacy `SDK`, factory parameter ordering, `ContextEventHandler` contracts, and `PublishEvent::hashUnit(string)` override signature remain supported. ReactPHP is optional for synchronous use. See [CHANGELOG.md](CHANGELOG.md) for the full migration notes and audience/custom-field corrections.
+Numeric units retain their type and floats use cross-SDK integer-rounded hashing. Nonblank string unit IDs retain their original bytes, preserving existing assignments. Failed final publishes now throw and leave the context open for retry. The legacy `ABSmartly\SDK\SDK` name, factory parameter ordering, `ContextEventHandler` contracts, and `PublishEvent::hashUnit(string)` override signature remain supported. ReactPHP is optional for synchronous use. See [CHANGELOG.md](CHANGELOG.md) for the full migration notes and audience/custom-field corrections.
 
 ## Installation
 
@@ -37,9 +37,9 @@ This example assumes an API Key, an Application, and an Environment have been cr
 Once the SDK is installed, it can be initialized in your project using the simple API:
 
 ```php
-use ABSmartly\SDK\ABsmartly;
+use ABSmartly\SDK;
 
-$sdk = ABsmartly::createWithDefaults(
+$sdk = SDK::createWithDefaults(
   endpoint: $endpoint,
   apiKey: $apiKey,
   environment: $environment,
@@ -51,9 +51,9 @@ Note that the above example uses named parameters introduced in PHP 8.0. Althoug
 
 Example for PHP 7.4:
 ```php
-use ABSmartly\SDK\ABsmartly;
+use ABSmartly\SDK;
 
-$sdk = ABsmartly::createWithDefaults(
+$sdk = SDK::createWithDefaults(
   $endpoint, $apiKey, $environment, $application
 );
 ```
@@ -66,13 +66,13 @@ The above is a shortcut that creates an SDK instance quickly using default value
 use ABSmartly\SDK\Client\ClientConfig;
 use ABSmartly\SDK\Client\Client;
 use ABSmartly\SDK\Config;
-use ABSmartly\SDK\ABsmartly;
+use ABSmartly\SDK;
 
 $clientConfig = new ClientConfig($endpoint, $apiKey, $application, $environment);
 $client = new Client($clientConfig);
 $config = new Config($client);
 
-$sdk = new ABsmartly($config);
+$sdk = new SDK($config);
 ```
 
 #### Using Async HTTP Client
@@ -90,7 +90,7 @@ use ABSmartly\SDK\Client\ClientConfig;
 use ABSmartly\SDK\Client\Client;
 use ABSmartly\SDK\Http\ReactHttpClient;
 use ABSmartly\SDK\Config;
-use ABSmartly\SDK\ABsmartly;
+use ABSmartly\SDK;
 
 $clientConfig = new ClientConfig($endpoint, $apiKey, $application, $environment);
 
@@ -101,7 +101,7 @@ $reactHttpClient->retries = 5;
 $client = new Client($clientConfig, $reactHttpClient);
 $config = new Config($client);
 
-$sdk = new ABsmartly($config);
+$sdk = new SDK($config);
 ```
 
 The async HTTP client uses ReactPHP promises and allows for non-blocking I/O operations.
@@ -401,16 +401,16 @@ return [
 namespace App\Providers;
 
 use Illuminate\Support\ServiceProvider;
-use ABSmartly\SDK\ABsmartly;
+use ABSmartly\SDK;
 
 class ABSmartlyServiceProvider extends ServiceProvider
 {
     public function register()
     {
-        $this->app->singleton(ABsmartly::class, function ($app) {
+        $this->app->singleton(SDK::class, function ($app) {
             $config = config('absmartly');
 
-            return ABsmartly::createWithDefaults(
+            return SDK::createWithDefaults(
                 endpoint: $config['endpoint'],
                 apiKey: $config['api_key'],
                 environment: $config['environment'],
@@ -426,14 +426,14 @@ class ABSmartlyServiceProvider extends ServiceProvider
 namespace App\Http\Middleware;
 
 use Closure;
-use ABSmartly\SDK\ABsmartly;
+use ABSmartly\SDK;
 use ABSmartly\SDK\Context\ContextConfig;
 
 class ABSmartlyContext
 {
     protected $sdk;
 
-    public function __construct(ABsmartly $sdk)
+    public function __construct(SDK $sdk)
     {
         $this->sdk = $sdk;
     }
@@ -488,8 +488,8 @@ Symfony applications can integrate A/B Smartly using dependency injection and ev
 ```php
 // config/services.yaml
 services:
-    ABSmartly\SDK\ABsmartly:
-        factory: ['ABSmartly\SDK\ABsmartly', 'createWithDefaults']
+    ABSmartly\SDK:
+        factory: ['ABSmartly\SDK', 'createWithDefaults']
         arguments:
             $endpoint: '%env(ABSMARTLY_ENDPOINT)%'
             $apiKey: '%env(ABSMARTLY_API_KEY)%'
@@ -501,7 +501,7 @@ services:
 
 namespace App\EventSubscriber;
 
-use ABSmartly\SDK\ABsmartly;
+use ABSmartly\SDK;
 use ABSmartly\SDK\Context\ContextConfig;
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
 use Symfony\Component\HttpKernel\Event\RequestEvent;
@@ -513,7 +513,7 @@ class ABSmartlySubscriber implements EventSubscriberInterface
     private $sdk;
     private $context;
 
-    public function __construct(ABsmartly $sdk)
+    public function __construct(SDK $sdk)
     {
         $this->sdk = $sdk;
     }
@@ -582,7 +582,7 @@ use ABSmartly\SDK\Client\ClientConfig;
 use ABSmartly\SDK\Client\Client;
 use ABSmartly\SDK\Http\HTTPClient;
 use ABSmartly\SDK\Config;
-use ABSmartly\SDK\ABsmartly;
+use ABSmartly\SDK;
 use ABSmartly\SDK\Context\ContextConfig;
 
 $httpClient = new HTTPClient();
@@ -592,7 +592,7 @@ $clientConfig = new ClientConfig($endpoint, $apiKey, $application, $environment)
 $client = new Client($clientConfig, $httpClient);
 
 $config = new Config($client);
-$sdk = new ABsmartly($config);
+$sdk = new SDK($config);
 
 $contextConfig = new ContextConfig();
 $contextConfig->setUnit('session_id', 'abc123');
@@ -609,7 +609,7 @@ use ABSmartly\SDK\Client\ClientConfig;
 use ABSmartly\SDK\Client\Client;
 use ABSmartly\SDK\Http\ReactHttpClient;
 use ABSmartly\SDK\Config;
-use ABSmartly\SDK\ABsmartly;
+use ABSmartly\SDK;
 use ABSmartly\SDK\Context\ContextConfig;
 use React\EventLoop\Loop;
 
@@ -620,7 +620,7 @@ $clientConfig = new ClientConfig($endpoint, $apiKey, $application, $environment)
 $client = new Client($clientConfig, $reactHttpClient);
 
 $config = new Config($client);
-$sdk = new ABsmartly($config);
+$sdk = new SDK($config);
 
 $contextConfig = new ContextConfig();
 $contextConfig->setUnit('session_id', 'abc123');

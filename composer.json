@@ -22,7 +22,10 @@
     "autoload": {
         "psr-4": {
             "ABSmartly\\SDK\\": "src/"
-        }
+        },
+        "classmap": [
+            "src/SDK.php"
+        ]
     },
     "autoload-dev": {
         "psr-4": {

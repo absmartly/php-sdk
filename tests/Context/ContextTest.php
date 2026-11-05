@@ -15,7 +15,7 @@ use ABSmartly\SDK\Context\ContextEventLoggerEvent;
 use ABSmartly\SDK\Exposure;
 use ABSmartly\SDK\GoalAchievement;
 use ABSmartly\SDK\PublishEvent;
-use ABSmartly\SDK\SDK;
+use ABSmartly\SDK;
 use ABSmartly\SDK\Tests\Mocks\ContextDataProviderMock;
 use ABSmartly\SDK\Tests\Mocks\ContextEventHandlerMock;
 use ABSmartly\SDK\Tests\Mocks\MockContextEventLoggerProxy;
@@ -1634,13 +1634,15 @@ class ContextTest extends TestCase {
 		$context = $this->createReadyContext('audience_context.json');
 
 		$context->setAttribute('age', 15);
-		$context->getTreatment('exp_test_ab');
+		$treatmentBefore = $context->getTreatment('exp_test_ab');
 
 		$context->publish();
 		$this->eventHandler->submitted = [];
 
 		$context->setAttribute('age', 25);
-		$context->getTreatment('exp_test_ab');
+		$treatmentAfter = $context->getTreatment('exp_test_ab');
+		// exp_test_ab has a non-strict audience, so re-evaluating it after an attribute change keeps the variant.
+		self::assertSame($treatmentBefore, $treatmentAfter);
 
 		$context->publish();
 
@@ -2383,6 +2385,21 @@ class ContextTest extends TestCase {
 
 		$value = $context->customFieldValue('exp_test_ab', 'disabled');
 		self::assertFalse($value);
+	}
+
+	public function testCustomFieldValueLogsErrorOnMalformedJson(): void {
+		$logger = new MockContextEventLoggerProxy();
+		$context = $this->createReadyContext('context_custom_fields.json', true, $logger);
+		foreach ($context->getExperiment('exp_test_ab')->data->customFieldValues as $field) {
+			if ($field->name === 'config') {
+				$field->value = '{not json';
+			}
+		}
+		$logger->clear();
+
+		self::assertNull($context->customFieldValue('exp_test_ab', 'config'));
+		self::assertSame(1, $logger->called);
+		self::assertSame(ContextEventLoggerEvent::Error, $logger->events[0]->getEvent());
 	}
 
 	public function testGetTreatmentQueuesExposureWithAudienceMatchTrueOnAudienceMatch(): void {

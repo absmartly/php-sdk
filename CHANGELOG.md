@@ -35,6 +35,7 @@
 
 ### Compatibility retained
 
+- The entry class is now `ABSmartly\SDK`. `ABSmartly\SDK\SDK` remains available as an alias.
 - ReactPHP is optional for synchronous use; install the suggested packages for async APIs.
 - `ContextEventHandler` remains the base contract for legacy handlers, getters, and setters;
   `ContextPublisher` is an additive subclass.

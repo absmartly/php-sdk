@@ -2,7 +2,7 @@
 
 namespace ABSmartly\SDK\Tests\Http;
 
-use ABSmartly\SDK\ABsmartly;
+use ABSmartly\SDK;
 use ABSmartly\SDK\Client\Client;
 use ABSmartly\SDK\Client\ClientConfig;
 use ABSmartly\SDK\Config;
@@ -86,7 +86,7 @@ class LocalServerIntegrationTest extends TestCase {
 
 		$clientConfig = new ClientConfig($endpoint, 'test-api-key', 'website', 'dev');
 		$client = new Client($clientConfig, new ReactHttpClient());
-		$sdk = new ABsmartly(new Config($client));
+		$sdk = new SDK(new Config($client));
 
 		$contextConfig = new ContextConfig();
 		$contextConfig->setUnit('user_id', '123456789');

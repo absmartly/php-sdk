@@ -21,7 +21,7 @@ class ConfigTest extends TestCase {
 		$handler = new \ABSmartly\SDK\Context\ContextEventHandler($config->getClient());
 		$config->setContextEventHandler($handler);
 		self::assertSame($handler, $config->getContextEventHandler());
-		$sdk = new \ABSmartly\SDK\ABsmartly($config);
+		$sdk = new \ABSmartly\SDK($config);
 		$context = $sdk->createContextWithData(new \ABSmartly\SDK\Context\ContextConfig(), new \ABSmartly\SDK\Context\ContextData([]));
 		self::assertTrue($context->isReady());
 		$publisher = new \ABSmartly\SDK\Context\ContextPublisher($config->getClient());

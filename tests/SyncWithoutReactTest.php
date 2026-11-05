@@ -9,6 +9,10 @@ class SyncWithoutReactTest extends TestCase {
 		$source = <<<'PHP'
 $root = $argv[1];
 spl_autoload_register(function ($class) use ($root) {
+    if ($class === 'ABSmartly\\SDK') {
+        require $root . '/src/SDK.php';
+        return;
+    }
     $prefix = 'ABSmartly\\SDK\\';
     if (strncmp($class, $prefix, strlen($prefix)) === 0) {
         require $root . '/src/' . str_replace('\\', '/', substr($class, strlen($prefix))) . '.php';
@@ -39,10 +43,10 @@ class SyncTransport implements \ABSmartly\SDK\Http\HttpClientInterface {
     }
     public function close(): void {}
 }
-\ABSmartly\SDK\ABsmartly::createSimple('https://example.com', 'key', 'app', 'env')->close();
+\ABSmartly\SDK::createSimple('https://example.com', 'key', 'app', 'env')->close();
 $transport = new SyncTransport();
 $client = new \ABSmartly\SDK\Client\Client(new \ABSmartly\SDK\Client\ClientConfig('https://example.com', 'key', 'app', 'env'), $transport);
-$sdk = new \ABSmartly\SDK\ABsmartly(new \ABSmartly\SDK\Config($client));
+$sdk = new \ABSmartly\SDK(new \ABSmartly\SDK\Config($client));
 $config = (new \ABSmartly\SDK\Context\ContextConfig())->setUnit('user_id', '123');
 $context = $sdk->createContext($config);
 if (!$context->isReady() || $context->isFailed() || $transport->gets !== 1) {

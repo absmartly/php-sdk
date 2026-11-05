@@ -13,10 +13,15 @@ use function curl_init;
 use function curl_setopt;
 use function curl_setopt_array;
 use function curl_strerror;
+use function ceil;
+use function hrtime;
 use function http_build_query;
+use function max;
 use function rtrim;
+use function min;
 use function sprintf;
 use function strpos;
+use function usleep;
 
 use const CURL_SSLVERSION_TLSv1_2;
 use const CURLE_HTTP_RETURNED_ERROR;
@@ -33,6 +38,7 @@ use const CURLOPT_RETURNTRANSFER;
 use const CURLOPT_SSL_VERIFYHOST;
 use const CURLOPT_SSL_VERIFYPEER;
 use const CURLOPT_SSLVERSION;
+use const CURLOPT_TIMEOUT_MS;
 use const CURLOPT_URL;
 use const CURLPROTO_HTTPS;
 
@@ -41,8 +47,19 @@ class HTTPClient implements HttpClientInterface {
 	 * @var CurlHandle|resource
 	 */
 	private $curlHandle;
+	/**
+	 * Number of times a request is retried after a transport error or an HTTP 5xx, 408 or 429 response.
+	 */
 	public int $retries = 5;
+	/**
+	 * Timeout in milliseconds for the complete request, including retries and backoff.
+	 */
 	public int $timeout = 3000;
+
+	private const RETRY_BASE_DELAY_MS = 50;
+	private const RETRY_MAX_DELAY_MS = 1000;
+	// 50ms << 5 already exceeds the 1s cap; capping the shift keeps it from overflowing on large retry counts.
+	private const RETRY_MAX_SHIFT = 5;
 
 	private function setupRequest(string $url, array $query = [], array $headers = [], string $type = 'GET', ?string $data = null): void {
 		$this->curlInit();
@@ -69,50 +86,40 @@ class HTTPClient implements HttpClientInterface {
 		curl_setopt($this->curlHandle, CURLOPT_POSTFIELDS, $data);
 	}
 
+	/**
+	 * Sends the request, retrying transport errors and HTTP 5xx, 408 and 429 responses. $timeout bounds the whole sequence: each
+	 * attempt only gets the time that is left, and no retry starts once the remaining time cannot cover its back-off.
+	 * A $timeout of 0 or less means no limit.
+	 */
 	private function fetchResponse(): Response {
+		$hasDeadline = $this->timeout > 0;
+		$deadline = $this->nowMs() + $this->timeout;
 		$attempt = 0;
-		$lastException = null;
-		$maxAttempts = max(1, $this->retries);
+		while (true) {
+			// cURL treats a timeout of 0 as "no timeout", so never pass less than 1ms when a deadline applies.
+			$attemptTimeout = $hasDeadline ? max(1, (int) ceil($deadline - $this->nowMs())) : 0;
+			$returnedResponse = $this->transfer($attemptTimeout);
 
-		while ($attempt < $maxAttempts) {
-			try {
-				$returnedResponse = curl_exec($this->curlHandle);
-				$this->throwOnError($returnedResponse);
-
-				$response = new Response();
-				$response->content = (string) $returnedResponse;
-				$response->status = (int) curl_getinfo($this->curlHandle, CURLINFO_HTTP_CODE);
-
-				return $response;
+			if ($attempt >= $this->retries || !$this->isRetryable()) {
+				break;
 			}
-			catch (HttpClientError $e) {
-				$lastException = $e;
-				$httpCode = curl_getinfo($this->curlHandle, CURLINFO_HTTP_CODE);
-				$curlError = curl_errno($this->curlHandle);
 
-				$isRetryable = ($curlError !== 0) ||
-					($httpCode >= 500 && $httpCode < 600) ||
-					$httpCode === 408 ||
-					$httpCode === 429;
-
-				if (!$isRetryable || $attempt >= $maxAttempts - 1) {
-					throw $e;
-				}
-
-				$attempt++;
-				$backoffMs = min(1000 * pow(2, $attempt - 1), 10000);
-				error_log(sprintf(
-					'ABsmartly SDK: Retrying HTTP request (attempt %d/%d) after %dms due to error: %s',
-					$attempt,
-					$this->retries,
-					$backoffMs,
-					$e->getMessage()
-				));
-				usleep($backoffMs * 1000);
+			$delay = min(self::RETRY_BASE_DELAY_MS << min($attempt, self::RETRY_MAX_SHIFT), self::RETRY_MAX_DELAY_MS);
+			if ($hasDeadline && $deadline - $this->nowMs() <= $delay) {
+				break;
 			}
+
+			$this->sleepMs($delay);
+			++$attempt;
 		}
 
-		throw $lastException;
+		$this->throwOnError($returnedResponse === false ? null : $returnedResponse);
+
+		$response = new Response();
+		$response->content = (string) $returnedResponse;
+		$response->status = (int) curl_getinfo($this->curlHandle, CURLINFO_HTTP_CODE);
+
+		return $response;
 	}
 
 	public function get(string $url, array $query = [], array $headers = []): Response {
@@ -128,6 +135,33 @@ class HTTPClient implements HttpClientInterface {
 	public function post(string $url, array $query = [], array $headers = [], string $body = ''): Response {
 		$this->setupRequest($url, $query, $headers, 'POST', $body);
 		return $this->fetchResponse();
+	}
+
+	/**
+	 * @return string|false
+	 */
+	protected function transfer(int $timeoutMs) {
+		curl_setopt($this->curlHandle, CURLOPT_CONNECTTIMEOUT_MS, $timeoutMs);
+		curl_setopt($this->curlHandle, CURLOPT_TIMEOUT_MS, $timeoutMs);
+
+		return curl_exec($this->curlHandle);
+	}
+
+	protected function nowMs(): float {
+		return hrtime(true) / 1e6;
+	}
+
+	protected function sleepMs(int $milliseconds): void {
+		usleep($milliseconds * 1000);
+	}
+
+	protected function isRetryable(): bool {
+		if (curl_errno($this->curlHandle) !== 0) {
+			return true;
+		}
+
+		$status = (int) curl_getinfo($this->curlHandle, CURLINFO_HTTP_CODE);
+		return $status >= 500 || $status === 408 || $status === 429;
 	}
 
 	private function throwOnError(?string $responseBody): void {
@@ -164,7 +198,6 @@ class HTTPClient implements HttpClientInterface {
 			CURLOPT_PROTOCOLS => CURLPROTO_HTTPS, // Always use HTTPS, never HTTP
 			CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTPS,
 			CURLOPT_MAXREDIRS => 3,
-			CURLOPT_CONNECTTIMEOUT_MS => $this->timeout,
 			CURLOPT_SSL_VERIFYHOST => 2,
 			CURLOPT_SSL_VERIFYPEER => true,
 			CURLOPT_SSLVERSION => CURL_SSLVERSION_TLSv1_2,
