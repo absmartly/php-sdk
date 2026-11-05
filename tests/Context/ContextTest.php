@@ -2253,15 +2253,21 @@ class ContextTest extends TestCase {
 	}
 
 	/**
-	 * D1: reads after finalize throw, except getExperiments (JS experiments() uses _checkReady() without finalize check).
+	 * Existing metadata and non-exposing variable reads remain usable after close.
 	 * @dataProvider readMethodsProvider
 	 */
-	public function testReadsThrowAfterFinalized(string $method, array $args): void {
+	public function testReadCompatibilityAfterFinalized(string $method, array $args): void {
 		$context = $this->createReadyContext('context_custom_fields.json');
+		$before = null;
+		$legacyRead = in_array($method, ['getExperiments', 'getVariableKeys', 'peekVariableValue', 'customFieldValue'], true);
+		if ($legacyRead) {
+			$before = $context->{$method}(...$args);
+		}
 		$context->close();
 
-		if ($method === 'getExperiments') {
-			self::assertIsArray($context->getExperiments());
+		if ($legacyRead) {
+			self::assertSame($before, $context->{$method}(...$args));
+			self::assertSame(0, $context->getPendingCount());
 			return;
 		}
 

@@ -209,7 +209,7 @@ class Evaluator {
 		return $lhs > $rhsValue ? 1 : -1;
 	}
 
-	protected static function isEqualsDeep($a, $b): bool {
+	protected static function isEqualsDeep($a, $b): ?bool {
 		if (is_object($a)) {
 			$a = get_object_vars($a);
 			if (is_object($b)) {

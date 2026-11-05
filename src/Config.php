@@ -6,12 +6,13 @@ use ABSmartly\SDK\Client\Client;
 use ABSmartly\SDK\Context\AsyncContextDataProvider;
 use ABSmartly\SDK\Context\ContextDataProvider;
 use ABSmartly\SDK\Context\ContextPublisher;
+use ABSmartly\SDK\Context\ContextEventHandler;
 use ABSmartly\SDK\Context\ContextEventLogger;
 
 class Config {
 	private Client $client;
 	private ContextDataProvider $contextDataProvider;
-	private ContextPublisher $contextEventHandler;
+	private ContextEventHandler $contextEventHandler;
 	private ?ContextEventLogger $contextEventLogger = null;
 
 	public function __construct(Client $client) {
@@ -35,8 +36,9 @@ class Config {
 	/**
 	 * @deprecated Use setContextPublisher() instead.
 	 */
-	public function setContextEventHandler(ContextPublisher $contextEventHandler): Config {
-		return $this->setContextPublisher($contextEventHandler);
+	public function setContextEventHandler(ContextEventHandler $contextEventHandler): Config {
+		$this->contextEventHandler = $contextEventHandler;
+		return $this;
 	}
 
 	public function getContextDataProvider(): ContextDataProvider {
@@ -48,7 +50,7 @@ class Config {
 		return $this->contextDataProvider;
 	}
 
-	public function getContextEventHandler(): ContextPublisher {
+	public function getContextEventHandler(): ContextEventHandler {
 		if (!isset($this->contextEventHandler)) {
 			$this->contextEventHandler = new ContextPublisher($this->client);
 		}

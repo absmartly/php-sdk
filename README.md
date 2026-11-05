@@ -12,7 +12,9 @@ The main SDK class has been renamed from `SDK` to `ABsmartly` to standardize nam
 
 ### Migrating to 2.0 (breaking)
 
-Context read methods (`getTreatment`, `peekTreatment`, `getVariableValue`, `peekVariableValue`, `getVariableKeys`, `getExperiments`, `getCustomFieldKeys`, `customFieldValue`, `getCustomFieldValueType`) now throw `ABSmartly\SDK\Exception\LogicException` when the context is not ready (`ABsmartly Context is not yet ready.`) or has been finalized (`ABsmartly Context is finalized.`; `getExperiments` is still allowed after finalize). Previously some of them returned a default value. Check `$context->isReady()` / `$context->isFinalized()` or catch the exception. See [CHANGELOG.md](CHANGELOG.md).
+Context reads now throw `ABSmartly\SDK\Exception\LogicException` before readiness (`ABsmartly Context is not yet ready.`); previously some returned defaults. Check `$context->isReady()` before reading a pending context. Existing non-exposing reads (`peekVariableValue`, `getVariableKeys`, `customFieldValue`, `getExperiments`) remain available after finalization. Treatment/exposing reads still reject finalized contexts.
+
+Numeric units retain their type and floats use cross-SDK integer-rounded hashing. Nonblank string unit IDs retain their original bytes, preserving existing assignments. Failed final publishes now throw and leave the context open for retry. The legacy `SDK`, factory parameter ordering, `ContextEventHandler` contracts, and `PublishEvent::hashUnit(string)` override signature remain supported. ReactPHP is optional for synchronous use. See [CHANGELOG.md](CHANGELOG.md) for the full migration notes and audience/custom-field corrections.
 
 ## Installation
 
@@ -75,7 +77,13 @@ $sdk = new ABsmartly($config);
 
 #### Using Async HTTP Client
 
-For non-blocking operations, you can use the ReactPHP-based async HTTP client:
+For non-blocking operations, you can use the ReactPHP-based async HTTP client. ReactPHP is **not required for synchronous SDK use**. Install these optional dependencies before using `ReactHttpClient` or the async SDK methods:
+
+```bash
+composer require 'react/http:^1.9' 'react/async:^3.0 || ^4.0' 'react/promise:^3.0'
+```
+
+Composer selects a compatible `react/async` version for your PHP runtime (v3 supports PHP 7.4/8.0; v4 requires PHP 8.1+). Even with a synchronous transport, methods such as `createContextAsync()` and `createContextPending()` return ReactPHP promises and require `react/promise`.
 
 ```php
 use ABSmartly\SDK\Client\ClientConfig;

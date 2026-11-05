@@ -32,7 +32,7 @@ class Context {
 
 	private ABsmartly $sdk;
 
-	private ContextPublisher $eventHandler;
+	private ContextEventHandler $eventHandler;
 	private ContextEventLogger $eventLogger;
 	private ContextDataProvider $dataProvider;
 	private VariableParser $variableParser;
@@ -189,7 +189,7 @@ class Context {
 		return $this;
 	}
 
-	private function setEventHandler(ContextPublisher $eventHandler): Context {
+	private function setEventHandler(ContextEventHandler $eventHandler): Context {
 		$this->eventHandler = $eventHandler;
 		return $this;
 	}
@@ -235,14 +235,14 @@ class Context {
 		$this->readyError = $exception;
 	}
 
-	public static function createFromContextConfig(ABsmartly $sdk, ContextConfig $contextConfig, ContextDataProvider $dataProvider, ContextPublisher $handler, ?ContextData $contextData = null): Context {
+	public static function createFromContextConfig(ABsmartly $sdk, ContextConfig $contextConfig, ContextDataProvider $dataProvider, ContextEventHandler $handler, ?ContextData $contextData = null): Context {
 		$context = new Context($sdk, $contextConfig, $dataProvider, $contextData);
 		$context->setEventHandler($handler);
 
 		return $context;
 	}
 
-	public static function createPending(ABsmartly $sdk, ContextConfig $contextConfig, ContextDataProvider $dataProvider, ContextPublisher $handler): Context {
+	public static function createPending(ABsmartly $sdk, ContextConfig $contextConfig, ContextDataProvider $dataProvider, ContextEventHandler $handler): Context {
 		$context = new Context($sdk, $contextConfig, $dataProvider, null, true);
 		$context->setEventHandler($handler);
 
@@ -307,7 +307,7 @@ class Context {
 	}
 
 	public function customFieldValue(string $experimentName, string $fieldName) {
-		$this->checkReady();
+		$this->checkReady(false);
 		$experiment = $this->getExperiment($experimentName);
 		if ($experiment === null || empty($experiment->data->customFieldValues)) {
 			return null;
@@ -510,7 +510,7 @@ class Context {
 	}
 
 	public function getVariableKeys(): array {
-		$this->checkReady();
+		$this->checkReady(false);
 		$return = [];
 		foreach ($this->indexVariables as $variable => $experimentVars) {
 			$return[$variable] = $experimentVars->data->name;
@@ -614,7 +614,7 @@ class Context {
 
 
 	public function peekVariableValue(string $key, $default) {
-		$this->checkReady();
+		$this->checkReady(false);
 		$assignment = $this->getVariableAssignment($key);
 		if ($assignment && isset($assignment->variables->{$key})) {
 			return $assignment->variables->{$key};
@@ -711,8 +711,8 @@ class Context {
 	}
 
 	/**
-	 * Units may be strings or numbers; the value is kept as given, like the
-	 * JavaScript SDK. String UIDs are trimmed.
+	 * Units may be strings or numbers; numeric values retain their type.
+	 * Nonblank string UIDs retain their original bytes for assignment stability.
 	 *
 	 * @param string|int|float $uid
 	 */
@@ -753,8 +753,7 @@ class Context {
 	 */
 	public static function validateUnit(string $unitType, $uid) {
 		if (is_string($uid)) {
-			$uid = trim($uid);
-			if ($uid === '') {
+			if (trim($uid) === '') {
 				throw new InvalidArgumentException(sprintf("Unit '%s' UID must not be blank.", $unitType));
 			}
 			return $uid;

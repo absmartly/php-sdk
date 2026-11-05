@@ -2,17 +2,9 @@
 
 namespace ABSmartly\SDK\Context;
 
-use ABSmartly\SDK\Client\ClientInterface;
-use ABSmartly\SDK\PublishEvent;
-
-class ContextPublisher {
-	private ClientInterface $client;
-
-	public function __construct(ClientInterface $client) {
-		$this->client = $client;
-	}
-
-	public function publish(PublishEvent $event): void {
-		$this->client->publish($event);
-	}
+/**
+ * The publisher name is additive; existing ContextEventHandler implementations
+ * and consumers continue to use the same base contract.
+ */
+class ContextPublisher extends ContextEventHandler {
 }

@@ -10,6 +10,26 @@ use ABSmartly\SDK\Context\ContextEventLoggerCallback;
 use PHPUnit\Framework\TestCase;
 
 class ConfigTest extends TestCase {
+	public function testDefaultPublisherPreservesLegacyHandlerType(): void {
+		$config = $this->createConfig();
+		self::assertInstanceOf(\ABSmartly\SDK\Context\ContextEventHandler::class, $config->getContextEventHandler());
+		self::assertInstanceOf(\ABSmartly\SDK\Context\ContextPublisher::class, $config->getContextEventHandler());
+	}
+
+	public function testLegacyHandlerAndNewPublisherAreBothAccepted(): void {
+		$config = $this->createConfig();
+		$handler = new \ABSmartly\SDK\Context\ContextEventHandler($config->getClient());
+		$config->setContextEventHandler($handler);
+		self::assertSame($handler, $config->getContextEventHandler());
+		$sdk = new \ABSmartly\SDK\ABsmartly($config);
+		$context = $sdk->createContextWithData(new \ABSmartly\SDK\Context\ContextConfig(), new \ABSmartly\SDK\Context\ContextData([]));
+		self::assertTrue($context->isReady());
+		$publisher = new \ABSmartly\SDK\Context\ContextPublisher($config->getClient());
+		$config->setContextPublisher($publisher);
+		self::assertSame($publisher, $config->getContextEventHandler());
+		(new \ABSmartly\SDK\Context\ContextConfig())->setEventHandler($publisher);
+	}
+
 	private function createConfig(): Config {
 		$clientConfig = new ClientConfig('endpoint', 'key', 'app', 'env');
 		$client = new Client($clientConfig);

@@ -18,10 +18,7 @@ class PublishEvent implements JsonSerializable {
 		$this->publishedAt = Context::getTime();
 	}
 
-	/**
-	 * @param string|int|float $unit
-	 */
-	public function hashUnit($unit): string {
+	public function hashUnit(string $unit): string {
 		return Utils::hashUnit($unit);
 	}
 
@@ -30,7 +27,7 @@ class PublishEvent implements JsonSerializable {
 		foreach ($units as $unit => $value) {
 			$unitObject = new stdClass();
 			$unitObject->type = $unit;
-			$unitObject->uid = $this->hashUnit($value);
+			$unitObject->uid = $this->hashUnit(Utils::unitToString($value));
 
 			$this->units[] = $unitObject;
 		}

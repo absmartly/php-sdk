@@ -83,6 +83,19 @@ class ContextConformanceTest extends TestCase {
 		self::assertSame('abc', $context->getUnit('session_id'));
 	}
 
+	public function testNonblankStringUnitsRetainBytesForAssignmentStability(): void {
+		$cfg = new ContextConfig();
+		$cfg->setUnit('user_id', ' 007 ');
+		$context = $this->sdk(new EmptyProvider())->createContext($cfg);
+		self::assertSame(' 007 ', $cfg->getUnit('user_id'));
+		self::assertSame(' 007 ', $context->getUnit('user_id'));
+		$context->setUnit('user_id', ' 007 ');
+		$event = new PublishEvent();
+		$event->setUnits($context->getUnits());
+		self::assertSame(Utils::hashUnit(' 007 '), $event->jsonSerialize()->units[0]->uid);
+		self::assertNotSame(Utils::hashUnit('007'), $event->jsonSerialize()->units[0]->uid);
+	}
+
 	public function testStringUnitThatLooksNumericStaysAString(): void {
 		$context = $this->context();
 		$context->setUnit('user_id', '007');
@@ -94,7 +107,12 @@ class ContextConformanceTest extends TestCase {
 		self::assertSame('BpBZt--EDwx0qBTskje27A', Utils::hashUnit(125.75));
 		self::assertSame('BpBZt--EDwx0qBTskje27A', Utils::hashUnit('126'));
 		self::assertSame('815ubasUW2p7sFI440lKaw', Utils::hashUnit(-0.1));
-		self::assertSame('BpBZt--EDwx0qBTskje27A', (new PublishEvent())->hashUnit(125.75));
+		// The legacy string-only helper retains its contract; setUnits performs
+		// numeric canonicalization before invoking it (including subclass hooks).
+		self::assertSame(Utils::hashUnit('125.75'), (new PublishEvent())->hashUnit('125.75'));
+		$event = new PublishEvent();
+		$event->setUnits(['user_id' => 125.75]);
+		self::assertSame('BpBZt--EDwx0qBTskje27A', $event->jsonSerialize()->units[0]->uid);
 		self::assertNotSame(Utils::hashUnit(125), Utils::hashUnit(125.75));
 	}
 

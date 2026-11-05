@@ -5,7 +5,6 @@ namespace ABSmartly\SDK\JsonExpression\Operator;
 use ABSmartly\SDK\JsonExpression\Evaluator;
 
 use function function_exists;
-use function in_array;
 use function is_array;
 use function is_object;
 use function is_string;
@@ -21,21 +20,29 @@ class InOperator extends BinaryOperator {
 		}
 
 		if (is_array($haystack)) {
-			return in_array($needle, $haystack, true);
+			foreach ($haystack as $item) {
+				if ($evaluator->compare($item, $needle) === 0) {
+					return true;
+				}
+			}
+			return false;
 		}
 
-		if (is_string($haystack)) {
+		if (is_string($haystack) || is_object($haystack)) {
+			$needleString = $evaluator->stringConvert($needle);
+			if ($needleString === null) {
+				return false;
+			}
+			if (is_object($haystack)) {
+				return property_exists($haystack, $needleString);
+			}
 			//@codeCoverageIgnoreStart
 			// due to version-dependent code
 			if (function_exists('str_contains')) {
-				return str_contains($haystack, $needle); // Allows empty strings
+				return str_contains($haystack, $needleString);
 			}
-			return strpos($haystack, $needle) !== false;
+			return strpos($haystack, $needleString) !== false;
 			// @codeCoverageIgnoreEnd
-		}
-
-		if (is_object($haystack)) {
-			return property_exists($haystack, (string) $needle); // Not using isset() to account for possible null values.
 		}
 
 		return null;
