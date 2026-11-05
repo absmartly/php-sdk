@@ -660,6 +660,28 @@ class ContextTest extends TestCase {
 		self::assertSame(1, $context->getPendingCount());
 	}
 
+	public function testGetTreatmentMatchesRegexAudienceAgainstNumericAttribute(): void {
+		$data = json_decode(file_get_contents(__DIR__ . '/../Fixtures/json/audience_strict_context.json'), false, 512, JSON_THROW_ON_ERROR);
+		foreach ($data->experiments as $experiment) {
+			if ($experiment->name === 'exp_test_ab') {
+				$experiment->audience = '{"filter":{"match":[{"var":"age"},{"value":"^2"}]}}';
+			}
+		}
+
+		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', '', '', ''));
+		$config = new Config($client);
+		$config->setContextDataProvider(new ContextDataProviderMock($client));
+		$config->setContextEventHandler(new ContextEventHandlerMock($client));
+		$contextConfig = new ContextConfig();
+		$contextConfig->setUnits($this->units);
+		$context = (new SDK($config))->createContextWithData($contextConfig, new ContextData($data->experiments));
+
+		$context->setAttribute('age', 25);
+		self::assertSame(1, $context->getTreatment('exp_test_ab'));
+
+		$context->setAttribute('age', 35);
+		self::assertSame(0, $context->peekTreatment('exp_test_ab'));
+	}
 
 	public function testGetTreatmentCallsEventLogger(): void {
 		$logger = new MockContextEventLoggerProxy();
@@ -1950,10 +1972,15 @@ class ContextTest extends TestCase {
 			throw new \RuntimeException('Publish failed');
 		};
 
+		$context->getTreatment('exp_test_ab');
 		$context->track('goal1');
+		self::assertSame(2, $context->getPendingCount());
+
 		$context->publish();
 
 		self::assertTrue($context->isFailed());
+		self::assertSame(2, $context->getPendingCount());
+		self::assertEmpty($this->eventHandler->submitted);
 	}
 
 	public function testPublishThrowsAfterFinalized(): void {
@@ -2017,9 +2044,16 @@ class ContextTest extends TestCase {
 		$context = $this->createReadyContext();
 
 		$context->getTreatment('exp_test_ab');
+		$context->track('goal1');
+		self::assertSame(2, $context->getPendingCount());
+
 		$context->close();
 
 		self::assertTrue($context->isClosed());
+		self::assertSame(0, $context->getPendingCount());
+		self::assertCount(1, $this->eventHandler->submitted);
+		self::assertCount(1, $this->eventHandler->submitted[0]->exposures);
+		self::assertCount(1, $this->eventHandler->submitted[0]->goals);
 	}
 
 	public function testOverrideCallableBeforeReady(): void {
