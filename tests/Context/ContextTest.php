@@ -521,6 +521,70 @@ class ContextTest extends TestCase {
 		self::assertEquals($this->variableExperiments, $context->getVariableKeys());
 	}
 
+	// Shared variable keys: ports the JS _resolveVariableValue rule. A key defined by more than one experiment is
+	// resolved by walking the experiments in ascending id order. See tests/Fixtures/json/shared_variables.json.
+
+	public function testSharedKeyBothAssignedLowestIdWins(): void {
+		// (a) exp_low_a (id 1) and exp_high_a (id 2) both define "a.color" and both are assigned; lowest id wins.
+		$context = $this->createReadyContext('shared_variables.json');
+		self::assertSame('low', $context->getVariableValue('a.color', 'def'));
+	}
+
+	public function testSharedKeyPayloadOrderDoesNotChangeLowestIdWins(): void {
+		// (b) In the payload exp_high_a (id 2) is listed before exp_low_a (id 1); still the lowest id wins.
+		$context = $this->createReadyContext('shared_variables.json');
+		self::assertSame('low', $context->peekVariableValue('a.color', 'def'));
+		self::assertSame('low', $context->getVariableValue('a.color', 'def'));
+	}
+
+	public function testSharedKeyFirstUnassignedFallsThroughAndBothExposed(): void {
+		// (c) exp_low_b (id 3, strict audience) is unassigned for age 5, so it falls through to exp_high_b (id 4).
+		// Both experiments are exposed, the first with assigned:false.
+		$context = $this->createReadyContext('shared_variables.json');
+		$context->setAttribute('age', 5);
+
+		self::assertSame('highb', $context->getVariableValue('b.color', 'def'));
+		self::assertSame(2, $context->getPendingCount());
+
+		$context->publish();
+		$event = $this->eventHandler->submitted[0];
+		$byName = [];
+		foreach ($event->exposures as $exposure) {
+			$byName[$exposure->name] = $exposure;
+		}
+		self::assertArrayHasKey('exp_low_b', $byName);
+		self::assertArrayHasKey('exp_high_b', $byName);
+		self::assertFalse($byName['exp_low_b']->assigned);
+		self::assertTrue($byName['exp_high_b']->assigned);
+	}
+
+	public function testSharedKeyFirstUnassignedButOverriddenWins(): void {
+		// (d) exp_low_b is unassigned for age 5, but an override selects its variant 1, so the override wins.
+		$context = $this->createReadyContext('shared_variables.json');
+		$context->setAttribute('age', 5);
+		$context->setOverride('exp_low_b', 1);
+
+		self::assertSame('lowb', $context->getVariableValue('b.color', 'def'));
+	}
+
+	public function testSharedKeyAssignedVariantLacksKeyFallsThrough(): void {
+		// (e) exp_low_c (id 5) is assigned a variant whose config lacks "c.color", so it falls through to
+		// exp_high_c (id 6).
+		$context = $this->createReadyContext('shared_variables.json');
+		self::assertSame('highc', $context->getVariableValue('c.color', 'def'));
+	}
+
+	public function testSharedKeyPeekReturnsSameValueAndQueuesNothing(): void {
+		// (f) peek returns the same values as get but queues no exposures.
+		$context = $this->createReadyContext('shared_variables.json');
+		$context->setAttribute('age', 5);
+
+		self::assertSame('low', $context->peekVariableValue('a.color', 'def'));
+		self::assertSame('highb', $context->peekVariableValue('b.color', 'def'));
+		self::assertSame('highc', $context->peekVariableValue('c.color', 'def'));
+		self::assertSame(0, $context->getPendingCount());
+	}
+
 	public function testPeekTreatmentReturnsOverrideVariant(): void {
 		$context = $this->createReadyContext();
 

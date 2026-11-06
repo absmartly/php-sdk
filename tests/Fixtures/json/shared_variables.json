@@ -1,0 +1,120 @@
+{
+    "experiments": [
+        {
+            "id": 2,
+            "name": "exp_high_a",
+            "iteration": 1,
+            "unitType": "session_id",
+            "seedHi": 11,
+            "seedLo": 22,
+            "split": [1.0],
+            "trafficSeedHi": 1,
+            "trafficSeedLo": 2,
+            "trafficSplit": [0.0, 1.0],
+            "fullOnVariant": 1,
+            "applications": [{"name": "website"}],
+            "variants": [
+                {"name": "A", "config": null},
+                {"name": "B", "config": "{\"a.color\":\"high\"}"}
+            ],
+            "audience": null
+        },
+        {
+            "id": 1,
+            "name": "exp_low_a",
+            "iteration": 1,
+            "unitType": "session_id",
+            "seedHi": 33,
+            "seedLo": 44,
+            "split": [1.0],
+            "trafficSeedHi": 3,
+            "trafficSeedLo": 4,
+            "trafficSplit": [0.0, 1.0],
+            "fullOnVariant": 1,
+            "applications": [{"name": "website"}],
+            "variants": [
+                {"name": "A", "config": null},
+                {"name": "B", "config": "{\"a.color\":\"low\"}"}
+            ],
+            "audience": null
+        },
+        {
+            "id": 3,
+            "name": "exp_low_b",
+            "iteration": 1,
+            "unitType": "session_id",
+            "seedHi": 55,
+            "seedLo": 66,
+            "split": [0.5, 0.5],
+            "trafficSeedHi": 5,
+            "trafficSeedLo": 6,
+            "trafficSplit": [0.0, 1.0],
+            "fullOnVariant": 0,
+            "applications": [{"name": "website"}],
+            "variants": [
+                {"name": "A", "config": null},
+                {"name": "B", "config": "{\"b.color\":\"lowb\"}"}
+            ],
+            "audienceStrict": true,
+            "audience": "{\"filter\":[{\"gte\":[{\"var\":\"age\"},{\"value\":100}]}]}"
+        },
+        {
+            "id": 4,
+            "name": "exp_high_b",
+            "iteration": 1,
+            "unitType": "session_id",
+            "seedHi": 77,
+            "seedLo": 88,
+            "split": [1.0],
+            "trafficSeedHi": 7,
+            "trafficSeedLo": 8,
+            "trafficSplit": [0.0, 1.0],
+            "fullOnVariant": 1,
+            "applications": [{"name": "website"}],
+            "variants": [
+                {"name": "A", "config": null},
+                {"name": "B", "config": "{\"b.color\":\"highb\"}"}
+            ],
+            "audience": null
+        },
+        {
+            "id": 5,
+            "name": "exp_low_c",
+            "iteration": 1,
+            "unitType": "session_id",
+            "seedHi": 99,
+            "seedLo": 111,
+            "split": [0.34, 0.33, 0.33],
+            "trafficSeedHi": 9,
+            "trafficSeedLo": 10,
+            "trafficSplit": [0.0, 1.0],
+            "fullOnVariant": 2,
+            "applications": [{"name": "website"}],
+            "variants": [
+                {"name": "A", "config": null},
+                {"name": "B", "config": "{\"c.color\":\"lowc\"}"},
+                {"name": "C", "config": null}
+            ],
+            "audience": null
+        },
+        {
+            "id": 6,
+            "name": "exp_high_c",
+            "iteration": 1,
+            "unitType": "session_id",
+            "seedHi": 222,
+            "seedLo": 333,
+            "split": [1.0],
+            "trafficSeedHi": 11,
+            "trafficSeedLo": 12,
+            "trafficSplit": [0.0, 1.0],
+            "fullOnVariant": 1,
+            "applications": [{"name": "website"}],
+            "variants": [
+                {"name": "A", "config": null},
+                {"name": "B", "config": "{\"c.color\":\"highc\"}"}
+            ],
+            "audience": null
+        }
+    ]
+}

@@ -21,6 +21,7 @@ use JsonException;
 use Throwable;
 
 use function array_slice;
+use function array_splice;
 use function count;
 use function get_object_vars;
 use function gettype;
@@ -229,13 +230,41 @@ class Context {
 				}
 
 				foreach (get_object_vars($parsed) as $key => $val) {
-					$this->indexVariables[$key] = $experimentVariables;
+					$this->addVariableExperiment($key, $experimentVariables);
 				}
 				$experimentVariables->variables[] = $parsed;
 			}
 
 			$this->index[$experiment->name] = $experimentVariables;
 		}
+	}
+
+	/**
+	 * Indexes $experimentVariables under $key, keeping the per-key list sorted and unique by experiment id, as the
+	 * JS SDK's _resolveVariableValue does (insertUniqueSorted by data->id).
+	 */
+	private function addVariableExperiment(string $key, ExperimentVariables $experimentVariables): void {
+		if (!isset($this->indexVariables[$key])) {
+			$this->indexVariables[$key] = [$experimentVariables];
+			return;
+		}
+
+		$list = $this->indexVariables[$key];
+		$id = $experimentVariables->data->id;
+		$insertAt = count($list);
+		foreach ($list as $i => $existing) {
+			if ($existing->data->id === $id) {
+				// Already present: keep a single entry per experiment id.
+				return;
+			}
+			if ($id < $existing->data->id) {
+				$insertAt = $i;
+				break;
+			}
+		}
+
+		array_splice($list, $insertAt, 0, [$experimentVariables]);
+		$this->indexVariables[$key] = $list;
 	}
 
 	private function setDataFailed(?Throwable $exception = null): void {
@@ -504,30 +533,46 @@ class Context {
 
 	public function getVariableValue(string $key, $defaultValue = null) {
 		$this->checkReady();
-		$assignment = $this->getVariableAssignment($key);
+		return $this->resolveVariableValue($key, $defaultValue, true);
+	}
 
-		if ($assignment === null) {
-			return $defaultValue;
+	public function peekVariableValue(string $key, $default) {
+		$this->checkReady(false);
+		return $this->resolveVariableValue($key, $default, false);
+	}
+
+	/**
+	 * Ports the JS SDK `_resolveVariableValue`: walks the experiments that define $key in ascending id order. For
+	 * each one it computes the assignment; when the variant has variables, getVariableValue (not peek) queues the
+	 * exposure the first time, and if $key is present and the unit is assigned or overridden it returns that value.
+	 * Otherwise it falls through to the next experiment, and finally to $default.
+	 */
+	private function resolveVariableValue(string $key, $default, bool $exposeAssignments) {
+		$experiments = $this->indexVariables[$key] ?? [];
+
+		foreach ($experiments as $experimentVariables) {
+			$assignment = $this->getAssignment($experimentVariables->data->name);
+
+			if ($assignment->variables !== null) {
+				if ($exposeAssignments && empty($assignment->exposed)) {
+					$this->queueExposure($assignment);
+				}
+
+				if (isset($assignment->variables->{$key}) && ($assignment->assigned || $assignment->overridden)) {
+					return $assignment->variables->{$key};
+				}
+			}
 		}
 
-		if ($assignment->variables !== null) {
-			if (empty($assignment->exposed)) {
-				$this->queueExposure($assignment);
-			}
-
-			if (isset($assignment->variables->{$key}) && ($assignment->assigned || $assignment->overridden)) {
-				return $assignment->variables->{$key};
-			}
-		}
-
-		return $defaultValue;
+		return $default;
 	}
 
 	public function getVariableKeys(): array {
 		$this->checkReady(false);
 		$return = [];
-		foreach ($this->indexVariables as $variable => $experimentVars) {
-			$return[$variable] = $experimentVars->data->name;
+		foreach ($this->indexVariables as $variable => $experiments) {
+			// Keep the single-name shape for compatibility: the lowest-id experiment (first in the sorted list).
+			$return[$variable] = $experiments[0]->data->name;
 		}
 
 		return $return;
@@ -623,29 +668,6 @@ class Context {
 		$this->eventLogger->handleEvent($this, new ContextEventLoggerEvent(ContextEventLoggerEvent::Error, $throwable));
 	}
 
-
-	public function peekVariableValue(string $key, $default) {
-		$this->checkReady(false);
-		$assignment = $this->getVariableAssignment($key);
-		if ($assignment && isset($assignment->variables->{$key})) {
-			return $assignment->variables->{$key};
-		}
-
-		return $default;
-	}
-
-	private function getVariableAssignment(string $key): ?Assignment {
-		$experiment = $this->getVariableExperiment($key);
-		if (!$experiment) {
-			return null;
-		}
-
-		return $this->getAssignment($experiment->data->name);
-	}
-
-	private function getVariableExperiment(string $experimentName): ?ExperimentVariables {
-		return $this->indexVariables[$experimentName] ?? null;
-	}
 
 	public function getContextData(): ContextData {
 		return $this->data;
