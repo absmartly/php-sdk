@@ -8,6 +8,7 @@ use function preg_last_error;
 use function preg_match;
 use function rtrim;
 use function strlen;
+use function strpos;
 use function trim;
 
 use const PREG_NO_ERROR;
@@ -42,7 +43,12 @@ class MatchOperator extends BinaryOperator {
 			$pattern = trim($pattern, '/');
 		}
 
-		$matches = @preg_match('~' . self::escapeDelimiter($pattern) . '~' . $flags, $text);
+		$delimiter = self::unusedDelimiter($pattern);
+		if ($delimiter === null) {
+			return null;
+		}
+
+		$matches = @preg_match($delimiter . $pattern . $delimiter . $flags, $text);
 
 		if (preg_last_error() !== PREG_NO_ERROR || $matches === false) {
 			return null;
@@ -51,34 +57,18 @@ class MatchOperator extends BinaryOperator {
 		return $matches === 1;
 	}
 
-	private static function escapeDelimiter(string $pattern): string {
-		// PHP ends the pattern at the first unescaped "~" even inside \Q...\E, but a backslash there would
-		// become part of the literal, so close the quote around the escaped delimiter and reopen it.
-		$escaped = '';
-		$quoted = false;
-		$length = strlen($pattern);
+	private static function unusedDelimiter(string $pattern): ?string {
+		// Escaping a delimiter that occurs in the pattern would mean re-implementing PCRE tokenization
+		// (\Q...\E, comments, extended mode), so use a byte the pattern does not contain and pass it through untouched.
+		// Bracket-style delimiters are excluded because PHP pairs them with a different closing character.
+		$candidates = '~#%@!,;`=' . "\x01\x02\x03\x04\x05\x06\x07\x08\x0E\x0F\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1A\x1B\x1C\x1D\x1E\x1F\x7F";
+		$length = strlen($candidates);
 		for ($i = 0; $i < $length; ++$i) {
-			$char = $pattern[$i];
-			if ($char === '~') {
-				$escaped .= $quoted ? '\\E\\~\\Q' : '\\~';
-			}
-			elseif ($char === '\\' && $i + 1 < $length) {
-				$next = $pattern[$i + 1];
-				// Inside \Q...\E only \E is special; any other backslash is a literal on its own.
-				if (!$quoted || $next === 'E') {
-					$quoted = !$quoted ? $next === 'Q' : false;
-					$escaped .= $char . $next;
-					++$i;
-				}
-				else {
-					$escaped .= $char;
-				}
-			}
-			else {
-				$escaped .= $char;
+			if (strpos($pattern, $candidates[$i]) === false) {
+				return $candidates[$i];
 			}
 		}
 
-		return $escaped;
+		return null;
 	}
 }

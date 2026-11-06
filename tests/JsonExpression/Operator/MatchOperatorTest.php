@@ -70,6 +70,27 @@ class MatchOperatorTest extends TestCase {
 		self::assertTrue($this->operator->evaluate($this->evaluator, ["a\\~", "^\\Qa\\\\E~$"]));
 	}
 
+	public function testDelimiterCharacterAfterQuoteLikeSequenceInComment(): void {
+		// PCRE ignores \Q inside comments, so the rest of the pattern stays regex syntax.
+		self::assertTrue($this->operator->evaluate($this->evaluator, ["foo~barrr", "(?#\\Q)^foo~bar+$"]));
+		self::assertFalse($this->operator->evaluate($this->evaluator, ["foo~bar+$", "(?#\\Q)^foo~bar+$"]));
+		self::assertTrue($this->operator->evaluate($this->evaluator, ["foo~barrr", "(?x)# \\Q\n^foo~bar+$"]));
+		self::assertFalse($this->operator->evaluate($this->evaluator, ["foo~bar+$", "(?x)# \\Q\n^foo~bar+$"]));
+		self::assertTrue($this->operator->evaluate($this->evaluator, ["foo~barrr", "/# \\Q\n^foo~bar+$/x"]));
+	}
+
+	public function testDelimiterCharacterInCharacterClass(): void {
+		self::assertTrue($this->operator->evaluate($this->evaluator, ["a~b", "^a[~]b$"]));
+		self::assertTrue($this->operator->evaluate($this->evaluator, ["a\\b", "^a[~\\\\]b$"]));
+		self::assertFalse($this->operator->evaluate($this->evaluator, ["axb", "^a[~]b$"]));
+		self::assertTrue($this->operator->evaluate($this->evaluator, ["a#b", "^a[#~%@]b$"]));
+	}
+
+	public function testPatternUsingEveryCommonDelimiterCharacter(): void {
+		self::assertTrue($this->operator->evaluate($this->evaluator, ["~#%@!,;`=", "^~#%@!,;`=$"]));
+		self::assertFalse($this->operator->evaluate($this->evaluator, ["~#%@!,;`", "^~#%@!,;`=$"]));
+	}
+
 	public function testEscapedClosingSlashIsNotADelimiter(): void {
 		self::assertTrue($this->operator->evaluate($this->evaluator, ["foo/i", "/foo\\/i"]));
 		self::assertFalse($this->operator->evaluate($this->evaluator, ["FOO", "/foo\\/i"]));
