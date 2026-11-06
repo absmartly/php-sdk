@@ -40,8 +40,8 @@ class ReactHttpClient implements AsyncHttpClientInterface {
 
 	public function getAsync(string $url, array $query = [], array $headers = []): PromiseInterface {
 		$url = $this->buildUrl($url, $query);
-		return $this->withRetries(fn() => $this->browser
-			->withTimeout($this->timeoutSeconds())
+		return $this->withRetries(fn(float $timeoutSeconds) => $this->browser
+			->withTimeout($timeoutSeconds)
 			->get($url, $headers)
 			->then(fn($response) => $this->toResponse($response)));
 	}
@@ -49,18 +49,18 @@ class ReactHttpClient implements AsyncHttpClientInterface {
 	public function putAsync(string $url, array $query = [], array $headers = [], string $body = ''): PromiseInterface {
 		$url = $this->buildUrl($url, $query);
 		// Sent once: replaying a publish after a lost response could record the same events twice.
-		return $this->browser
-			->withTimeout($this->timeoutSeconds())
+		return $this->singleAttempt(fn(float $timeoutSeconds) => $this->browser
+			->withTimeout($timeoutSeconds)
 			->put($url, $headers, $body)
-			->then(fn($response) => $this->toResponse($response));
+			->then(fn($response) => $this->toResponse($response)));
 	}
 
 	public function postAsync(string $url, array $query = [], array $headers = [], string $body = ''): PromiseInterface {
 		$url = $this->buildUrl($url, $query);
-		return $this->browser
-			->withTimeout($this->timeoutSeconds())
+		return $this->singleAttempt(fn(float $timeoutSeconds) => $this->browser
+			->withTimeout($timeoutSeconds)
 			->post($url, $headers, $body)
-			->then(fn($response) => $this->toResponse($response));
+			->then(fn($response) => $this->toResponse($response)));
 	}
 
 	public function get(string $url, array $query = [], array $headers = []): Response {
@@ -76,10 +76,21 @@ class ReactHttpClient implements AsyncHttpClientInterface {
 	}
 
 	/**
-	 * A $timeout of 0 or less means no limit, as in HTTPClient; React's Browser takes a negative timeout as "none".
+	 * The timeout (in seconds) to apply to a single attempt. The per-attempt $timeout bounds each request as in
+	 * HTTPClient (0 or less means no per-attempt limit; React's Browser takes a negative timeout as "none"). When a
+	 * total budget ($totalTimeout) is set, the current attempt is additionally bounded by the time remaining before
+	 * the deadline, so a slow attempt cannot run past the budget.
 	 */
-	private function timeoutSeconds(): float {
-		return $this->timeout > 0 ? $this->timeout / 1000 : -1;
+	private function effectiveTimeoutSeconds(bool $hasDeadline, float $deadline): float {
+		$perAttempt = $this->timeout > 0 ? $this->timeout / 1000 : -1.0;
+		if (!$hasDeadline) {
+			return $perAttempt;
+		}
+		$remaining = ($deadline - $this->nowMs()) / 1000;
+		if ($remaining < 0) {
+			$remaining = 0.0;
+		}
+		return $perAttempt < 0 ? $remaining : min($perAttempt, $remaining);
 	}
 
 	private function nowMs(): float {
@@ -87,11 +98,79 @@ class ReactHttpClient implements AsyncHttpClientInterface {
 	}
 
 	/**
+	 * Runs a request once, bounding it by the per-attempt $timeout and, when a total budget ($totalTimeout) is set,
+	 * by the remaining budget. A deadline watchdog rejects and cancels the in-flight request if it has not settled by
+	 * the deadline, so single-attempt methods (PUT/POST) honour the total budget too.
+	 *
+	 * @param callable(float): PromiseInterface $request
+	 */
+	private function singleAttempt(callable $request): PromiseInterface {
+		$hasDeadline = $this->totalTimeout > 0;
+		$deadline = $this->nowMs() + $this->totalTimeout;
+		$current = null;
+		$deadlineTimer = null;
+		$cancelled = false;
+
+		return new Promise(
+			function($resolve, $reject) use ($request, $hasDeadline, $deadline, &$current, &$deadlineTimer, &$cancelled) {
+				$clear = function() use (&$deadlineTimer) {
+					if ($deadlineTimer !== null) {
+						Loop::cancelTimer($deadlineTimer);
+						$deadlineTimer = null;
+					}
+				};
+				if ($hasDeadline) {
+					$remaining = ($deadline - $this->nowMs()) / 1000;
+					$deadlineTimer = Loop::addTimer(max(0, $remaining), function() use (&$current, &$cancelled, $reject) {
+						if ($cancelled) {
+							return;
+						}
+						$cancelled = true;
+						if ($current !== null) {
+							$current->cancel();
+						}
+						$reject(new \RuntimeException('HTTP request exceeded total timeout'));
+					});
+				}
+				$current = $request($this->effectiveTimeoutSeconds($hasDeadline, $deadline));
+				$current->then(
+					function($response) use ($resolve, $clear, &$cancelled) {
+						if ($cancelled) {
+							return;
+						}
+						$clear();
+						$resolve($response);
+					},
+					function($error) use ($reject, $clear, &$cancelled) {
+						if ($cancelled) {
+							return;
+						}
+						$clear();
+						$reject($error);
+					}
+				);
+			},
+			function() use (&$current, &$deadlineTimer, &$cancelled) {
+				$cancelled = true;
+				if ($deadlineTimer !== null) {
+					Loop::cancelTimer($deadlineTimer);
+					$deadlineTimer = null;
+				}
+				if ($current !== null) {
+					$current->cancel();
+				}
+				throw new \RuntimeException('HTTP request cancelled');
+			}
+		);
+	}
+
+	/**
 	 * Runs a GET, retrying transport errors and HTTP 5xx, 408 and 429 responses up to $retries times after the first
 	 * attempt, as HTTPClient does. When a total budget ($totalTimeout) is set, it bounds the whole sequence: no retry
-	 * starts once the remaining time cannot cover its back-off. The per-attempt $timeout always applies.
+	 * starts once the remaining time cannot cover its back-off, each attempt is bounded by the remaining budget, and a
+	 * watchdog rejects and cancels an in-flight attempt at the deadline. The per-attempt $timeout always applies.
 	 *
-	 * @param callable(): PromiseInterface $request
+	 * @param callable(float): PromiseInterface $request
 	 */
 	private function withRetries(callable $request): PromiseInterface {
 		$maxAttempts = 1 + max(0, $this->retries);
@@ -99,45 +178,83 @@ class ReactHttpClient implements AsyncHttpClientInterface {
 		$deadline = $this->nowMs() + $this->totalTimeout;
 		$current = null;
 		$timer = null;
+		$deadlineTimer = null;
 		$cancelled = false;
 
 		return new Promise(
-			function($resolve, $reject) use ($request, $maxAttempts, $hasDeadline, $deadline, &$current, &$timer, &$cancelled) {
-				$attempt = function(int $n) use (&$attempt, $request, $maxAttempts, $hasDeadline, $deadline, $resolve, $reject, &$current, &$timer, &$cancelled) {
-					if ($cancelled) {
-						return;
+			function($resolve, $reject) use ($request, $maxAttempts, $hasDeadline, $deadline, &$current, &$timer, &$deadlineTimer, &$cancelled) {
+				$clearDeadline = function() use (&$deadlineTimer) {
+					if ($deadlineTimer !== null) {
+						Loop::cancelTimer($deadlineTimer);
+						$deadlineTimer = null;
 					}
-					$current = $request();
-					$current->then($resolve, function($error) use (&$attempt, $n, $maxAttempts, $hasDeadline, $deadline, $reject, &$timer, &$cancelled) {
+				};
+				if ($hasDeadline) {
+					$remaining = ($deadline - $this->nowMs()) / 1000;
+					$deadlineTimer = Loop::addTimer(max(0, $remaining), function() use (&$current, &$timer, &$cancelled, $reject) {
 						if ($cancelled) {
 							return;
 						}
-						$backoffMs = min(1000 * pow(2, $n), 10000);
-						$outOfTime = $hasDeadline && $this->nowMs() + $backoffMs >= $deadline;
-						if (!$this->isRetryable($error) || $n + 1 >= $maxAttempts || $outOfTime) {
-							$reject($error);
-							return;
-						}
-						error_log(sprintf(
-							'ABsmartly SDK: Retrying HTTP request (attempt %d/%d) after %dms due to error: %s',
-							$n + 1,
-							$maxAttempts,
-							$backoffMs,
-							$error->getMessage()
-						));
-						$timer = Loop::addTimer($backoffMs / 1000, function() use (&$attempt, $n, &$timer) {
+						$cancelled = true;
+						if ($timer !== null) {
+							Loop::cancelTimer($timer);
 							$timer = null;
-							$attempt($n + 1);
-						});
+						}
+						if ($current !== null) {
+							$current->cancel();
+						}
+						$reject(new \RuntimeException('HTTP request exceeded total timeout'));
 					});
+				}
+				$attempt = function(int $n) use (&$attempt, $request, $maxAttempts, $hasDeadline, $deadline, $resolve, $reject, $clearDeadline, &$current, &$timer, &$cancelled) {
+					if ($cancelled) {
+						return;
+					}
+					$current = $request($this->effectiveTimeoutSeconds($hasDeadline, $deadline));
+					$current->then(
+						function($response) use ($resolve, $clearDeadline, &$cancelled) {
+							if ($cancelled) {
+								return;
+							}
+							$clearDeadline();
+							$resolve($response);
+						},
+						function($error) use (&$attempt, $n, $maxAttempts, $hasDeadline, $deadline, $reject, $clearDeadline, &$timer, &$cancelled) {
+							if ($cancelled) {
+								return;
+							}
+							$backoffMs = min(1000 * pow(2, $n), 10000);
+							$outOfTime = $hasDeadline && $this->nowMs() + $backoffMs >= $deadline;
+							if (!$this->isRetryable($error) || $n + 1 >= $maxAttempts || $outOfTime) {
+								$clearDeadline();
+								$reject($error);
+								return;
+							}
+							error_log(sprintf(
+								'ABsmartly SDK: Retrying HTTP request (attempt %d/%d) after %dms due to error: %s',
+								$n + 1,
+								$maxAttempts,
+								$backoffMs,
+								$error->getMessage()
+							));
+							$timer = Loop::addTimer($backoffMs / 1000, function() use (&$attempt, $n, &$timer) {
+								$timer = null;
+								$attempt($n + 1);
+							});
+						}
+					);
 				};
 				$attempt(0);
 			},
-			function() use (&$current, &$timer, &$cancelled) {
+			function() use (&$current, &$timer, &$deadlineTimer, &$cancelled) {
 				$cancelled = true;
 				if ($timer !== null) {
 					Loop::cancelTimer($timer);
 					$timer = null;
+				}
+				if ($deadlineTimer !== null) {
+					Loop::cancelTimer($deadlineTimer);
+					$deadlineTimer = null;
 				}
 				if ($current !== null) {
 					$current->cancel();

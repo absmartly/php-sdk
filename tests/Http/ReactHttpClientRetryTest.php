@@ -4,8 +4,10 @@ namespace ABSmartly\SDK\Tests\Http;
 
 use ABSmartly\SDK\Http\ReactHttpClient;
 use PHPUnit\Framework\TestCase;
+use React\EventLoop\Loop;
 use React\Http\Browser;
 use React\Http\Message\Response as ReactResponse;
+use React\Promise\Deferred;
 
 use function React\Promise\reject;
 use function React\Promise\resolve;
@@ -114,5 +116,91 @@ class ReactHttpClientRetryTest extends TestCase {
 		\React\EventLoop\Loop::run();
 
 		self::assertInstanceOf(\RuntimeException::class, $error);
+	}
+
+	/**
+	 * A browser whose $method returns a promise that resolves only after $delaySeconds on the event loop, letting a
+	 * test observe whether totalTimeout aborts an in-flight (slow but otherwise successful) request.
+	 */
+	private function slowBrowser(string $method, float $delaySeconds): Browser {
+		$browser = $this->createMock(Browser::class);
+		$browser->method('withTimeout')->willReturnSelf();
+		$browser->expects(self::once())->method($method)->willReturnCallback(
+			function() use ($delaySeconds) {
+				$deferred = new Deferred();
+				Loop::addTimer($delaySeconds, function() use ($deferred) {
+					$deferred->resolve(new ReactResponse(200, [], 'ok'));
+				});
+				return $deferred->promise();
+			}
+		);
+		return $browser;
+	}
+
+	public function testTotalTimeoutAbortsSlowSuccessfulGet(): void {
+		// A 200ms successful GET must be aborted when totalTimeout is 50ms: the active attempt, not only the
+		// post-rejection back-off, is bounded by the remaining budget.
+		$client = new ReactHttpClient($this->slowBrowser('get', 0.2));
+		$client->retries = 0;
+		$client->totalTimeout = 50;
+
+		$result = null;
+		$error = null;
+		$client->getAsync('http://x')->then(
+			function($r) use (&$result) { $result = $r; },
+			function($e) use (&$error) { $error = $e; }
+		);
+		Loop::addTimer(0.5, fn() => Loop::stop());
+		Loop::run();
+
+		self::assertNull($result);
+		self::assertInstanceOf(\RuntimeException::class, $error);
+		self::assertStringContainsString('total timeout', $error->getMessage());
+	}
+
+	public function testTotalTimeoutAbortsSlowSuccessfulPut(): void {
+		// Single-attempt PUT must honour totalTimeout too: a 200ms success is aborted at the 50ms deadline.
+		$client = new ReactHttpClient($this->slowBrowser('put', 0.2));
+		$client->totalTimeout = 50;
+
+		$result = null;
+		$error = null;
+		$client->putAsync('http://x', [], [], '{}')->then(
+			function($r) use (&$result) { $result = $r; },
+			function($e) use (&$error) { $error = $e; }
+		);
+		Loop::addTimer(0.5, fn() => Loop::stop());
+		Loop::run();
+
+		self::assertNull($result);
+		self::assertInstanceOf(\RuntimeException::class, $error);
+		self::assertStringContainsString('total timeout', $error->getMessage());
+	}
+
+	public function testSlowSuccessfulGetWithinTotalTimeoutResolves(): void {
+		// With a generous budget the same slow success resolves normally; the deadline watchdog does not fire early.
+		$client = new ReactHttpClient($this->slowBrowser('get', 0.1));
+		$client->retries = 0;
+		$client->totalTimeout = 1000;
+
+		$result = null;
+		$client->getAsync('http://x')->then(function($r) use (&$result) { $result = $r; });
+		Loop::run();
+
+		self::assertNotNull($result);
+		self::assertSame('ok', $result->content);
+	}
+
+	public function testPutWithinTotalTimeoutResolves(): void {
+		// A PUT that completes before the deadline resolves normally and is sent exactly once.
+		$client = new ReactHttpClient($this->slowBrowser('put', 0.05));
+		$client->totalTimeout = 1000;
+
+		$result = null;
+		$client->putAsync('http://x', [], [], '{}')->then(function($r) use (&$result) { $result = $r; });
+		Loop::run();
+
+		self::assertNotNull($result);
+		self::assertSame('ok', $result->content);
 	}
 }
