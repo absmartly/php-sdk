@@ -121,7 +121,6 @@ class LocalServerIntegrationTest extends TestCase {
 		self::assertNotNull($put, 'expected a PUT /context');
 		self::assertSame('/context', $put['path']);
 
-		// --- headers (server lowercases header names) ---
 		$h = $put['headers'];
 		self::assertSame('test-api-key', $h['x-api-key'] ?? null);
 		self::assertSame('website', $h['x-application'] ?? null);

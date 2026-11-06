@@ -106,7 +106,6 @@ class Context {
 					continue;
 				}
 
-				// customFieldValues is the collector's array of {name,type,value} objects.
 				foreach ($experiment->customFieldValues as $field) {
 					if (isset($field->name)) {
 						$keys[$field->name] = true;
