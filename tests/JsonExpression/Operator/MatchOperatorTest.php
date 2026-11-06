@@ -55,6 +55,21 @@ class MatchOperatorTest extends TestCase {
 		self::assertFalse($this->operator->evaluate($this->evaluator, ["foobar", "foo~bar"]));
 	}
 
+	public function testDelimiterCharacterInsideQuotedLiteral(): void {
+		self::assertTrue($this->operator->evaluate($this->evaluator, ["foo~bar", "\\Qfoo~bar\\E"]));
+		self::assertFalse($this->operator->evaluate($this->evaluator, ["foo\\~bar", "^\\Qfoo~bar\\E$"]));
+		self::assertTrue($this->operator->evaluate($this->evaluator, ["a.b~c", "^\\Qa.b~c\\E$"]));
+		self::assertFalse($this->operator->evaluate($this->evaluator, ["axb~c", "^\\Qa.b~c\\E$"]));
+		self::assertTrue($this->operator->evaluate($this->evaluator, ["foo~bar", "/^\\Qfoo~\\Ebar$/"]));
+		self::assertTrue($this->operator->evaluate($this->evaluator, ["x~y~z", "^x~\\Qy~\\Ez$"]));
+		// An unterminated quote runs to the end of the pattern.
+		self::assertTrue($this->operator->evaluate($this->evaluator, ["a~b*", "^\\Qa~b*"]));
+		// Inside a quote a backslash is literal, so \~ there matches a backslash followed by "~".
+		self::assertTrue($this->operator->evaluate($this->evaluator, ["a\\~b", "^\\Qa\\~b\\E$"]));
+		// \E ends the quote even right after a literal backslash.
+		self::assertTrue($this->operator->evaluate($this->evaluator, ["a\\~", "^\\Qa\\\\E~$"]));
+	}
+
 	public function testEscapedClosingSlashIsNotADelimiter(): void {
 		self::assertTrue($this->operator->evaluate($this->evaluator, ["foo/i", "/foo\\/i"]));
 		self::assertFalse($this->operator->evaluate($this->evaluator, ["FOO", "/foo\\/i"]));

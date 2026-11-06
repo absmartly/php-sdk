@@ -6,7 +6,6 @@ use ABSmartly\SDK\JsonExpression\Evaluator;
 
 use function preg_last_error;
 use function preg_match;
-use function preg_replace;
 use function rtrim;
 use function strlen;
 use function trim;
@@ -43,14 +42,43 @@ class MatchOperator extends BinaryOperator {
 			$pattern = trim($pattern, '/');
 		}
 
-		$pattern = preg_replace('/(?<!\\\\)((?:\\\\\\\\)*)~/', '$1\\~', $pattern);
-
-		$matches = @preg_match('~' . $pattern . '~' . $flags, $text);
+		$matches = @preg_match('~' . self::escapeDelimiter($pattern) . '~' . $flags, $text);
 
 		if (preg_last_error() !== PREG_NO_ERROR || $matches === false) {
 			return null;
 		}
 
 		return $matches === 1;
+	}
+
+	private static function escapeDelimiter(string $pattern): string {
+		// PHP ends the pattern at the first unescaped "~" even inside \Q...\E, but a backslash there would
+		// become part of the literal, so close the quote around the escaped delimiter and reopen it.
+		$escaped = '';
+		$quoted = false;
+		$length = strlen($pattern);
+		for ($i = 0; $i < $length; ++$i) {
+			$char = $pattern[$i];
+			if ($char === '~') {
+				$escaped .= $quoted ? '\\E\\~\\Q' : '\\~';
+			}
+			elseif ($char === '\\' && $i + 1 < $length) {
+				$next = $pattern[$i + 1];
+				// Inside \Q...\E only \E is special; any other backslash is a literal on its own.
+				if (!$quoted || $next === 'E') {
+					$quoted = !$quoted ? $next === 'Q' : false;
+					$escaped .= $char . $next;
+					++$i;
+				}
+				else {
+					$escaped .= $char;
+				}
+			}
+			else {
+				$escaped .= $char;
+			}
+		}
+
+		return $escaped;
 	}
 }
