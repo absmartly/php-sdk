@@ -316,7 +316,6 @@ class Context {
 			return null;
 		}
 
-		// customFieldValues is the collector's array of {name,type,value} objects.
 		$field = null;
 		foreach ($experiment->data->customFieldValues as $candidate) {
 			if (isset($candidate->name) && $candidate->name === $fieldName) {
@@ -350,10 +349,6 @@ class Context {
 		return $value;
 	}
 
-	/**
-	 * Decodes a JSON custom field payload. Malformed JSON is reported through the event logger as an Error event
-	 * and yields null, instead of being silently treated as a missing value.
-	 */
 	private function decodeCustomFieldJson(string $json, string $experimentName, string $fieldName) {
 		try {
 			return json_decode($json, true, 512, JSON_THROW_ON_ERROR);

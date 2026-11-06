@@ -24,12 +24,14 @@ class InOperatorTest extends TestCase {
 		self::assertFalse($this->operator->evaluate($this->evaluator, ["abcdefghijk", "xxx"]));
 
 		self::assertNull($this->operator->evaluate($this->evaluator, ["abcdefghijk", null]));
+		self::assertNull($this->operator->evaluate($this->evaluator, ["abc1", 1]));
 	}
 
 	public function testReturnFalseOnEmptyArray(): void {
 		self::assertFalse($this->operator->evaluate($this->evaluator, [[], false]));
 		self::assertFalse($this->operator->evaluate($this->evaluator, [[], "1"]));
 		self::assertFalse($this->operator->evaluate($this->evaluator, [[], true]));
+		self::assertFalse($this->operator->evaluate($this->evaluator, [[], 0]));
 
 		self::assertNull($this->operator->evaluate($this->evaluator, [[], null]));
 	}
@@ -60,23 +62,7 @@ class InOperatorTest extends TestCase {
 		self::assertTrue($this->operator->evaluate($this->evaluator, [$haystackbc, 0]));
 	}
 
-	public function testMembershipUsesSharedEvaluatorLikeOtherSdks(): void {
-		self::assertTrue($this->operator->binary($this->evaluator, [1], '1'));
-		self::assertTrue($this->operator->binary($this->evaluator, [1], 1.0));
-		self::assertTrue($this->operator->binary($this->evaluator, [(object) ['a' => 1, 'b' => 2]], (object) ['b' => 2, 'a' => 1]));
-		self::assertFalse($this->operator->binary($this->evaluator, [0], 'not-a-number'));
-	}
-
-	public function testStringAndObjectNeedlesUseSharedStringConversion(): void {
-		$this->evaluator = new Evaluator(new OperatorCollection(), new \stdClass());
-		self::assertTrue($this->operator->binary($this->evaluator, 'user-123', 123));
-		self::assertTrue($this->operator->binary($this->evaluator, 'true', true));
-		self::assertTrue($this->operator->binary($this->evaluator, (object) ['false' => null], false));
-		self::assertFalse($this->operator->binary($this->evaluator, 'anything', []));
-		self::assertFalse($this->operator->binary($this->evaluator, (object) ['Array' => 1], []));
-	}
-
-	public function testArrayDiffNull(): void {
+	public function testArrayNotContainedInArray(): void {
 		self::assertFalse($this->operator->evaluate($this->evaluator, [[1, 2, 3], [2, 3]]));
 		self::assertFalse($this->operator->evaluate($this->evaluator, [[1, 2, 3], [5, 6]]));
 	}

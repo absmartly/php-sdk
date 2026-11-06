@@ -43,7 +43,6 @@ class MatchOperator extends BinaryOperator {
 			$pattern = trim($pattern, '/');
 		}
 
-		// "~" is used as the delimiter, so escape any unescaped "~" inside the pattern.
 		$pattern = preg_replace('/(?<!\\\\)((?:\\\\\\\\)*)~/', '$1\\~', $pattern);
 
 		$matches = @preg_match('~' . $pattern . '~' . $flags, $text);
