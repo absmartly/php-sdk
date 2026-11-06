@@ -51,7 +51,6 @@ class HTTPClientRetryTest extends TestCase {
 	}
 
 	public function testTimeoutBoundsTheWholeRetrySequence(): void {
-		// Every attempt times out after using all the time it was given.
 		$client = $this->client(3000, 5, array_merge([[3000, true]], array_fill(0, 5, [0, true])));
 		$client->run();
 

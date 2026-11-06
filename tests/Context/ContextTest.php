@@ -1575,7 +1575,6 @@ class ContextTest extends TestCase {
 
 		$context->setAttribute('age', 25);
 		$treatmentAfter = $context->getTreatment('exp_test_ab');
-		// exp_test_ab has a non-strict audience, so re-evaluating it after an attribute change keeps the variant.
 		self::assertSame($treatmentBefore, $treatmentAfter);
 
 		$context->publish();

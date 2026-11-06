@@ -15,7 +15,7 @@ use ABSmartly\SDK\Http\HTTPClient;
 /**
  * Entry point of the A/B Smartly PHP SDK.
  *
- * Earlier releases named this class ABSmartly\SDK\SDK. That name is kept as an alias at the bottom of this file.
+ * Also available under its former name, ABSmartly\SDK\SDK.
  */
 final class SDK {
 

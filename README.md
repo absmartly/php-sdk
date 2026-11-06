@@ -216,7 +216,7 @@ $context->setUnits([
 ]);
 ```
 
-> **Note:** You cannot override an already set unit type as that would be a change of identity, and would throw an exception. In this case, you must create a new context instead. The `Context->setUnit()` and `Context->setUnits()` methods can be called before the context is ready.  
+> **Note:** You cannot override an already set unit type as that would be a change of identity, and would throw an exception. In this case, you must create a new context instead. The `Context->setUnit()` and `Context->setUnits()` methods can be called before the context is ready.
 
 ## Basic Usage
 

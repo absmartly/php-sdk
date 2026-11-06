@@ -243,10 +243,6 @@ class Context {
 		return $value;
 	}
 
-	/**
-	 * Decodes a JSON custom field payload. Malformed JSON is reported through the event logger as an Error event
-	 * and yields null, instead of being silently treated as a missing value.
-	 */
 	private function decodeCustomFieldJson(string $json, string $experimentName, string $fieldName) {
 		try {
 			return json_decode($json, true, 512, JSON_THROW_ON_ERROR);
@@ -274,8 +270,6 @@ class Context {
 			if ($this->attrsSeq > ($assignment->attrsSeq ?? 0)) {
 				$attrs = $this->getAttributes();
 				$result = $this->audienceMatcher->evaluate($experiment->audience, $attrs);
-				// evaluate() returns null when the audience has no filter; that is treated as a mismatch here,
-				// exactly as in the initial assignment in getAssignment(), so the two paths stay comparable.
 				$newAudienceMismatch = !$result;
 
 				if ($newAudienceMismatch !== $assignment->audienceMismatch) {
