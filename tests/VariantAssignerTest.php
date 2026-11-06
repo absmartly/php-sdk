@@ -50,6 +50,7 @@ class VariantAssignerTest extends TestCase {
 			['e791e240fcd3df7d238cfc285f475e8152fcc0ec', [0.33, 0.33, 0.34], 0x52c1f657, 0xd248bb2e, 0],
 			['e791e240fcd3df7d238cfc285f475e8152fcc0ec', [0.33, 0.33, 0.34], 0x865a84d0, 0xaa22d41a, 0],
 			['e791e240fcd3df7d238cfc285f475e8152fcc0ec', [0.33, 0.33, 0.34], 0x27d1dc86, 0x845461b9, 1],
+			['e791e240fcd3df7d238cfc285f475e8152fcc0ec', [0.0, 0.01, 0.02], 0x27d1dc86, 0x845461b9, 2],
 		];
 	}
 
