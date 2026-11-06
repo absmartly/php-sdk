@@ -6,6 +6,7 @@ use ABSmartly\SDK\Exception\InvalidArgumentException;
 
 use function gettype;
 use function is_int;
+use function is_scalar;
 use function sprintf;
 
 class ContextConfig {
@@ -54,29 +55,32 @@ class ContextConfig {
 		return $this;
 	}
 
-	/**
-	 * @param string|int|float $uid
-	 */
-	public function setUnit(string $unitType, $uid): ContextConfig {
-		$this->units[$unitType] = Context::validateUnit($unitType, $uid);
+	public function setUnit(string $unitType, string $uid): ContextConfig {
+		if ($uid === '') {
+			throw new InvalidArgumentException(sprintf('Unit "%s" UID must not be blank', $unitType));
+		}
+
+		$this->units[$unitType] = $uid;
 		return $this;
 	}
 
 	/**
-	 * @param array<string, string|int|float> $units
+	 * Numeric UIDs are stored as strings, as in earlier releases.
 	 */
 	public function setUnits(array $units): ContextConfig {
 		foreach ($units as $unitType => $uid) {
-			$this->setUnit((string) $unitType, $uid);
+			if (!is_scalar($uid)) {
+				throw new InvalidArgumentException(
+					sprintf('Unit set value with key "%s" must be of type string, %s passed', $unitType, gettype($uid)));
+			}
+
+			$this->setUnit((string) $unitType, (string) $uid);
 		}
 
 		return $this;
 	}
 
-	/**
-	 * @return string|int|float|null
-	 */
-	public function getUnit(string $unitType) {
+	public function getUnit(string $unitType): ?string {
 		return $this->units[$unitType] ?? null;
 	}
 

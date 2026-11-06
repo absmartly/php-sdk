@@ -40,6 +40,26 @@ class EmptyProvider extends ContextDataProvider {
 	}
 }
 
+class GoalDto {
+	public int $amount = 5;
+}
+
+class JsonGoal implements \JsonSerializable {
+	public function jsonSerialize(): array {
+		return ['amount' => 7];
+	}
+}
+
+class LegacyContextConfig extends ContextConfig {
+	public function setUnit(string $unitType, string $uid): ContextConfig {
+		return parent::setUnit($unitType, $uid);
+	}
+
+	public function getUnit(string $unitType): ?string {
+		return parent::getUnit($unitType);
+	}
+}
+
 class ContextConformanceTest extends TestCase {
 
 	private function sdk(ContextDataProvider $provider): SDK {
@@ -65,22 +85,39 @@ class ContextConformanceTest extends TestCase {
 		return $out;
 	}
 
-	public function testSetUnitAlreadySetMessageMatchesOtherSdks(): void {
+	public function testSetUnitAlreadySetKeepsLegacyMessage(): void {
 		$context = $this->context();
-		$this->expectExceptionMessage("Unit 'session_id' UID already set.");
+		$this->expectExceptionMessage('Unit "session_id" UID is already set');
 		$context->setUnit('session_id', 'other');
 	}
 
-	public function testNumericUnitsKeepTheirType(): void {
+	public function testNumericUnitsAreStoredAsStrings(): void {
 		$cfg = new ContextConfig();
 		$cfg->setUnits(['user_id' => 125, 'float_id' => 125.75, 'session_id' => 'abc']);
+		self::assertSame(['user_id' => '125', 'float_id' => '125.75', 'session_id' => 'abc'], $cfg->getUnits());
+
 		$context = $this->sdk(new EmptyProvider())->createContext($cfg);
 		$context->setUnit('other_id', 12345);
 
-		self::assertSame(125, $context->getUnit('user_id'));
-		self::assertSame(125.75, $context->getUnit('float_id'));
-		self::assertSame(12345, $context->getUnit('other_id'));
+		self::assertSame('125', $context->getUnit('user_id'));
+		self::assertSame('125.75', $context->getUnit('float_id'));
+		self::assertSame('12345', $context->getUnit('other_id'));
 		self::assertSame('abc', $context->getUnit('session_id'));
+	}
+
+	public function testNumericUnitHashesLikeItsStringForm(): void {
+		$context = $this->context();
+		$context->setUnit('user_id', 125);
+		$event = new PublishEvent();
+		$event->setUnits($context->getUnits());
+		self::assertSame(Utils::hashUnit('125'), $event->jsonSerialize()->units[1]->uid);
+	}
+
+	public function testContextConfigSubclassWithLegacySignaturesLoads(): void {
+		$cfg = new LegacyContextConfig();
+		$cfg->setUnit('session_id', 'abc');
+		self::assertSame('abc', $cfg->getUnit('session_id'));
+		self::assertSame('abc', $this->sdk(new EmptyProvider())->createContext($cfg)->getUnit('session_id'));
 	}
 
 	public function testNonblankStringUnitsRetainBytesForAssignmentStability(): void {
@@ -143,27 +180,28 @@ class ContextConformanceTest extends TestCase {
 		}
 	}
 
-	public function testEqualNumericUnitsAreNotAConflict(): void {
+	public function testNumberAndItsStringFormAreTheSameUnit(): void {
 		$cfg = new ContextConfig();
-		$cfg->setUnit('user_id', 125);
+		$cfg->setUnits(['user_id' => 125]);
 		$context = $this->sdk(new EmptyProvider())->createContext($cfg);
-		$context->setUnit('user_id', 125.0);
-		self::assertSame(125, $context->getUnit('user_id'));
-
-		$this->expectExceptionMessage("Unit 'user_id' UID already set.");
 		$context->setUnit('user_id', '125');
+		$context->setUnit('user_id', 125);
+		self::assertSame('125', $context->getUnit('user_id'));
+
+		$this->expectExceptionMessage('Unit "user_id" UID is already set');
+		$context->setUnit('user_id', 126);
 	}
 
 	public function testDistinctLargeIntegerUnitsConflict(): void {
 		$context = $this->context();
 		$context->setUnit('user_id', 9007199254740992);
-		$this->expectExceptionMessage("Unit 'user_id' UID already set.");
+		$this->expectExceptionMessage('Unit "user_id" UID is already set');
 		$context->setUnit('user_id', 9007199254740993);
 	}
 
 	public function testInvalidUnitTypeIsRejected(): void {
 		$context = $this->context();
-		$this->expectExceptionMessage("Unit 'x' must be a string or a number.");
+		$this->expectExceptionMessage('Unit "x" must be a string or a number');
 		$context->setUnit('x', true);
 	}
 
@@ -186,6 +224,27 @@ class ContextConformanceTest extends TestCase {
 		$context->track('b', ['x' => 1]);
 		$context->track('d');
 		self::assertSame(3, $context->getPendingCount());
+	}
+
+	public function testTrackAcceptsAnyObjectAsInEarlierReleases(): void {
+		$client = new Client(new ClientConfig('https://example.com', 'k', 'a', 'e'));
+		$config = new Config($client);
+		$config->setContextDataProvider(new EmptyProvider());
+		$handler = new ContextEventHandlerMock($client);
+		$config->setContextEventHandler($handler);
+		$cfg = new ContextConfig();
+		$cfg->setUnit('session_id', 'abc');
+		$context = (new SDK($config))->createContext($cfg);
+
+		$context->track('array_object', new \ArrayObject(['amount' => 10]));
+		$context->track('dto', new GoalDto());
+		$context->track('json', new JsonGoal());
+		$context->publish();
+
+		$goals = $handler->submitted[0]->goals;
+		self::assertSame(10, $goals[0]->properties->amount);
+		self::assertSame(5, $goals[1]->properties->amount);
+		self::assertSame(7, $goals[2]->properties->amount);
 	}
 
 	public function testRejectedAsyncLoadLeavesContextReadyAndFailed(): void {
@@ -233,7 +292,7 @@ class ContextConformanceTest extends TestCase {
 		self::assertFalse(Utils::isPromise((object) ['then' => 'noop']));
 	}
 
-	public function testFailedFinalPublishKeepsContextOpenAndRetryable(): void {
+	public function testFailedFinalPublishDoesNotThrowAndKeepsEventsForRetry(): void {
 		$client = new Client(new ClientConfig('https://example.com', 'k', 'a', 'e'));
 		$config = new Config($client);
 		$config->setContextDataProvider(new EmptyProvider());
@@ -245,19 +304,17 @@ class ContextConformanceTest extends TestCase {
 
 		$handler->prerun = static function() { throw new \RuntimeException('Publish failed'); };
 		$context->track('goal');
-		try {
-			$context->close();
-			self::fail('expected the publish error');
-		} catch (\RuntimeException $e) {
-			self::assertSame('Publish failed', $e->getMessage());
-		}
-		self::assertFalse($context->isClosed());
+		$context->close();
+		self::assertTrue($context->isClosed());
 		self::assertFalse($context->isFinalizing());
+		self::assertFalse($context->isFailed());
 		self::assertSame(1, $context->getPendingCount());
+		self::assertEmpty($handler->submitted);
 
 		$handler->prerun = null;
 		$context->close();
 		self::assertTrue($context->isClosed());
 		self::assertSame(0, $context->getPendingCount());
+		self::assertCount(1, $handler->submitted);
 	}
 }

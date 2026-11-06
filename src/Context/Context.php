@@ -25,6 +25,7 @@ use function get_object_vars;
 use function gettype;
 use function hash;
 use function is_int;
+use function is_object;
 use function json_decode;
 use function microtime;
 use function strpos;
@@ -284,7 +285,7 @@ class Context {
 	 */
 	private function checkReady(bool $expectNotFinalized = true): void {
 		if (!$this->isReady()) {
-			throw new LogicException('ABsmartly Context is not yet ready.');
+			throw new LogicException('ABSmartly Context is not yet ready');
 		}
 
 		if ($expectNotFinalized) {
@@ -563,10 +564,7 @@ class Context {
 		return $result;
 	}
 
-	/**
-	 * @param string|int|float $unitHash
-	 */
-	private function getVariantAssigner(string $unitType, $unitHash): VariantAssigner {
+	private function getVariantAssigner(string $unitType, string $unitHash): VariantAssigner {
 		return $this->assigners[$unitType] ?? ($this->assigners[$unitType] = new VariantAssigner($unitHash));
 	}
 
@@ -651,9 +649,6 @@ class Context {
 	}
 
 
-	/**
-	 * @param array<string, string|int|float> $units
-	 */
 	public function setUnits(array $units): Context {
 		foreach ($units as $unitType => $uid) {
 			$this->setUnit((string) $unitType, $uid);
@@ -662,7 +657,7 @@ class Context {
 		return $this;
 	}
 
-	public function getUnit(string $unitType) {
+	public function getUnit(string $unitType): ?string {
 		return $this->units[$unitType] ?? null;
 	}
 
@@ -716,8 +711,7 @@ class Context {
 	}
 
 	/**
-	 * Units may be strings or numbers; numeric values retain their type.
-	 * Nonblank string UIDs retain their original bytes for assignment stability.
+	 * Numeric UIDs are accepted and stored as strings, as in earlier releases.
 	 *
 	 * @param string|int|float $uid
 	 */
@@ -726,8 +720,8 @@ class Context {
 		$uid = self::validateUnit($unitType, $uid);
 
 		if (array_key_exists($unitType, $this->units)) {
-			if (!self::sameUnit($this->units[$unitType], $uid)) {
-				throw new InvalidArgumentException(sprintf("Unit '%s' UID already set.", $unitType));
+			if ($this->units[$unitType] !== $uid) {
+				throw new InvalidArgumentException(sprintf('Unit "%s" UID is already set', $unitType));
 			}
 			return $this;
 		}
@@ -737,38 +731,22 @@ class Context {
 	}
 
 	/**
-	 * Numbers that are the same value and hash the same compare equal (125
-	 * equals 125.0, as JavaScript has a single number type); distinct integers
-	 * and strings vs numbers never do.
-	 *
-	 * @param string|int|float $a
-	 * @param string|int|float $b
-	 */
-	private static function sameUnit($a, $b): bool {
-		if (is_string($a) || is_string($b)) {
-			return $a === $b;
-		}
-
-		return $a == $b && Utils::unitToString($a) === Utils::unitToString($b);
-	}
-
-	/**
 	 * @param mixed $uid
-	 * @return string|int|float
 	 */
-	public static function validateUnit(string $unitType, $uid) {
-		if (is_string($uid)) {
-			if (trim($uid) === '') {
-				throw new InvalidArgumentException(sprintf("Unit '%s' UID must not be blank.", $unitType));
-			}
-			return $uid;
-		}
-
+	private static function validateUnit(string $unitType, $uid): string {
 		if (is_int($uid) || is_float($uid)) {
-			return $uid;
+			$uid = (string) $uid;
 		}
 
-		throw new InvalidArgumentException(sprintf("Unit '%s' must be a string or a number.", $unitType));
+		if (!is_string($uid)) {
+			throw new InvalidArgumentException(sprintf('Unit "%s" must be a string or a number', $unitType));
+		}
+
+		if (trim($uid) === '') {
+			throw new InvalidArgumentException(sprintf('Unit "%s" UID must not be blank', $unitType));
+		}
+
+		return $uid;
 	}
 
 	public function getPendingCount(): int {
@@ -777,7 +755,7 @@ class Context {
 
 	private function checkNotClosed(): void {
 		if ($this->isClosed()) {
-			throw new LogicException('ABsmartly Context is finalized.');
+			throw new LogicException('ABSmartly Context is closed');
 		}
 	}
 
@@ -823,7 +801,6 @@ class Context {
 				$exception->getMessage()
 			));
 			$this->logError($exception);
-			throw $exception;
 		}
 	}
 
@@ -838,8 +815,7 @@ class Context {
 	}
 
 	/**
-	 * @param object|array|null $properties a plain object (stdClass) or an
-	 *   associative array; any other value raises an error.
+	 * @param object|array|null $properties any object, or an associative array
 	 */
 	public function track(string $goalName, $properties = null): void {
 		$this->checkNotClosed();
@@ -863,6 +839,12 @@ class Context {
 			return clone $properties;
 		}
 
+		// Other objects (DTOs, ArrayObject, JsonSerializable) are kept as given so
+		// they serialize exactly as in earlier releases.
+		if (is_object($properties)) {
+			return $properties;
+		}
+
 		if (is_array($properties) && $properties !== [] && array_keys($properties) !== range(0, count($properties) - 1)) {
 			return (object) $properties;
 		}
@@ -877,9 +859,6 @@ class Context {
 
 	public function refresh(): void {
 		$this->checkNotClosed();
-		if ($this->failed) {
-			return;
-		}
 		$oldData = $this->data;
 		$oldIndex = $this->index;
 		$oldIndexVariables = $this->indexVariables;
@@ -903,25 +882,27 @@ class Context {
 		}
 	}
 
+	/**
+	 * A failed final publish is logged, not thrown: the events stay queued and
+	 * calling close() again retries publishing them.
+	 */
 	public function close(): void {
-		if ($this->isClosed()) {
+		if ($this->isClosed() && $this->getPendingCount() === 0) {
 			return;
 		}
 
 		$this->finalizing = true;
 		if ($this->getPendingCount() > 0) {
-			try {
-				$this->flush();
-			}
-			catch (Exception $exception) {
-				$this->finalizing = false;
-				throw $exception;
-			}
+			$this->flush();
+		}
+		$this->finalizing = false;
+
+		if ($this->isClosed()) {
+			return;
 		}
 
-		$this->logEvent(ContextEventLoggerEvent::Finalize, null);
+		$this->logEvent(ContextEventLoggerEvent::Close, null);
 		$this->closed = true;
-		$this->finalizing = false;
 	}
 
 }

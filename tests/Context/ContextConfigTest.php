@@ -21,7 +21,7 @@ class ContextConfigTest extends TestCase {
 		$contextConfig->setUnit('baz', 'new-baz-value'); // New value is overwritten
 
 		self::assertSame('foo-value', $contextConfig->getUnit('foo'));
-		self::assertSame(2, $contextConfig->getUnit('bar'));
+		self::assertSame('2', $contextConfig->getUnit('bar'));
 		self::assertSame('new-baz-value', $contextConfig->getUnit('baz'));
 
 		self::assertNull($contextConfig->getUnit('does-not-exist'));
@@ -37,11 +37,11 @@ class ContextConfigTest extends TestCase {
 
 		self::assertCount(5, $contextConfig->getUnits());
 
-		self::assertSame(1, $contextConfig->getUnit('x'));
+		self::assertSame('1', $contextConfig->getUnit('x'));
 		self::assertSame('mango', $contextConfig->getUnit('y'));
 
 		$this->expectException(\InvalidArgumentException::class);
-		$this->expectExceptionMessage("Unit 'x' must be a string or a number.");
+		$this->expectExceptionMessage('Unit set value with key "x" must be of type string, array passed');
 
 		$contextConfig->setUnits(
 			[

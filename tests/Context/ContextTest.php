@@ -278,7 +278,7 @@ class ContextTest extends TestCase {
 		$context = $this->createReadyContext();
 
 		$this->expectException(\InvalidArgumentException::class);
-		$this->expectExceptionMessage("Unit 'db_user_id' UID must not be blank.");
+		$this->expectExceptionMessage('Unit "db_user_id" UID must not be blank');
 		$context->setUnit('db_user_id', '');
 	}
 
@@ -289,7 +289,7 @@ class ContextTest extends TestCase {
 		$context->setUnit('session_id', $this->units['session_id']); // This should be allowed
 
 		$this->expectException(\InvalidArgumentException::class);
-		$this->expectExceptionMessage("Unit 'session_id' UID already set.");
+		$this->expectExceptionMessage('Unit "session_id" UID is already set');
 		$context->setUnit('session_id', 'new-uid');
 	}
 
@@ -800,12 +800,7 @@ class ContextTest extends TestCase {
 
 		$logger->clear();
 
-		try {
-			$context->publish();
-			self::fail('Expected publish() to throw');
-		} catch (\RuntimeException $exception) {
-			self::assertSame('Trigger failure', $exception->getMessage());
-		}
+		$context->publish();
 
 		self::assertSame(ContextEventLoggerEvent::Error, $logger->events[0]->getEvent());
 	}
@@ -913,7 +908,7 @@ class ContextTest extends TestCase {
 		$logger->clear();
 		$context->close();
 
-		self::assertSame(ContextEventLoggerEvent::Finalize, $logger->events[0]->getEvent());
+		self::assertSame(ContextEventLoggerEvent::Close, $logger->events[0]->getEvent());
 	}
 
 	public function testCloseCallsEventLoggerWithPendingEvents(): void {
@@ -925,7 +920,7 @@ class ContextTest extends TestCase {
 		self::assertSame(ContextEventLoggerEvent::Ready, $logger->events[0]->getEvent());
 		self::assertSame(ContextEventLoggerEvent::Goal, $logger->events[1]->getEvent());
 		self::assertSame(ContextEventLoggerEvent::Publish, $logger->events[2]->getEvent());
-		self::assertSame(ContextEventLoggerEvent::Finalize, $logger->events[3]->getEvent());
+		self::assertSame(ContextEventLoggerEvent::Close, $logger->events[3]->getEvent());
 	}
 
 	public function testCloseCallsEventLoggerOnError(): void {
@@ -939,12 +934,8 @@ class ContextTest extends TestCase {
 
 		$logger->clear();
 
-		try {
-			$context->close();
-			self::fail('close() must surface the publish error');
-		} catch (\RuntimeException $e) {
-		}
-		self::assertFalse($context->isClosed());
+		$context->close();
+		self::assertTrue($context->isClosed());
 		self::assertSame(1, $context->getPendingCount());
 		self::assertSame(ContextEventLoggerEvent::Error, $logger->events[0]->getEvent());
 	}
@@ -976,7 +967,7 @@ class ContextTest extends TestCase {
 		self::assertSame(ContextEventLoggerEvent::Goal, $logger->events[1]->getEvent());
 		self::assertSame(ContextEventLoggerEvent::Refresh, $logger->events[2]->getEvent());
 		self::assertSame(ContextEventLoggerEvent::Publish, $logger->events[3]->getEvent());
-		self::assertSame(ContextEventLoggerEvent::Finalize, $logger->events[4]->getEvent());
+		self::assertSame(ContextEventLoggerEvent::Close, $logger->events[4]->getEvent());
 	}
 
 	public function testRefreshCallsEventLoggerOnError(): void {
@@ -1289,11 +1280,12 @@ class ContextTest extends TestCase {
 		self::assertTrue($context->isFailed());
 		self::assertSame(1, $callCount);
 
-		// Refresh on a failed context is a successful no-op (matches JS SDK).
+		// A successful refresh recovers a context whose initial load failed.
 		$context->refresh();
-		self::assertSame(1, $callCount);
-		self::assertTrue($context->isFailed());
+		self::assertSame(2, $callCount);
+		self::assertFalse($context->isFailed());
 		self::assertTrue($context->isReady());
+		self::assertNotEmpty($context->getExperiments());
 	}
 
 	public function testFailedContextIsReadyWithEmptyData(): void {
@@ -1451,12 +1443,7 @@ class ContextTest extends TestCase {
 
 		$context->track('goal1');
 
-		try {
-			$context->publish();
-			self::fail('Expected publish() to throw');
-		} catch (\RuntimeException $exception) {
-			self::assertSame('Network timeout', $exception->getMessage());
-		}
+		$context->publish();
 
 		self::assertFalse($context->isFailed());
 		self::assertSame(1, $context->getPendingCount());
@@ -1507,7 +1494,7 @@ class ContextTest extends TestCase {
 		self::assertContains(ContextEventLoggerEvent::Goal, $eventTypes);
 		self::assertContains(ContextEventLoggerEvent::Publish, $eventTypes);
 		self::assertContains(ContextEventLoggerEvent::Refresh, $eventTypes);
-		self::assertContains(ContextEventLoggerEvent::Finalize, $eventTypes);
+		self::assertContains(ContextEventLoggerEvent::Close, $eventTypes);
 	}
 
 	public function testEventHandlerErrorInCallback(): void {
@@ -1520,12 +1507,7 @@ class ContextTest extends TestCase {
 
 		$context->track('goal1');
 
-		try {
-			$context->publish();
-			self::fail('Expected publish() to throw');
-		} catch (\RuntimeException $exception) {
-			self::assertSame('Handler error', $exception->getMessage());
-		}
+		$context->publish();
 
 		$errorEvents = array_filter($logger->events, fn($e) => $e->getEvent() === ContextEventLoggerEvent::Error);
 		self::assertNotEmpty($errorEvents);
@@ -1551,11 +1533,11 @@ class ContextTest extends TestCase {
 		$exposureIndex = array_search(ContextEventLoggerEvent::Exposure, $eventTypes);
 		$goalIndex = array_search(ContextEventLoggerEvent::Goal, $eventTypes);
 		$publishIndex = array_search(ContextEventLoggerEvent::Publish, $eventTypes);
-		$finalizeIndex = array_search(ContextEventLoggerEvent::Finalize, $eventTypes);
+		$closeIndex = array_search(ContextEventLoggerEvent::Close, $eventTypes);
 
 		self::assertLessThan($goalIndex, $exposureIndex);
 		self::assertLessThan($publishIndex, $goalIndex);
-		self::assertLessThan($finalizeIndex, $publishIndex);
+		self::assertLessThan($closeIndex, $publishIndex);
 	}
 
 	public function testEventHandlerReceivesCorrectData(): void {
@@ -1624,7 +1606,7 @@ class ContextTest extends TestCase {
 
 		$eventTypes = array_map(fn($e) => $e->getEvent(), $logger->events);
 		self::assertContains(ContextEventLoggerEvent::Ready, $eventTypes);
-		self::assertContains(ContextEventLoggerEvent::Finalize, $eventTypes);
+		self::assertContains(ContextEventLoggerEvent::Close, $eventTypes);
 	}
 
 	public function testMultipleExperiments(): void {
@@ -1763,7 +1745,7 @@ class ContextTest extends TestCase {
 		$context->close();
 
 		$this->expectException(\LogicException::class);
-		$this->expectExceptionMessage('ABsmartly Context is finalized.');
+		$this->expectExceptionMessage('ABSmartly Context is closed');
 		$context->setUnit('new_unit', 'value');
 	}
 
@@ -1772,7 +1754,7 @@ class ContextTest extends TestCase {
 		$context->close();
 
 		$this->expectException(\LogicException::class);
-		$this->expectExceptionMessage('ABsmartly Context is finalized.');
+		$this->expectExceptionMessage('ABSmartly Context is closed');
 		$context->setAttribute('attr1', 'value1');
 	}
 
@@ -1909,7 +1891,7 @@ class ContextTest extends TestCase {
 		$context->close();
 
 		$this->expectException(\ABSmartly\SDK\Exception\LogicException::class);
-		$this->expectExceptionMessage('ABsmartly Context is finalized.');
+		$this->expectExceptionMessage('ABSmartly Context is closed');
 		$context->getVariableValue('banner.border', 0);
 	}
 
@@ -2074,12 +2056,7 @@ class ContextTest extends TestCase {
 		$context->track('goal1');
 		self::assertSame(2, $context->getPendingCount());
 
-		try {
-			$context->publish();
-			self::fail('Expected publish() to throw');
-		} catch (\RuntimeException $exception) {
-			self::assertSame('Publish failed', $exception->getMessage());
-		}
+		$context->publish();
 
 		self::assertSame(2, $context->getPendingCount());
 		self::assertEmpty($this->eventHandler->submitted);
@@ -2253,7 +2230,7 @@ class ContextTest extends TestCase {
 		$context->close();
 
 		$this->expectException(\ABSmartly\SDK\Exception\LogicException::class);
-		$this->expectExceptionMessage('ABsmartly Context is finalized.');
+		$this->expectExceptionMessage('ABSmartly Context is closed');
 		$context->getTreatment('exp_test_ab');
 	}
 
@@ -2262,7 +2239,7 @@ class ContextTest extends TestCase {
 		$context->close();
 
 		$this->expectException(\ABSmartly\SDK\Exception\LogicException::class);
-		$this->expectExceptionMessage('ABsmartly Context is finalized.');
+		$this->expectExceptionMessage('ABSmartly Context is closed');
 		$context->peekTreatment('exp_test_ab');
 	}
 
@@ -2281,7 +2258,7 @@ class ContextTest extends TestCase {
 		self::assertFalse($context->isReady());
 
 		$this->expectException(\ABSmartly\SDK\Exception\LogicException::class);
-		$this->expectExceptionMessage('ABsmartly Context is not yet ready.');
+		$this->expectExceptionMessage('ABSmartly Context is not yet ready');
 		$context->{$method}(...$args);
 	}
 
@@ -2305,7 +2282,7 @@ class ContextTest extends TestCase {
 		}
 
 		$this->expectException(\ABSmartly\SDK\Exception\LogicException::class);
-		$this->expectExceptionMessage('ABsmartly Context is finalized.');
+		$this->expectExceptionMessage('ABSmartly Context is closed');
 		$context->{$method}(...$args);
 	}
 
@@ -2562,12 +2539,8 @@ class ContextTest extends TestCase {
 
 		$context->track('goal1');
 		$logger->clear();
-		try {
-			$context->close();
-			self::fail('close() must surface the publish error');
-		} catch (\RuntimeException $e) {
-		}
-		self::assertFalse($context->isClosed());
+		$context->close();
+		self::assertTrue($context->isClosed());
 		self::assertSame(1, $context->getPendingCount());
 
 		self::assertSame(ContextEventLoggerEvent::Error, $logger->events[0]->getEvent());
@@ -2581,7 +2554,7 @@ class ContextTest extends TestCase {
 		$context->close();
 
 		self::assertSame(1, $logger->called);
-		self::assertSame(ContextEventLoggerEvent::Finalize, $logger->events[0]->getEvent());
+		self::assertSame(ContextEventLoggerEvent::Close, $logger->events[0]->getEvent());
 	}
 
 	public function testFinalizePropagatesClientErrorMessage(): void {
@@ -2593,12 +2566,8 @@ class ContextTest extends TestCase {
 
 		$context->track('goal1');
 		$logger->clear();
-		try {
-			$context->close();
-			self::fail('close() must surface the publish error');
-		} catch (\RuntimeException $e) {
-		}
-		self::assertFalse($context->isClosed());
+		$context->close();
+		self::assertTrue($context->isClosed());
 		self::assertSame(1, $context->getPendingCount());
 
 		$errorEvents = array_filter($logger->events, fn($e) => $e->getEvent() === ContextEventLoggerEvent::Error);
@@ -2617,12 +2586,7 @@ class ContextTest extends TestCase {
 		$context->track('goal1');
 		$logger->clear();
 
-		try {
-			$context->publish();
-			self::fail('Expected publish() to throw');
-		} catch (\RuntimeException $exception) {
-			self::assertSame('Connection refused', $exception->getMessage());
-		}
+		$context->publish();
 
 		$errorEvents = array_filter($logger->events, fn($e) => $e->getEvent() === ContextEventLoggerEvent::Error);
 		self::assertNotEmpty($errorEvents);
