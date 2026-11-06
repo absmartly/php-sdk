@@ -2206,6 +2206,41 @@ class ContextTest extends TestCase {
 		self::assertTrue($value);
 	}
 
+	public function testCustomFieldValueReturnsBooleanFlagAndFalsyBooleanFields(): void {
+		$context = $this->createReadyContext('context_custom_fields.json');
+
+		self::assertFalse($context->customFieldValue('exp_test_ab', 'is_active'));
+		self::assertFalse($context->customFieldValue('exp_test_ab', 'disabled'));
+	}
+
+	public function testCreateContextWithDataReadsCustomFieldRecordArray(): void {
+		$data = json_decode(file_get_contents(__DIR__ . '/../Fixtures/json/context_custom_fields.json'), false, 512, JSON_THROW_ON_ERROR);
+		$context = $this->createContextWithData($data->experiments);
+
+		self::assertSame('US,UK,ES', $context->customFieldValue('exp_test_ab', 'country'));
+		self::assertSame(18, $context->customFieldValue('exp_test_ab', 'min_age'));
+		self::assertSame(['color' => 'red', 'size' => 10], $context->customFieldValue('exp_test_ab', 'config'));
+	}
+
+	public function testCreateContextWithDataIgnoresNonArrayCustomFieldValues(): void {
+		$data = json_decode(file_get_contents(__DIR__ . '/../Fixtures/json/context_custom_fields.json'), false, 512, JSON_THROW_ON_ERROR);
+		$data->experiments[0]->customFieldValues = (object) ['country' => 'US'];
+		$context = $this->createContextWithData($data->experiments);
+
+		self::assertFalse($context->isFailed());
+		self::assertNull($context->customFieldValue('exp_test_ab', 'country'));
+	}
+
+	private function createContextWithData(array $experiments): Context {
+		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', '', '', ''));
+		$config = new Config($client);
+		$config->setContextDataProvider(new ContextDataProviderMock($client));
+		$config->setContextEventHandler(new ContextEventHandlerMock($client));
+		$contextConfig = new ContextConfig();
+		$contextConfig->setUnits($this->units);
+		return (new SDK($config))->createContextWithData($contextConfig, new ContextData($experiments));
+	}
+
 	public function testCustomFieldValueReturnsNullForNonExistentField(): void {
 		$context = $this->createReadyContext('context_custom_fields.json');
 
@@ -2238,7 +2273,11 @@ class ContextTest extends TestCase {
 	public function testCustomFieldValueLogsErrorOnMalformedJson(): void {
 		$logger = new MockContextEventLoggerProxy();
 		$context = $this->createReadyContext('context_custom_fields.json', true, $logger);
-		$context->getExperiment('exp_test_ab')->data->customFieldValues->config = '{not json';
+		foreach ($context->getExperiment('exp_test_ab')->data->customFieldValues as $field) {
+			if ($field->name === 'config') {
+				$field->value = '{not json';
+			}
+		}
 		$logger->clear();
 
 		self::assertNull($context->customFieldValue('exp_test_ab', 'config'));

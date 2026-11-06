@@ -3,6 +3,7 @@
 namespace ABSmartly\SDK;
 
 use function get_object_vars as get_object_varsAlias;
+use function is_array;
 use function json_decode;
 
 use function property_exists;
@@ -25,7 +26,8 @@ class Experiment {
 	public bool $audienceStrict;
 	public array $applications;
 	public array $variants;
-	public ?object $customFieldValues = null;
+	/** @var object[]|null The collector's array of {name, type, value} records. */
+	public ?array $customFieldValues = null;
 
 	public function __construct(object $data) {
 		if (!empty($data->audience)) {
@@ -38,7 +40,10 @@ class Experiment {
 
 		$data = get_object_varsAlias($data);
 		foreach ($data as $field => $value) {
-			if (property_exists($this, $field) && $field !== 'audience') {
+			if ($field === 'customFieldValues') {
+				$this->customFieldValues = is_array($value) ? $value : null;
+			}
+			elseif (property_exists($this, $field) && $field !== 'audience') {
 				$this->{$field} = $value;
 			}
 		}

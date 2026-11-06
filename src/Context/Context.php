@@ -210,21 +210,20 @@ class Context {
 			return null;
 		}
 
-		$customFieldValues = $experiment->data->customFieldValues;
-		if (is_string($customFieldValues)) {
-			$customFieldValues = $this->decodeCustomFieldJson($customFieldValues, $experimentName, $fieldName);
+		$field = null;
+		foreach ($experiment->data->customFieldValues as $candidate) {
+			if (isset($candidate->name) && $candidate->name === $fieldName) {
+				$field = $candidate;
+				break;
+			}
 		}
 
-		if (is_object($customFieldValues)) {
-			$customFieldValues = get_object_vars($customFieldValues);
-		}
-
-		if (!isset($customFieldValues[$fieldName])) {
+		if ($field === null || !isset($field->value)) {
 			return null;
 		}
 
-		$value = $customFieldValues[$fieldName];
-		$type = $customFieldValues[$fieldName . '_type'] ?? null;
+		$value = $field->value;
+		$type = $field->type ?? null;
 
 		if ($type === 'json' && is_string($value)) {
 			return $this->decodeCustomFieldJson($value, $experimentName, $fieldName);
