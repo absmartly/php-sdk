@@ -49,7 +49,8 @@ class HTTPClient implements HttpClientInterface {
 	 */
 	private $curlHandle;
 	/**
-	 * Number of times a request is retried after a transport error or an HTTP 5xx, 408 or 429 response.
+	 * Number of times a GET request is retried after a transport error or an HTTP 5xx, 408 or 429 response. PUT and
+	 * POST are sent once: replaying them could publish the same events twice.
 	 */
 	public int $retries = 5;
 	/**
@@ -88,11 +89,11 @@ class HTTPClient implements HttpClientInterface {
 	}
 
 	/**
-	 * Sends the request, retrying transport errors and HTTP 5xx, 408 and 429 responses. $timeout bounds the whole sequence: each
-	 * attempt only gets the time that is left, and no retry starts once the remaining time cannot cover its back-off.
-	 * A $timeout of 0 or less means no limit.
+	 * Sends the request, retrying transport errors and HTTP 5xx, 408 and 429 responses when $retry is true. $timeout
+	 * bounds the whole sequence: each attempt only gets the time that is left, and no retry starts once the remaining
+	 * time cannot cover its back-off. A $timeout of 0 or less means no limit.
 	 */
-	private function fetchResponse(): Response {
+	private function fetchResponse(bool $retry): Response {
 		$hasDeadline = $this->timeout > 0;
 		$deadline = $this->nowMs() + $this->timeout;
 		$attempt = 0;
@@ -101,7 +102,7 @@ class HTTPClient implements HttpClientInterface {
 			$attemptTimeout = $hasDeadline ? max(1, (int) ceil($deadline - $this->nowMs())) : 0;
 			$returnedResponse = $this->transfer($attemptTimeout);
 
-			if ($attempt >= $this->retries || !$this->isRetryable()) {
+			if (!$retry || $attempt >= $this->retries || !$this->isRetryable()) {
 				break;
 			}
 
@@ -125,17 +126,17 @@ class HTTPClient implements HttpClientInterface {
 
 	public function get(string $url, array $query = [], array $headers = []): Response {
 		$this->setupRequest($url, $query, $headers);
-		return $this->fetchResponse();
+		return $this->fetchResponse(true);
 	}
 
 	public function put(string $url, array $query = [], array $headers = [], string $body = ''): Response {
 		$this->setupRequest($url, $query, $headers, 'PUT', $body);
-		return $this->fetchResponse();
+		return $this->fetchResponse(false);
 	}
 
 	public function post(string $url, array $query = [], array $headers = [], string $body = ''): Response {
 		$this->setupRequest($url, $query, $headers, 'POST', $body);
-		return $this->fetchResponse();
+		return $this->fetchResponse(false);
 	}
 
 	/**
