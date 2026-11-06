@@ -6,9 +6,9 @@ use ABSmartly\SDK\JsonExpression\Evaluator;
 
 use function preg_last_error;
 use function preg_match;
-use function preg_replace;
 use function rtrim;
 use function strlen;
+use function strpos;
 use function trim;
 
 use const PREG_NO_ERROR;
@@ -43,14 +43,32 @@ class MatchOperator extends BinaryOperator {
 			$pattern = trim($pattern, '/');
 		}
 
-		$pattern = preg_replace('/(?<!\\\\)((?:\\\\\\\\)*)~/', '$1\\~', $pattern);
+		$delimiter = self::unusedDelimiter($pattern);
+		if ($delimiter === null) {
+			return null;
+		}
 
-		$matches = @preg_match('~' . $pattern . '~' . $flags, $text);
+		$matches = @preg_match($delimiter . $pattern . $delimiter . $flags, $text);
 
 		if (preg_last_error() !== PREG_NO_ERROR || $matches === false) {
 			return null;
 		}
 
 		return $matches === 1;
+	}
+
+	private static function unusedDelimiter(string $pattern): ?string {
+		// Escaping a delimiter that occurs in the pattern would mean re-implementing PCRE tokenization
+		// (\Q...\E, comments, extended mode), so use a byte the pattern does not contain and pass it through untouched.
+		// Bracket-style delimiters are excluded because PHP pairs them with a different closing character.
+		$candidates = '~#%@!,;`=' . "\x01\x02\x03\x04\x05\x06\x07\x08\x0E\x0F\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1A\x1B\x1C\x1D\x1E\x1F\x7F";
+		$length = strlen($candidates);
+		for ($i = 0; $i < $length; ++$i) {
+			if (strpos($pattern, $candidates[$i]) === false) {
+				return $candidates[$i];
+			}
+		}
+
+		return null;
 	}
 }
