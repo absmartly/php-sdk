@@ -23,7 +23,10 @@
         "psr-4": {
             "ABSmartly\\SDK\\": "src/"
         },
-        "classmap": [
+        "files": [
+            "src/SDK.php"
+        ],
+        "exclude-from-classmap": [
             "src/SDK.php"
         ]
     },

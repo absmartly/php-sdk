@@ -71,4 +71,15 @@ class MatchOperatorTest extends TestCase {
 	public function testInvalidRegexReturnsNull(): void {
 		self::assertNull($this->operator->evaluate($this->evaluator, ["abc", "("]));
 	}
+
+	public function testNonStringTextIsConvertedToString(): void {
+		$evaluator = new Evaluator(new OperatorCollection(), new \stdClass());
+
+		self::assertTrue($this->operator->binary($evaluator, 25, "^2"));
+		self::assertFalse($this->operator->binary($evaluator, 35, "^2"));
+		self::assertTrue($this->operator->binary($evaluator, 2.5, "^2\\.5$"));
+		self::assertTrue($this->operator->binary($evaluator, true, "^true$"));
+		self::assertNull($this->operator->binary($evaluator, [25], "^2"));
+		self::assertNull($this->operator->binary($evaluator, (object) ['a' => 1], "^2"));
+	}
 }

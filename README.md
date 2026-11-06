@@ -586,9 +586,9 @@ use ABSmartly\SDK;
 use ABSmartly\SDK\Context\ContextConfig;
 
 $httpClient = new HTTPClient();
-$httpClient->timeout = 1500;
 
 $clientConfig = new ClientConfig($endpoint, $apiKey, $application, $environment);
+$clientConfig->setTimeout(1500);
 $client = new Client($clientConfig, $httpClient);
 
 $config = new Config($client);
