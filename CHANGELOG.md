@@ -18,12 +18,38 @@
   that depended on the old PHP-only behavior.
 - **Custom fields use the collector format.** `Experiment::$customFieldValues` is `?array`, containing
   `{name,type,value}` objects, rather than the former `?object`/keyed-map representation.
+- **Typed attributes and numeric comparison.** Attribute values keep their JSON type and are compared
+  numerically (e.g. `age >= 20` treats `age` as a number, and the published value is `21`, not `"21"`), matching
+  the other SDKs. Rules that relied on the old string comparison can change which units match.
+- **Audience is re-evaluated after `setAttribute`.** Setting an attribute after a treatment was computed now
+  re-evaluates the audience, as in JS, so the treatment (and the exposures sent) can change.
+- **Unit id `"0"`/`0` is now assigned.** The previous `?? null` truthiness treated `"0"` as missing; it is now a
+  valid unit id, so experiments keyed on it move from control to their assigned variant.
+- **Failed `close()` re-throws and leaves the context open.** When the final publish fails, `close()` now
+  re-throws the collector error and the context stays open (`isClosed()` is false) with its events still queued; a
+  later `close()` retries, and the `Close` event is emitted only once the close succeeds. `publish()`/`flush()`
+  keep the v1.0.3 behaviour of logging and returning without throwing.
+- **Events retained after a failed publish are bounded and `isFailed()` no longer flips on a publish failure.**
+  A failed `publish()`/`close()` keeps its exposures and goals queued for a later retry instead of discarding them
+  (v1.0.3 discarded every event after the first failure and marked the context failed). The retained queue is now
+  capped at `Context::$maxRetainedEvents` (default 10,000): when exceeded, the oldest events are dropped and an
+  `Error` event is logged, so a long-lived worker held through a collector outage cannot grow without limit.
+  Because a publish failure no longer marks the context failed, code that relied on `isFailed()` flipping after a
+  failed publish must change.
+- **Shared variable keys resolve across experiments, lowest id first.** A variable key defined by more than one
+  experiment is resolved by walking those experiments in ascending experiment-id order (JS
+  `_resolveVariableValue`): the first assigned-or-overridden experiment whose variant contains the key wins, and
+  each visited experiment with variables is exposed. `getVariableKeys()` keeps its single-name shape but now
+  reports the lowest-id experiment for a shared key (old: the last experiment loaded).
+- **`getVariableValue()` returns the default for unassigned units.** `getVariableValue()` and
+  `peekVariableValue()` now agree: both return the caller's default when the unit is neither assigned nor
+  overridden (old: `peekVariableValue()` returned the control variant's value).
+- **`match` treats slashes literally.** `match` no longer parses a `"/pattern/flags"` form; leading/trailing
+  slashes are stripped and the rest is matched literally, as in v1.0.3 and JS (`new RegExp("/^p/i")` is a
+  literal-slash pattern). PHP-only flag parsing that was briefly introduced is removed.
 
 ### Compatibility retained
 
-- `publish()` and `close()` do not throw when the collector fails: the error is logged and the events stay
-  queued, so a later `publish()`/`close()` retries them (v1.0.3 discarded every event after the first failure).
-  `close()` closes the context and emits the `Close` event, as before.
 - `refresh()` on a context whose initial load failed fetches again, and a successful refresh clears `isFailed()`.
 - Units are stored as strings: `setUnit()`/`setUnits()` accept numbers and store their string form, and
   `getUnit()`/`getUnits()` return strings. `ContextConfig::setUnit(string, string)` and `getUnit(): ?string`
@@ -43,11 +69,21 @@
 
 ### Changed
 
+- The `timeout` option stays the connect timeout (`CURLOPT_CONNECTTIMEOUT_MS`) as in v1.0.3, bounding only
+  connection establishment, not the whole request. An optional total budget for the entire request (including
+  retries and back-off) is available opt-in via `HTTPClient::$totalTimeout`/`ReactHttpClient::$totalTimeout`
+  (0, off, by default). GET requests retry transport errors and HTTP 5xx/408/429 up to the configured count; PUT
+  and POST are sent exactly once.
 - Context reads (`getTreatment`, `peekTreatment`, `getVariableValue`, `peekVariableValue`, `getVariableKeys`,
   `getExperiments`, `getCustomFieldKeys`, `customFieldValue`, `getCustomFieldValueType`) throw
   `ABSmartly Context is not yet ready` on a pending context created with `createContextPending()`.
 - `createContextAsync()`/`createContextPending()` resolve a failed load with a context that is ready and failed,
   has empty data, stores `readyError()` and logs an `Error` event.
+
+### Fixed
+
+- `Context::close()` no longer closes the SDK's shared HTTP client, so closing one context no longer breaks its
+  sibling contexts. The SDK owner can still close the shared client with `SDK::close()`.
 
 ### Added
 
