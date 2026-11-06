@@ -54,9 +54,16 @@ class HTTPClient implements HttpClientInterface {
 	 */
 	public int $retries = 5;
 	/**
-	 * Timeout in milliseconds for the complete request, including retries and backoff.
+	 * Connect timeout in milliseconds (CURLOPT_CONNECTTIMEOUT_MS), as in v1.0.3. It bounds establishing the
+	 * connection only, not the complete request. 0 means no connect timeout.
 	 */
 	public int $timeout = 3000;
+	/**
+	 * Optional total budget in milliseconds for the whole request, including retries and back-off. When greater
+	 * than 0 it is applied as CURLOPT_TIMEOUT_MS per attempt, bounded by the remaining time. 0 (the default) means
+	 * no total limit.
+	 */
+	public int $totalTimeout = 0;
 
 	private const RETRY_BASE_DELAY_MS = 50;
 	private const RETRY_MAX_DELAY_MS = 1000;
@@ -89,13 +96,14 @@ class HTTPClient implements HttpClientInterface {
 	}
 
 	/**
-	 * Sends the request, retrying transport errors and HTTP 5xx, 408 and 429 responses when $retry is true. $timeout
-	 * bounds the whole sequence: each attempt only gets the time that is left, and no retry starts once the remaining
-	 * time cannot cover its back-off. A $timeout of 0 or less means no limit.
+	 * Sends the request, retrying transport errors and HTTP 5xx, 408 and 429 responses when $retry is true. When a
+	 * total budget ($totalTimeout) is set, it bounds the whole sequence: each attempt only gets the time that is
+	 * left, and no retry starts once the remaining time cannot cover its back-off. A $totalTimeout of 0 or less
+	 * means no total limit; the connect timeout ($timeout) always applies per attempt.
 	 */
 	private function fetchResponse(bool $retry): Response {
-		$hasDeadline = $this->timeout > 0;
-		$deadline = $this->nowMs() + $this->timeout;
+		$hasDeadline = $this->totalTimeout > 0;
+		$deadline = $this->nowMs() + $this->totalTimeout;
 		$attempt = 0;
 		while (true) {
 			// cURL treats a timeout of 0 as "no timeout", so never pass less than 1ms when a deadline applies.
@@ -143,7 +151,9 @@ class HTTPClient implements HttpClientInterface {
 	 * @return string|false
 	 */
 	protected function transfer(int $timeoutMs) {
-		curl_setopt($this->curlHandle, CURLOPT_CONNECTTIMEOUT_MS, $timeoutMs);
+		// $timeout stays the connect timeout only, as in v1.0.3. $timeoutMs is the remaining total budget and is
+		// only applied when a total timeout was opted in; 0 means cURL imposes no overall limit.
+		curl_setopt($this->curlHandle, CURLOPT_CONNECTTIMEOUT_MS, $this->timeout);
 		curl_setopt($this->curlHandle, CURLOPT_TIMEOUT_MS, $timeoutMs);
 
 		return curl_exec($this->curlHandle);

@@ -103,11 +103,11 @@ class ReactHttpClientRetryTest extends TestCase {
 		self::assertInstanceOf(\RuntimeException::class, $error);
 	}
 
-	public function testTimeoutBoundsRetriesAndBackoff(): void {
-		// The first back-off (1s) does not fit in a 500ms total timeout, so no retry starts.
+	public function testTotalTimeoutBoundsRetriesAndBackoff(): void {
+		// The first back-off (1s) does not fit in a 500ms total budget, so no retry starts.
 		$client = new ReactHttpClient($this->failingBrowser('get', 1));
 		$client->retries = 5;
-		$client->timeout = 500;
+		$client->totalTimeout = 500;
 
 		$error = null;
 		$client->getAsync('http://x')->then(null, function($e) use (&$error) { $error = $e; });

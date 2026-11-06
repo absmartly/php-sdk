@@ -23,7 +23,16 @@ use function strpos;
 class ReactHttpClient implements AsyncHttpClientInterface {
 	private Browser $browser;
 	public int $retries = 5;
+	/**
+	 * Per-attempt timeout in milliseconds, as in v1.0.3. It bounds each individual request, not the whole retry
+	 * sequence. 0 or less means no per-attempt limit.
+	 */
 	public int $timeout = 3000;
+	/**
+	 * Optional total budget in milliseconds for the whole request, including retries and back-off. When greater
+	 * than 0 it bounds the entire retry sequence; 0 (the default) means no total limit.
+	 */
+	public int $totalTimeout = 0;
 
 	public function __construct(?Browser $browser = null) {
 		$this->browser = $browser ?? new Browser();
@@ -31,9 +40,9 @@ class ReactHttpClient implements AsyncHttpClientInterface {
 
 	public function getAsync(string $url, array $query = [], array $headers = []): PromiseInterface {
 		$url = $this->buildUrl($url, $query);
-		return $this->withRetries(fn(float $timeoutSeconds) => $this->browser
-			->withTimeout($timeoutSeconds)
-			->get($url, $this->flattenHeaders($headers))
+		return $this->withRetries(fn() => $this->browser
+			->withTimeout($this->timeoutSeconds())
+			->get($url, $headers)
 			->then(fn($response) => $this->toResponse($response)));
 	}
 
@@ -42,7 +51,7 @@ class ReactHttpClient implements AsyncHttpClientInterface {
 		// Sent once: replaying a publish after a lost response could record the same events twice.
 		return $this->browser
 			->withTimeout($this->timeoutSeconds())
-			->put($url, $this->flattenHeaders($headers), $body)
+			->put($url, $headers, $body)
 			->then(fn($response) => $this->toResponse($response));
 	}
 
@@ -50,7 +59,7 @@ class ReactHttpClient implements AsyncHttpClientInterface {
 		$url = $this->buildUrl($url, $query);
 		return $this->browser
 			->withTimeout($this->timeoutSeconds())
-			->post($url, $this->flattenHeaders($headers), $body)
+			->post($url, $headers, $body)
 			->then(fn($response) => $this->toResponse($response));
 	}
 
@@ -79,15 +88,15 @@ class ReactHttpClient implements AsyncHttpClientInterface {
 
 	/**
 	 * Runs a GET, retrying transport errors and HTTP 5xx, 408 and 429 responses up to $retries times after the first
-	 * attempt, as HTTPClient does. $timeout bounds the whole sequence: each attempt only gets the time that is left,
-	 * and no retry starts once the remaining time cannot cover its back-off.
+	 * attempt, as HTTPClient does. When a total budget ($totalTimeout) is set, it bounds the whole sequence: no retry
+	 * starts once the remaining time cannot cover its back-off. The per-attempt $timeout always applies.
 	 *
-	 * @param callable(float): PromiseInterface $request called with the attempt's timeout in seconds
+	 * @param callable(): PromiseInterface $request
 	 */
 	private function withRetries(callable $request): PromiseInterface {
 		$maxAttempts = 1 + max(0, $this->retries);
-		$hasDeadline = $this->timeout > 0;
-		$deadline = $this->nowMs() + $this->timeout;
+		$hasDeadline = $this->totalTimeout > 0;
+		$deadline = $this->nowMs() + $this->totalTimeout;
 		$current = null;
 		$timer = null;
 		$cancelled = false;
@@ -98,8 +107,7 @@ class ReactHttpClient implements AsyncHttpClientInterface {
 					if ($cancelled) {
 						return;
 					}
-					$timeoutSeconds = $hasDeadline ? max(0.001, ($deadline - $this->nowMs()) / 1000) : -1;
-					$current = $request($timeoutSeconds);
+					$current = $request();
 					$current->then($resolve, function($error) use (&$attempt, $n, $maxAttempts, $hasDeadline, $deadline, $reject, &$timer, &$cancelled) {
 						if ($cancelled) {
 							return;
@@ -161,10 +169,6 @@ class ReactHttpClient implements AsyncHttpClientInterface {
 		return strpos($url, '?') === false
 			? "$url?$queryParams"
 			: rtrim($url, '&') . "&$queryParams";
-	}
-
-	private function flattenHeaders(array $headers): array {
-		return $headers;
 	}
 
 	private function toResponse($reactResponse): Response {
