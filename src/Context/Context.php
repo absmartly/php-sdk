@@ -20,6 +20,7 @@ use Exception;
 use JsonException;
 use Throwable;
 
+use function array_slice;
 use function count;
 use function get_object_vars;
 use function gettype;
@@ -28,6 +29,7 @@ use function is_int;
 use function is_object;
 use function json_decode;
 use function microtime;
+use function min;
 use function strpos;
 use function sprintf;
 use function trim;
@@ -68,6 +70,13 @@ class Context {
 	private bool $ready;
 	private int $attrsSeq = 0;
 	private ?Throwable $readyError = null;
+
+	/**
+	 * Upper bound on the number of exposures and goals retained after a failed publish. When a long-lived worker
+	 * holds one context through a collector outage, this stops the retry queue (and each published batch) from
+	 * growing without limit: the oldest events are dropped and an Error event is logged. 0 means no cap.
+	 */
+	public int $maxRetainedEvents = 10000;
 
 	public function isReady(): bool {
 		return $this->ready;
@@ -759,6 +768,15 @@ class Context {
 	}
 
 	public function flush(): void {
+		$this->flushEvents(false);
+	}
+
+	/**
+	 * Publishes the queued exposures and goals. On a collector failure the events stay queued so a later
+	 * publish()/close() can retry them; when $rethrow is true (close()) the failure is also re-thrown to the
+	 * caller, when false (publish()/flush()) it is only logged, as in v1.0.3.
+	 */
+	private function flushEvents(bool $rethrow): void {
 		if ($this->isFailed()) {
 			$errorMsg = sprintf(
 				'ABsmartly SDK Warning: Discarding %d exposures and %d goals due to failed context state',
@@ -800,7 +818,54 @@ class Context {
 				$exception->getMessage()
 			));
 			$this->logError($exception);
+			$this->capRetainedEvents();
+
+			if ($rethrow) {
+				throw $exception;
+			}
 		}
+	}
+
+	/**
+	 * Drops the oldest retained exposures and goals so the queue never exceeds $maxRetainedEvents, logging an Error
+	 * event for each batch dropped. Exposures are dropped before goals.
+	 */
+	private function capRetainedEvents(): void {
+		if ($this->maxRetainedEvents <= 0) {
+			return;
+		}
+
+		$total = count($this->exposures) + count($this->achievements);
+		if ($total <= $this->maxRetainedEvents) {
+			return;
+		}
+
+		$toDrop = $total - $this->maxRetainedEvents;
+
+		$droppedExposures = min($toDrop, count($this->exposures));
+		if ($droppedExposures > 0) {
+			$this->exposures = array_slice($this->exposures, $droppedExposures);
+			$toDrop -= $droppedExposures;
+		}
+
+		$droppedGoals = 0;
+		if ($toDrop > 0) {
+			$droppedGoals = min($toDrop, count($this->achievements));
+			$this->achievements = array_slice($this->achievements, $droppedGoals);
+		}
+
+		$dropped = $droppedExposures + $droppedGoals;
+		$this->pendingCount -= $dropped;
+
+		$errorMsg = sprintf(
+			'ABsmartly SDK Error: Retained event queue exceeded %d; dropped the oldest %d events (%d exposures, %d goals)',
+			$this->maxRetainedEvents,
+			$dropped,
+			$droppedExposures,
+			$droppedGoals
+		);
+		error_log($errorMsg);
+		$this->logError(new \RuntimeException($errorMsg));
 	}
 
 	private function buildPublishEvent(): PublishEvent {
@@ -882,22 +947,23 @@ class Context {
 	}
 
 	/**
-	 * A failed final publish is logged, not thrown: the events stay queued and
-	 * calling close() again retries publishing them.
+	 * Publishes any queued events and closes the context. A failed final publish is re-thrown and the context is
+	 * left open (isClosed() stays false) with its events still queued, so calling close() again retries publishing
+	 * them. The Close event is emitted only once the close succeeds.
 	 */
 	public function close(): void {
-		if ($this->isClosed() && $this->getPendingCount() === 0) {
+		if ($this->isClosed()) {
 			return;
 		}
 
 		$this->finalizing = true;
-		if ($this->getPendingCount() > 0) {
-			$this->flush();
+		try {
+			if ($this->getPendingCount() > 0) {
+				$this->flushEvents(true);
+			}
 		}
-		$this->finalizing = false;
-
-		if ($this->isClosed()) {
-			return;
+		finally {
+			$this->finalizing = false;
 		}
 
 		$this->logEvent(ContextEventLoggerEvent::Close, null);

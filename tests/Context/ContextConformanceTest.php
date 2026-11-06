@@ -292,7 +292,7 @@ class ContextConformanceTest extends TestCase {
 		self::assertFalse(Utils::isPromise((object) ['then' => 'noop']));
 	}
 
-	public function testFailedFinalPublishDoesNotThrowAndKeepsEventsForRetry(): void {
+	public function testFailedFinalPublishRethrowsKeepsEventsAndSecondCloseRetries(): void {
 		$client = new Client(new ClientConfig('https://example.com', 'k', 'a', 'e'));
 		$config = new Config($client);
 		$config->setContextDataProvider(new EmptyProvider());
@@ -304,8 +304,14 @@ class ContextConformanceTest extends TestCase {
 
 		$handler->prerun = static function() { throw new \RuntimeException('Publish failed'); };
 		$context->track('goal');
-		$context->close();
-		self::assertTrue($context->isClosed());
+		try {
+			$context->close();
+			self::fail('close() should rethrow the publish failure');
+		}
+		catch (\RuntimeException $exception) {
+			self::assertSame('Publish failed', $exception->getMessage());
+		}
+		self::assertFalse($context->isClosed());
 		self::assertFalse($context->isFinalizing());
 		self::assertFalse($context->isFailed());
 		self::assertSame(1, $context->getPendingCount());

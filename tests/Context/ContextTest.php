@@ -934,8 +934,15 @@ class ContextTest extends TestCase {
 
 		$logger->clear();
 
-		$context->close();
-		self::assertTrue($context->isClosed());
+		// A failed final publish re-throws and leaves the context open with its events queued.
+		try {
+			$context->close();
+			self::fail('close() should rethrow the publish failure');
+		}
+		catch (\RuntimeException $exception) {
+			self::assertSame('Trigger failure', $exception->getMessage());
+		}
+		self::assertFalse($context->isClosed());
 		self::assertSame(1, $context->getPendingCount());
 		self::assertSame(ContextEventLoggerEvent::Error, $logger->events[0]->getEvent());
 	}
@@ -2539,8 +2546,14 @@ class ContextTest extends TestCase {
 
 		$context->track('goal1');
 		$logger->clear();
-		$context->close();
-		self::assertTrue($context->isClosed());
+		try {
+			$context->close();
+			self::fail('close() should rethrow the publish failure');
+		}
+		catch (\RuntimeException $exception) {
+			self::assertSame('Finalize failure', $exception->getMessage());
+		}
+		self::assertFalse($context->isClosed());
 		self::assertSame(1, $context->getPendingCount());
 
 		self::assertSame(ContextEventLoggerEvent::Error, $logger->events[0]->getEvent());
@@ -2566,8 +2579,14 @@ class ContextTest extends TestCase {
 
 		$context->track('goal1');
 		$logger->clear();
-		$context->close();
-		self::assertTrue($context->isClosed());
+		try {
+			$context->close();
+			self::fail('close() should rethrow the publish failure');
+		}
+		catch (\RuntimeException $exception) {
+			self::assertSame('Server unavailable', $exception->getMessage());
+		}
+		self::assertFalse($context->isClosed());
 		self::assertSame(1, $context->getPendingCount());
 
 		$errorEvents = array_filter($logger->events, fn($e) => $e->getEvent() === ContextEventLoggerEvent::Error);
@@ -2575,6 +2594,78 @@ class ContextTest extends TestCase {
 		$errorEvent = array_values($errorEvents)[0];
 		self::assertStringContainsString('Server unavailable', $errorEvent->getData()->getMessage());
 	}
+
+	public function testSecondCloseRetriesAndEmitsCloseOnSuccess(): void {
+		$logger = new MockContextEventLoggerProxy();
+		$context = $this->createReadyContext('context.json', true, $logger);
+		$this->eventHandler->prerun = static function() {
+			throw new \RuntimeException('Server unavailable');
+		};
+
+		$context->track('goal1');
+
+		// First close fails: rethrows, stays open, keeps the queue, no Close.
+		try {
+			$context->close();
+			self::fail('close() should rethrow the publish failure');
+		}
+		catch (\RuntimeException $exception) {
+			self::assertSame('Server unavailable', $exception->getMessage());
+		}
+		self::assertFalse($context->isClosed());
+		self::assertSame(1, $context->getPendingCount());
+
+		// Recover the collector and close again: it publishes once, closes and emits Close.
+		$this->eventHandler->prerun = null;
+		$logger->clear();
+		$context->close();
+
+		self::assertTrue($context->isClosed());
+		self::assertSame(0, $context->getPendingCount());
+		self::assertCount(1, $this->eventHandler->submitted);
+		$events = array_map(fn($e) => $e->getEvent(), $logger->events);
+		self::assertSame([ContextEventLoggerEvent::Publish, ContextEventLoggerEvent::Close], $events);
+	}
+
+	public function testRetainedQueueIsCappedDroppingOldestAndLoggingError(): void {
+		$logger = new MockContextEventLoggerProxy();
+		$context = $this->createReadyContext('context.json', true, $logger);
+		$context->maxRetainedEvents = 3;
+		$this->eventHandler->prerun = static function() {
+			throw new \RuntimeException('Server unavailable');
+		};
+
+		$context->track('goal1');
+		$context->track('goal2');
+		$context->track('goal3');
+		$context->track('goal4');
+		$context->track('goal5');
+		self::assertSame(5, $context->getPendingCount());
+
+		$logger->clear();
+		$context->publish();
+
+		// Oldest two goals dropped, leaving the cap of 3; an Error event records the drop.
+		self::assertSame(3, $context->getPendingCount());
+		$errorEvents = array_values(array_filter(
+			$logger->events,
+			fn($e) => $e->getEvent() === ContextEventLoggerEvent::Error
+		));
+		$dropEvents = array_values(array_filter(
+			$errorEvents,
+			fn($e) => strpos($e->getData()->getMessage(), 'Retained event queue exceeded') !== false
+		));
+		self::assertNotEmpty($dropEvents);
+
+		// A later successful publish sends exactly the retained events.
+		$this->eventHandler->prerun = null;
+		$context->publish();
+		$event = end($this->eventHandler->submitted);
+		self::assertCount(3, $event->goals);
+		self::assertSame('goal3', $event->goals[0]->name);
+		self::assertSame('goal5', $event->goals[2]->name);
+	}
+
 
 	public function testPublishPropagatesClientErrorMessage(): void {
 		$logger = new MockContextEventLoggerProxy();
