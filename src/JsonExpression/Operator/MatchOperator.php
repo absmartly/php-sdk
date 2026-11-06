@@ -6,8 +6,6 @@ use ABSmartly\SDK\JsonExpression\Evaluator;
 
 use function preg_last_error;
 use function preg_match;
-use function rtrim;
-use function strlen;
 use function strpos;
 use function trim;
 
@@ -32,23 +30,16 @@ class MatchOperator extends BinaryOperator {
 	}
 
 	private function runRegexBounded(string $text, string $pattern): ?bool {
-		$flags = '';
-		if (preg_match('/^\/(.*)\/([imsxu]*)$/s', $pattern, $parts) === 1
-			&& (strlen($parts[1]) - strlen(rtrim($parts[1], '\\'))) % 2 === 0) {
-			// Conventional "/pattern/flags" form: keep the flags instead of folding them into the pattern.
-			// An odd number of backslashes before the last "/" escapes it, so it is not a closing delimiter.
-			[, $pattern, $flags] = $parts;
-		}
-		else {
-			$pattern = trim($pattern, '/');
-		}
+		// v1.0.3 and the JS SDK treat slashes literally: "/pattern/flags" is not parsed, it is matched as-is
+		// after stripping leading/trailing slashes, so no flags are extracted.
+		$pattern = trim($pattern, '/');
 
 		$delimiter = self::unusedDelimiter($pattern);
 		if ($delimiter === null) {
 			return null;
 		}
 
-		$matches = @preg_match($delimiter . $pattern . $delimiter . $flags, $text);
+		$matches = @preg_match($delimiter . $pattern . $delimiter, $text);
 
 		if (preg_last_error() !== PREG_NO_ERROR || $matches === false) {
 			return null;
