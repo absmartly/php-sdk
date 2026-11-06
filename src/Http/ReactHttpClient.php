@@ -10,6 +10,7 @@ use React\Promise\Promise;
 use React\Promise\PromiseInterface;
 
 use function http_build_query;
+use function microtime;
 use function max;
 use function min;
 use function pow;
@@ -30,26 +31,27 @@ class ReactHttpClient implements AsyncHttpClientInterface {
 
 	public function getAsync(string $url, array $query = [], array $headers = []): PromiseInterface {
 		$url = $this->buildUrl($url, $query);
-		return $this->withRetries(fn() => $this->browser
-			->withTimeout($this->timeout / 1000)
+		return $this->withRetries(fn(float $timeoutSeconds) => $this->browser
+			->withTimeout($timeoutSeconds)
 			->get($url, $this->flattenHeaders($headers))
 			->then(fn($response) => $this->toResponse($response)));
 	}
 
 	public function putAsync(string $url, array $query = [], array $headers = [], string $body = ''): PromiseInterface {
 		$url = $this->buildUrl($url, $query);
-		return $this->withRetries(fn() => $this->browser
-			->withTimeout($this->timeout / 1000)
+		// Sent once: replaying a publish after a lost response could record the same events twice.
+		return $this->browser
+			->withTimeout($this->timeoutSeconds())
 			->put($url, $this->flattenHeaders($headers), $body)
-			->then(fn($response) => $this->toResponse($response)));
+			->then(fn($response) => $this->toResponse($response));
 	}
 
 	public function postAsync(string $url, array $query = [], array $headers = [], string $body = ''): PromiseInterface {
 		$url = $this->buildUrl($url, $query);
-		return $this->withRetries(fn() => $this->browser
-			->withTimeout($this->timeout / 1000)
+		return $this->browser
+			->withTimeout($this->timeoutSeconds())
 			->post($url, $this->flattenHeaders($headers), $body)
-			->then(fn($response) => $this->toResponse($response)));
+			->then(fn($response) => $this->toResponse($response));
 	}
 
 	public function get(string $url, array $query = [], array $headers = []): Response {
@@ -64,28 +66,50 @@ class ReactHttpClient implements AsyncHttpClientInterface {
 		return await($this->postAsync($url, $query, $headers, $body));
 	}
 
+	/**
+	 * A $timeout of 0 or less means no limit, as in HTTPClient; React's Browser takes a negative timeout as "none".
+	 */
+	private function timeoutSeconds(): float {
+		return $this->timeout > 0 ? $this->timeout / 1000 : -1;
+	}
+
+	private function nowMs(): float {
+		return microtime(true) * 1000;
+	}
+
+	/**
+	 * Runs a GET, retrying transport errors and HTTP 5xx, 408 and 429 responses up to $retries times after the first
+	 * attempt, as HTTPClient does. $timeout bounds the whole sequence: each attempt only gets the time that is left,
+	 * and no retry starts once the remaining time cannot cover its back-off.
+	 *
+	 * @param callable(float): PromiseInterface $request called with the attempt's timeout in seconds
+	 */
 	private function withRetries(callable $request): PromiseInterface {
-		$maxAttempts = max(1, $this->retries);
+		$maxAttempts = 1 + max(0, $this->retries);
+		$hasDeadline = $this->timeout > 0;
+		$deadline = $this->nowMs() + $this->timeout;
 		$current = null;
 		$timer = null;
 		$cancelled = false;
 
 		return new Promise(
-			function($resolve, $reject) use ($request, $maxAttempts, &$current, &$timer, &$cancelled) {
-				$attempt = function(int $n) use (&$attempt, $request, $maxAttempts, $resolve, $reject, &$current, &$timer, &$cancelled) {
+			function($resolve, $reject) use ($request, $maxAttempts, $hasDeadline, $deadline, &$current, &$timer, &$cancelled) {
+				$attempt = function(int $n) use (&$attempt, $request, $maxAttempts, $hasDeadline, $deadline, $resolve, $reject, &$current, &$timer, &$cancelled) {
 					if ($cancelled) {
 						return;
 					}
-					$current = $request();
-					$current->then($resolve, function($error) use (&$attempt, $n, $maxAttempts, $reject, &$timer, &$cancelled) {
+					$timeoutSeconds = $hasDeadline ? max(0.001, ($deadline - $this->nowMs()) / 1000) : -1;
+					$current = $request($timeoutSeconds);
+					$current->then($resolve, function($error) use (&$attempt, $n, $maxAttempts, $hasDeadline, $deadline, $reject, &$timer, &$cancelled) {
 						if ($cancelled) {
 							return;
 						}
-						if (!$this->isRetryable($error) || $n >= $maxAttempts - 1) {
+						$backoffMs = min(1000 * pow(2, $n), 10000);
+						$outOfTime = $hasDeadline && $this->nowMs() + $backoffMs >= $deadline;
+						if (!$this->isRetryable($error) || $n + 1 >= $maxAttempts || $outOfTime) {
 							$reject($error);
 							return;
 						}
-						$backoffMs = min(1000 * pow(2, $n), 10000);
 						error_log(sprintf(
 							'ABsmartly SDK: Retrying HTTP request (attempt %d/%d) after %dms due to error: %s',
 							$n + 1,
