@@ -17,9 +17,8 @@
 - **`close()` rethrows a failed final publish.** The events stay queued and the context stays open so `close()`
   can be retried (old: the error was swallowed and the context closed).
 
-- **Audience operators match the other SDKs.** `in` takes `[haystack, needle]`, not the old PHP
-  `[needle, haystack]`; membership uses the shared evaluator's comparison and string-conversion rules,
-  matching JavaScript and Python rather than PHP-specific loose/strict membership. Binary operators return null for
+- **Audience operators match the other SDKs.** `in` keeps its `[haystack, needle]` order and strict array
+  membership; a non-string needle against a string haystack now yields null. Binary operators return null for
   null operands; deep collection comparison ignores object key order and compares nested values.
   These corrections can change targeting for rules that depended on the old PHP-only behavior.
 - **Custom fields use the collector format.** `Experiment::$customFieldValues` is `?array`, containing
