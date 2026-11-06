@@ -12,9 +12,9 @@ The SDK entry class is now `ABSmartly\SDK`. The previous fully qualified name, `
 
 ### Migrating to 2.0 (breaking)
 
-Context reads now throw `ABSmartly\SDK\Exception\LogicException` before readiness (`ABsmartly Context is not yet ready.`); previously some returned defaults. Check `$context->isReady()` before reading a pending context. Existing non-exposing reads (`peekVariableValue`, `getVariableKeys`, `customFieldValue`, `getExperiments`) remain available after finalization. Treatment/exposing reads still reject finalized contexts.
+Traffic eligibility now uses the experiment's traffic seed, as in the other SDKs, which re-buckets running experiments whose traffic split is below 100%. `audienceStrict: false` is now honoured, and audience operators return null for null operands (see the CHANGELOG). Restart or start a new iteration of affected experiments when upgrading.
 
-Numeric units retain their type and floats use cross-SDK integer-rounded hashing. Nonblank string unit IDs retain their original bytes, preserving existing assignments. Failed final publishes now throw and leave the context open for retry. The legacy `ABSmartly\SDK\SDK` name, factory parameter ordering, `ContextEventHandler` contracts, and `PublishEvent::hashUnit(string)` override signature remain supported. ReactPHP is optional for synchronous use. See [CHANGELOG.md](CHANGELOG.md) for the full migration notes and audience/custom-field corrections.
+Everything else keeps its 1.x behaviour: units are stored as strings, `track()` accepts any object, `publish()`/`close()` log collector failures instead of throwing (the events stay queued for retry), `close()` emits `Close`, `refresh()` recovers a context whose initial load failed, and error messages are unchanged. The legacy `ABSmartly\SDK\SDK` name, factory parameter ordering, `ContextEventHandler` contracts, and `PublishEvent::hashUnit(string)` override signature remain supported. ReactPHP is optional for synchronous use. See [CHANGELOG.md](CHANGELOG.md) for the full migration notes and audience/custom-field corrections.
 
 ## Installation
 
@@ -308,6 +308,8 @@ Sometimes it is necessary to ensure all events have been published to the A/B Sm
 $context->publish();
 ```
 
+If the collector cannot be reached, `publish()` and `close()` do not throw: the error is logged (as an `Error` event when an event logger is set) and the events stay queued. `close()` still closes the context; calling `publish()` (while open) or `close()` again retries the queued events.
+
 ### Finalizing
 
 The `close()` method will ensure all events have been published to the A/B Smartly collector, like `Context->publish()`, and will also "seal" the context, throwing an error if any method that could generate an event is called.
@@ -378,7 +380,7 @@ The data parameter depends on the type of event. Currently, the SDK logs the fol
 | `Publish`  | `Context->publish()` method succeeds                        | `PublishEvent` data sent to the A/B Smartly event collector |
 | `Exposure` | `Context->getTreatment()` method succeeds on first exposure | `Exposure` data enqueued for publishing                     |
 | `Goal`     | `Context->track()` method succeeds                          | `GoalAchievement` goal data enqueued for publishing         |
-| `Finalize` | `Context->close()` method succeeds the first time           | `null`                                                      |
+| `Close`    | `Context->close()` method succeeds the first time           | `null`                                                      |
 
 ## Platform-Specific Examples
 
