@@ -585,6 +585,49 @@ class ContextTest extends TestCase {
 		self::assertSame(0, $context->getPendingCount());
 	}
 
+	public function testSharedKeyMissingUnitExperimentFallsThroughAndBothExposed(): void {
+		// A running, non-full-on experiment (exp_missing_unit, id 10) whose unit type "device_id" is absent must
+		// stay unassigned/control rather than becoming assigned/full-on, so "shared.color" falls through to the
+		// next experiment (exp_present_unit, id 12). Its control variant A defines the key, so a lost assigned
+		// guard would wrongly return "control-a" and fail here.
+		$context = $this->createReadyContext('shared_variables_missing_unit.json');
+
+		self::assertSame('b', $context->getVariableValue('shared.color', 'def'));
+		self::assertSame(2, $context->getPendingCount());
+
+		$context->publish();
+		$event = $this->eventHandler->submitted[0];
+		$byName = [];
+		foreach ($event->exposures as $exposure) {
+			$byName[$exposure->name] = $exposure;
+		}
+		self::assertArrayHasKey('exp_missing_unit', $byName);
+		self::assertArrayHasKey('exp_present_unit', $byName);
+		self::assertFalse($byName['exp_missing_unit']->assigned);
+		self::assertFalse($byName['exp_missing_unit']->fullOn);
+		self::assertTrue($byName['exp_present_unit']->assigned);
+	}
+
+	public function testSharedKeyPresentNullValueShadowsLaterExperiment(): void {
+		// A present-but-null key in the lower-id experiment (exp_null, id 20) must be returned, matching JS, and
+		// must shadow a later competitor (exp_value, id 21). Only the first experiment is exposed, because the
+		// lower-id one resolves the value and iteration stops.
+		$context = $this->createReadyContext('shared_variables_null.json');
+
+		self::assertNull($context->getVariableValue('shared.key', 'fallback'));
+		self::assertSame(1, $context->getPendingCount());
+
+		// peek returns the same null without queuing further exposures.
+		self::assertNull($context->peekVariableValue('shared.key', 'fallback'));
+		self::assertSame(1, $context->getPendingCount());
+
+		$context->publish();
+		$event = $this->eventHandler->submitted[0];
+		$names = array_map(fn($e) => $e->name, $event->exposures);
+		self::assertContains('exp_null', $names);
+		self::assertNotContains('exp_value', $names);
+	}
+
 	public function testPeekTreatmentReturnsOverrideVariant(): void {
 		$context = $this->createReadyContext();
 
@@ -2730,6 +2773,67 @@ class ContextTest extends TestCase {
 		self::assertSame('goal5', $event->goals[2]->name);
 	}
 
+
+	public function testEvictedUnsentExposureCanBeReExposedAfterRecovery(): void {
+		// cap 2: queue an exposure (oldest) then two goals; a failed publish evicts the oldest event, the exposure.
+		// Because the dropped exposure's cached assignment keeps exposed=true, a naive implementation would never
+		// re-queue it, so a later successful publish would contain only goals. Clearing exposed on eviction lets a
+		// later read re-expose it.
+		$logger = new MockContextEventLoggerProxy();
+		$context = $this->createReadyContext('context.json', true, $logger);
+		$context->maxRetainedEvents = 2;
+		$this->eventHandler->prerun = static function() {
+			throw new \RuntimeException('Server unavailable');
+		};
+
+		// Read an experiment (queues one exposure), then two goals: 3 events, exceeding the cap of 2.
+		self::assertSame(1, $context->getTreatment('exp_test_ab'));
+		$context->track('goal1');
+		$context->track('goal2');
+		self::assertSame(3, $context->getPendingCount());
+
+		// Failed publish evicts the oldest event (the exposure), leaving the two goals.
+		$context->publish();
+		self::assertSame(2, $context->getPendingCount());
+
+		// Recover the collector. Re-reading the same experiment must re-queue its exposure now that it was dropped.
+		$this->eventHandler->prerun = null;
+		self::assertSame(1, $context->getTreatment('exp_test_ab'));
+		self::assertSame(3, $context->getPendingCount());
+
+		$context->publish();
+		$event = end($this->eventHandler->submitted);
+		$names = array_map(fn($e) => $e->name, $event->exposures);
+		self::assertContains('exp_test_ab', $names);
+		self::assertCount(2, $event->goals);
+	}
+
+	public function testEvictionDoesNotResetNewerReplacementAssignment(): void {
+		// If the cached assignment has been replaced since its exposure was queued (e.g. after an override change),
+		// eviction of the old exposure must not clear the newer assignment's exposed flag.
+		$logger = new MockContextEventLoggerProxy();
+		$context = $this->createReadyContext('context.json', true, $logger);
+		$context->maxRetainedEvents = 2;
+		$this->eventHandler->prerun = static function() {
+			throw new \RuntimeException('Server unavailable');
+		};
+
+		// Queue an exposure for the current assignment, then replace it via an override (new cached assignment),
+		// re-read to expose the replacement, then add a goal so the oldest (first) exposure is evicted.
+		self::assertSame(1, $context->getTreatment('exp_test_ab'));
+		$context->setOverride('exp_test_ab', 0);
+		self::assertSame(0, $context->getTreatment('exp_test_ab'));
+		$context->track('goal1');
+		self::assertSame(3, $context->getPendingCount());
+
+		// Failed publish evicts the oldest exposure (the pre-override one). The newer assignment must stay exposed.
+		$context->publish();
+		self::assertSame(2, $context->getPendingCount());
+
+		// Re-reading must NOT re-queue, because the current cached assignment is still exposed.
+		self::assertSame(0, $context->getTreatment('exp_test_ab'));
+		self::assertSame(2, $context->getPendingCount());
+	}
 
 	public function testPublishPropagatesClientErrorMessage(): void {
 		$logger = new MockContextEventLoggerProxy();

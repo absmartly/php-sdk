@@ -59,6 +59,12 @@ class Context {
 	private array $assignmentCache;
 
 	private array $exposures = [];
+	/**
+	 * Assignment that produced each queued exposure, aligned by index with $exposures. Used to clear the
+	 * assignment's cached `exposed` flag if its exposure is dropped by queue-cap eviction, so a later read can
+	 * re-queue it. Kept separate from the Exposure so it never reaches the published payload.
+	 */
+	private array $exposureAssignments = [];
 	private array $achievements = [];
 
 	private array $attributes = [];
@@ -480,36 +486,41 @@ class Context {
 			if (!empty($experiment->data->audienceStrict) && !empty($assignment->audienceMismatch)) {
 				$assignment->variant = 0;
 			}
-			else if (empty($experiment->data->fullOnVariant) && ($uid = $this->units[$experiment->data->unitType] ?? null) !== null) {
-				$assigner = $this->getVariantAssigner($unitType, $uid);
+			else if (empty($experiment->data->fullOnVariant)) {
+				// Not a full-on experiment: assign via the traffic split only when the unit is present.
+				// A missing unit leaves the assignment unassigned (control) so it falls through, as in JS.
+				if (($uid = $this->units[$experiment->data->unitType] ?? null) !== null) {
+					$assigner = $this->getVariantAssigner($unitType, $uid);
 
-				$eligible = $assigner->assign(
-					$experiment->data->trafficSplit,
-					$experiment->data->trafficSeedHi,
-					$experiment->data->trafficSeedLo
-				);
-				if ($eligible === 1) {
-					$custom = $this->cassignments[$experimentName] ?? null;
-					if ($custom !== null) {
-						$assignment->variant = $custom;
-						$assignment->custom = true;
+					$eligible = $assigner->assign(
+						$experiment->data->trafficSplit,
+						$experiment->data->trafficSeedHi,
+						$experiment->data->trafficSeedLo
+					);
+					if ($eligible === 1) {
+						$custom = $this->cassignments[$experimentName] ?? null;
+						if ($custom !== null) {
+							$assignment->variant = $custom;
+							$assignment->custom = true;
+						}
+						else {
+							$assignment->variant = $assigner->assign(
+								$experiment->data->split,
+								$experiment->data->seedHi,
+								$experiment->data->seedLo
+							);
+						}
 					}
 					else {
-						$assignment->variant = $assigner->assign(
-							$experiment->data->split,
-							$experiment->data->seedHi,
-							$experiment->data->seedLo
-						);
+						$assignment->eligible = false;
+						$assignment->variant = 0;
 					}
-				}
-				else {
-					$assignment->eligible = false;
-					$assignment->variant = 0;
-				}
 
-				$assignment->assigned = true;
+					$assignment->assigned = true;
+				}
 			}
 			else {
+				// Full-on experiment (nonzero fullOnVariant): everyone gets the full-on variant.
 				$assignment->assigned = true;
 				$assignment->variant = $experiment->data->fullOnVariant;
 				$assignment->fullOn = true;
@@ -558,7 +569,9 @@ class Context {
 					$this->queueExposure($assignment);
 				}
 
-				if (isset($assignment->variables->{$key}) && ($assignment->assigned || $assignment->overridden)) {
+				// property_exists (not isset) so a present key whose value is null is still returned,
+				// matching JS: a lower-id experiment that defines $key=null shadows a later competitor.
+				if (property_exists($assignment->variables, $key) && ($assignment->assigned || $assignment->overridden)) {
 					return $assignment->variables->{$key};
 				}
 			}
@@ -641,6 +654,7 @@ class Context {
 		$exposure->ingestAssignment($assignment);
 
 		$this->exposures[] = $exposure;
+		$this->exposureAssignments[] = $assignment;
 		++$this->pendingCount;
 
 		$this->logEvent(ContextEventLoggerEvent::Exposure, $exposure);
@@ -813,6 +827,7 @@ class Context {
 				));
 			}
 			$this->exposures = [];
+			$this->exposureAssignments = [];
 			$this->achievements = [];
 			$this->pendingCount = 0;
 
@@ -829,6 +844,7 @@ class Context {
 			$this->eventHandler->publish($event);
 			$this->logEvent(ContextEventLoggerEvent::Publish, $event);
 			$this->exposures = [];
+			$this->exposureAssignments = [];
 			$this->achievements = [];
 			$this->pendingCount = 0;
 		}
@@ -866,8 +882,20 @@ class Context {
 
 		$droppedExposures = min($toDrop, count($this->exposures));
 		if ($droppedExposures > 0) {
+			$droppedAssignments = array_slice($this->exposureAssignments, 0, $droppedExposures);
 			$this->exposures = array_slice($this->exposures, $droppedExposures);
+			$this->exposureAssignments = array_slice($this->exposureAssignments, $droppedExposures);
 			$toDrop -= $droppedExposures;
+
+			// Clearing an unsent exposure means a later read must be able to re-queue it, so reset the matching
+			// cached assignment's `exposed` flag, unless the cache has since been replaced with a newer
+			// assignment (which carries its own un-exposed state).
+			foreach ($droppedAssignments as $assignment) {
+				$cached = $this->assignmentCache[$assignment->name] ?? null;
+				if ($cached === $assignment) {
+					$assignment->exposed = false;
+				}
+			}
 		}
 
 		$droppedGoals = 0;

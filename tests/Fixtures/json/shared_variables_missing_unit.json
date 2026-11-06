@@ -1,0 +1,42 @@
+{
+    "experiments": [
+        {
+            "id": 10,
+            "name": "exp_missing_unit",
+            "iteration": 1,
+            "unitType": "device_id",
+            "seedHi": 11,
+            "seedLo": 22,
+            "split": [0.5, 0.5],
+            "trafficSeedHi": 1,
+            "trafficSeedLo": 2,
+            "trafficSplit": [0.0, 1.0],
+            "fullOnVariant": 0,
+            "applications": [{"name": "website"}],
+            "variants": [
+                {"name": "A", "config": "{\"shared.color\":\"control-a\"}"},
+                {"name": "B", "config": "{\"shared.color\":\"a\"}"}
+            ],
+            "audience": null
+        },
+        {
+            "id": 12,
+            "name": "exp_present_unit",
+            "iteration": 1,
+            "unitType": "session_id",
+            "seedHi": 33,
+            "seedLo": 44,
+            "split": [1.0],
+            "trafficSeedHi": 3,
+            "trafficSeedLo": 4,
+            "trafficSplit": [0.0, 1.0],
+            "fullOnVariant": 1,
+            "applications": [{"name": "website"}],
+            "variants": [
+                {"name": "A", "config": null},
+                {"name": "B", "config": "{\"shared.color\":\"b\"}"}
+            ],
+            "audience": null
+        }
+    ]
+}
