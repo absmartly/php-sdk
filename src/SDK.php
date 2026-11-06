@@ -36,7 +36,7 @@ final class SDK {
 	 *                  the Web Console and should match the available environments in your infrastructure.
 	 * @param string $application Name of the application where the SDK is installed. Applications are created on the
 	 *                  Web Console and should match the applications where your experiments will be running.
-	 * @param int $retries The number of retries before the SDK stops trying to connect.
+	 * @param int $retries The number of times a failed GET request is retried. Event publishing (PUT) is never retried.
 	 * @param int $timeout Amount of time, in milliseconds, before the SDK will stop trying to connect.
 	 * @param callable|null $eventLogger A callback function which runs after SDK events.
 	 * @return SDK SDK instance created using the credentials and details above.

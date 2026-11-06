@@ -35,9 +35,10 @@ class FakeClockHTTPClient extends HTTPClient {
 		$this->now += $milliseconds;
 	}
 
-	public function run(): void {
-		// transfer() is faked, so no request leaves the process; get() only sets up a real, never-executed cURL handle.
-		$this->get('https://demo.absmartly.io/v1/context');
+	public function run(string $method = 'get'): void {
+		// transfer() is faked, so no request leaves the process; get()/put()/post() only set up a real, never-executed
+		// cURL handle.
+		$this->$method('https://demo.absmartly.io/v1/context');
 	}
 }
 
@@ -99,5 +100,29 @@ class HTTPClientRetryTest extends TestCase {
 		self::assertSame(0, $client->attemptTimeouts[0], 'A timeout of 0 means no limit');
 		self::assertSame(1000, max($client->sleeps));
 		self::assertSame(1000, end($client->sleeps));
+	}
+
+	public function testGetRetriesRetryableFailures(): void {
+		$client = $this->client(60000, 5, [[0, true], [0, true], [0, false]]);
+		$client->run('get');
+
+		self::assertCount(3, $client->attemptTimeouts);
+		self::assertSame([50, 100], $client->sleeps);
+	}
+
+	public function testPutIsNeverRetried(): void {
+		$client = $this->client(60000, 5, array_fill(0, 6, [0, true]));
+		$client->run('put');
+
+		self::assertCount(1, $client->attemptTimeouts);
+		self::assertSame([], $client->sleeps);
+	}
+
+	public function testPostIsNeverRetried(): void {
+		$client = $this->client(60000, 5, array_fill(0, 6, [0, true]));
+		$client->run('post');
+
+		self::assertCount(1, $client->attemptTimeouts);
+		self::assertSame([], $client->sleeps);
 	}
 }
