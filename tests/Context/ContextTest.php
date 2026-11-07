@@ -417,8 +417,6 @@ class ContextTest extends TestCase {
 	}
 
 	public function testStrictAudienceMismatchGetAndPeekReturnDefault(): void {
-		// Control variant 0 has a configured value; a strict mismatch is neither assigned nor overridden, so both
-		// get and peek return the caller default, and peek queues nothing.
 		$context = $this->createReadyContext('audience_strict_control_config.json');
 		$context->setAttribute('age', 10);
 

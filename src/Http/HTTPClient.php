@@ -90,9 +90,7 @@ class HTTPClient {
 	}
 
 	/**
-	 * Sends the request, retrying transport errors and 5xx responses when $retry is true. $timeout bounds the whole
-	 * sequence: each attempt only gets the time that is left, and no retry starts once the remaining time cannot cover
-	 * its back-off. A $timeout of 0 or less means no limit.
+	 * $timeout bounds the whole retry sequence, back-off included; 0 or less means no limit.
 	 */
 	private function fetchResponse(bool $retry): Response {
 		$hasDeadline = $this->timeout > 0;
