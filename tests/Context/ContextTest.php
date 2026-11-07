@@ -1484,6 +1484,9 @@ class ContextTest extends TestCase {
 		self::assertTrue($context->isFailed());
 		self::assertSame(1, $callCount);
 
+		$readyError = $context->readyError();
+		self::assertInstanceOf(\Throwable::class, $readyError);
+
 		$logger->clear();
 
 		// refresh() on a context whose initial load failed is a no-op: it never fetches, stays failed,
@@ -1494,6 +1497,8 @@ class ContextTest extends TestCase {
 		self::assertTrue($context->isReady());
 		self::assertEmpty($context->getExperiments());
 		self::assertEmpty($logger->events);
+		// The original load error is preserved: refresh() neither clears nor replaces it.
+		self::assertSame($readyError, $context->readyError());
 	}
 
 	public function testFailedContextIsReadyWithEmptyData(): void {
