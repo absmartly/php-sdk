@@ -779,7 +779,7 @@ class Context {
 	 */
 	private static function validateUnit(string $unitType, $uid): string {
 		if (is_int($uid) || is_float($uid)) {
-			$uid = (string) $uid;
+			return (string) $uid;
 		}
 
 		if (!is_string($uid)) {

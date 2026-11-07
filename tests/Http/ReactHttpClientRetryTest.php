@@ -158,6 +158,37 @@ class ReactHttpClientRetryTest extends TestCase {
 		self::assertStringContainsString('total timeout', $error->getMessage());
 	}
 
+	public function testOverdueRetryAfterBlockedLoopDoesNotRunOrSucceed(): void {
+		$browser = $this->createMock(Browser::class);
+		$browser->method('withTimeout')->willReturnSelf();
+		$calls = 0;
+		$browser->method('get')->willReturnCallback(function() use (&$calls) {
+			$calls++;
+			return $calls === 1
+				? reject(new \RuntimeException('Connection refused'))
+				: resolve(new ReactResponse(200, [], 'late'));
+		});
+		$client = new ReactHttpClient($browser);
+		$client->retries = 1;
+		$client->totalTimeout = 1500;
+
+		$result = null;
+		$error = null;
+		$client->getAsync('http://x')->then(
+			function($r) use (&$result) { $result = $r; },
+			function($e) use (&$error) { $error = $e; }
+		);
+		// The application blocks the loop past both the 1s back-off and the 1.5s budget.
+		Loop::addTimer(0.01, fn() => usleep(1600000));
+		Loop::addTimer(3.0, fn() => Loop::stop());
+		Loop::run();
+
+		self::assertSame(1, $calls);
+		self::assertNull($result);
+		self::assertInstanceOf(\RuntimeException::class, $error);
+		self::assertStringContainsString('total timeout', $error->getMessage());
+	}
+
 	public function testTotalTimeoutAbortsSlowSuccessfulPut(): void {
 		// Single-attempt PUT must honour totalTimeout too: a 200ms success is aborted at the 50ms deadline.
 		$client = new ReactHttpClient($this->slowBrowser('put', 0.2));

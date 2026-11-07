@@ -120,6 +120,10 @@ class HTTPClient implements HttpClientInterface {
 			}
 
 			$this->sleepMs($delay);
+			// The sleep can overrun; don't start an attempt once the total budget is spent.
+			if ($hasDeadline && $this->nowMs() >= $deadline) {
+				break;
+			}
 			++$attempt;
 		}
 

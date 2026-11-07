@@ -206,14 +206,34 @@ class ReactHttpClient implements AsyncHttpClientInterface {
 						$reject(new \RuntimeException('HTTP request exceeded total timeout'));
 					});
 				}
-				$attempt = function(int $n) use (&$attempt, $request, $maxAttempts, $hasDeadline, $deadline, $resolve, $reject, $clearDeadline, &$current, &$timer, &$cancelled) {
+				$expire = function() use ($reject, $clearDeadline, &$current, &$timer, &$cancelled) {
+					$cancelled = true;
+					$clearDeadline();
+					if ($timer !== null) {
+						Loop::cancelTimer($timer);
+						$timer = null;
+					}
+					if ($current !== null) {
+						$current->cancel();
+					}
+					$reject(new \RuntimeException('HTTP request exceeded total timeout'));
+				};
+				$attempt = function(int $n) use (&$attempt, $request, $maxAttempts, $hasDeadline, $deadline, $resolve, $reject, $clearDeadline, $expire, &$current, &$timer, &$cancelled) {
 					if ($cancelled) {
+						return;
+					}
+					if ($hasDeadline && $this->nowMs() >= $deadline) {
+						$expire();
 						return;
 					}
 					$current = $request($this->effectiveTimeoutSeconds($hasDeadline, $deadline));
 					$current->then(
-						function($response) use ($resolve, $clearDeadline, &$cancelled) {
+						function($response) use ($resolve, $clearDeadline, $expire, $hasDeadline, $deadline, &$cancelled) {
 							if ($cancelled) {
+								return;
+							}
+							if ($hasDeadline && $this->nowMs() >= $deadline) {
+								$expire();
 								return;
 							}
 							$clearDeadline();
