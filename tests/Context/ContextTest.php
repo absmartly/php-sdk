@@ -372,6 +372,9 @@ class ContextTest extends TestCase {
 		$context = $this->createReadyContext('shared_variables_missing_unit.json');
 		$context->setCustomAssignment('exp_missing_unit', 1);
 		self::assertSame('b', $context->getVariableValue('shared.color', 'def'));
+		$pending = $context->getPendingCount();
+		self::assertSame('b', $context->getVariableValue('shared.color', 'def'));
+		self::assertSame($pending, $context->getPendingCount());
 
 		$context->setUnit('device_id', '123');
 		self::assertSame(1, $context->getTreatment('exp_missing_unit'));
@@ -392,6 +395,16 @@ class ContextTest extends TestCase {
 		$context->setCustomAssignment('exp_test_ab', 2);
 		$context->setAttribute('age', 25);
 		self::assertSame(2, $context->getTreatment('exp_test_ab'));
+	}
+
+	public function testMissingUnitWithCustomAssignmentZeroDeduplicatesExposures(): void {
+		$context = $this->createReadyContext('shared_variables_missing_unit.json');
+		$context->setCustomAssignment('exp_missing_unit', 0);
+
+		for ($i = 0; $i < 3; $i++) {
+			self::assertSame(0, $context->getTreatment('exp_missing_unit'));
+			self::assertSame(1, $context->getPendingCount());
+		}
 	}
 
 	public function testSetCustomAssignmentClearsAssignmentCache(): void {

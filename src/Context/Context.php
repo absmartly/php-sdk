@@ -444,7 +444,8 @@ class Context {
 			return true;
 		}
 		if (!$assignment->assigned) {
-			return false;
+			// Missing unit: nothing changes until the unit is set, then the custom assignment must be evaluated.
+			return !isset($this->units[$experiment->data->unitType]);
 		}
 		return $assignment->fullOn || !$assignment->eligible;
 	}
