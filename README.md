@@ -14,7 +14,7 @@ The SDK entry class is now `ABSmartly\SDK`. The previous fully qualified name, `
 
 Traffic eligibility now uses the experiment's traffic seed, as in the other SDKs, which re-buckets running experiments whose traffic split is below 100%. `audienceStrict: false` is now honoured, and audience operators return null for null operands (see the CHANGELOG). Restart or start a new iteration of affected experiments when upgrading.
 
-Everything else keeps its 1.x behaviour: units are stored as strings, `track()` accepts any object, `publish()`/`close()` log collector failures instead of throwing (the events stay queued for retry), `close()` emits `Close`, `refresh()` recovers a context whose initial load failed, and error messages are unchanged. The legacy `ABSmartly\SDK\SDK` name, factory parameter ordering, `ContextEventHandler` contracts, and `PublishEvent::hashUnit(string)` override signature remain supported. ReactPHP is optional for synchronous use. See [CHANGELOG.md](CHANGELOG.md) for the full migration notes and audience/custom-field corrections.
+Everything else keeps its 1.x behaviour: units are stored as strings, `track()` accepts any object, `publish()` logs collector failures instead of throwing (the events stay queued for retry), a failed `close()` throws and leaves the context open so it can be retried, `close()` emits `Close` once it succeeds, `refresh()` recovers a context whose initial load failed, and error messages are unchanged. The legacy `ABSmartly\SDK\SDK` name, factory parameter ordering, `ContextEventHandler` contracts, and `PublishEvent::hashUnit(string)` override signature remain supported. ReactPHP is optional for synchronous use. See [CHANGELOG.md](CHANGELOG.md) for the full migration notes and audience/custom-field corrections.
 
 ## Installation
 
@@ -308,7 +308,7 @@ Sometimes it is necessary to ensure all events have been published to the A/B Sm
 $context->publish();
 ```
 
-If the collector cannot be reached, `publish()` and `close()` do not throw: the error is logged (as an `Error` event when an event logger is set) and the events stay queued. `close()` still closes the context; calling `publish()` (while open) or `close()` again retries the queued events.
+If the collector cannot be reached, `publish()` does not throw: the error is logged (as an `Error` event when an event logger is set) and the events stay queued. A failed `close()` throws the publish error and leaves the context open with its events queued; calling `close()` again retries them, and `Close` is emitted only once a close succeeds. The retained queue is capped (oldest events are dropped with an `Error` log).
 
 ### Finalizing
 

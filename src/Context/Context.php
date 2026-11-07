@@ -432,6 +432,11 @@ class Context {
 		return true;
 	}
 
+	/** Whether a custom assignment would replace this assignment's variant (it is ignored when full-on, not eligible, unassigned or strictly mismatched). */
+	private function customAssignmentApplies(Assignment $assignment): bool {
+		return $assignment->assigned && $assignment->eligible && !$assignment->fullOn && !$assignment->audienceMismatch;
+	}
+
 	private function getAssignment(string $experimentName): Assignment {
 		$experiment = $this->getExperiment($experimentName);
 
@@ -449,7 +454,9 @@ class Context {
 					// previously not-running experiment
 					return $assignment;
 				}
-			} else if (!array_key_exists($experimentName, $this->cassignments) || ($assignment->custom && $this->cassignments[$experimentName] === $assignment->variant)) {
+			} else if (!array_key_exists($experimentName, $this->cassignments)
+				|| ($assignment->custom && $this->cassignments[$experimentName] === $assignment->variant)
+				|| (!$assignment->custom && !$this->customAssignmentApplies($assignment))) {
 				if ($this->experimentMatches($experiment->data, $assignment) && $this->audienceMatches($experiment->data, $assignment)) {
 					// assignment up-to-date
 					return $assignment;

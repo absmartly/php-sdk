@@ -134,11 +134,16 @@ class ReactHttpClient implements AsyncHttpClientInterface {
 				}
 				$current = $request($this->effectiveTimeoutSeconds($hasDeadline, $deadline));
 				$current->then(
-					function($response) use ($resolve, $clear, &$cancelled) {
+					function($response) use ($resolve, $reject, $clear, $hasDeadline, $deadline, &$cancelled) {
 						if ($cancelled) {
 							return;
 						}
+						$cancelled = true;
 						$clear();
+						if ($hasDeadline && $this->nowMs() >= $deadline) {
+							$reject(new \RuntimeException('HTTP request exceeded total timeout'));
+							return;
+						}
 						$resolve($response);
 					},
 					function($error) use ($reject, $clear, &$cancelled) {

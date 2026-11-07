@@ -346,6 +346,16 @@ class ContextTest extends TestCase {
 		self::assertSame(2, $context->getTreatment("exp_test_fullon"));
 	}
 
+	public function testIgnoredCustomAssignmentDoesNotRequeueExposures(): void {
+		$context = $this->createReadyContext();
+		$context->setCustomAssignment('exp_test_fullon', 2);
+
+		for ($i = 0; $i < 3; $i++) {
+			self::assertSame(2, $context->getTreatment('exp_test_fullon'));
+		}
+		self::assertSame(1, $context->getPendingCount());
+	}
+
 	public function testSetCustomAssignmentClearsAssignmentCache(): void {
 		$context = $this->createReadyContext();
 

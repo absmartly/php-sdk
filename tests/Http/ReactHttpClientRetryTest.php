@@ -189,6 +189,31 @@ class ReactHttpClientRetryTest extends TestCase {
 		self::assertStringContainsString('total timeout', $error->getMessage());
 	}
 
+	public function testOverduePutResponseAfterBlockedLoopIsATimeout(): void {
+		$browser = $this->createMock(Browser::class);
+		$browser->method('withTimeout')->willReturnSelf();
+		$deferred = new \React\Promise\Deferred();
+		$browser->expects(self::once())->method('put')->willReturn($deferred->promise());
+		Loop::addTimer(0.01, fn() => $deferred->resolve(new ReactResponse(200, [], 'late')));
+		$client = new ReactHttpClient($browser);
+		$client->totalTimeout = 50;
+
+		$result = null;
+		$error = null;
+		$client->putAsync('http://x', [], [], '{}')->then(
+			function($r) use (&$result) { $result = $r; },
+			function($e) use (&$error) { $error = $e; }
+		);
+		// Block the loop past the 50ms budget before the 10ms response is delivered.
+		Loop::addTimer(0.001, fn() => usleep(100000));
+		Loop::addTimer(0.5, fn() => Loop::stop());
+		Loop::run();
+
+		self::assertNull($result);
+		self::assertInstanceOf(\RuntimeException::class, $error);
+		self::assertStringContainsString('total timeout', $error->getMessage());
+	}
+
 	public function testTotalTimeoutAbortsSlowSuccessfulPut(): void {
 		// Single-attempt PUT must honour totalTimeout too: a 200ms success is aborted at the 50ms deadline.
 		$client = new ReactHttpClient($this->slowBrowser('put', 0.2));
