@@ -502,7 +502,7 @@ class Context {
 
 	public function peekVariableValue(string $key, $default) {
 		$assignment = $this->getVariableAssignment($key);
-		if ($assignment && isset($assignment->variables->{$key})) {
+		if ($assignment && isset($assignment->variables->{$key}) && ($assignment->assigned || $assignment->overridden)) {
 			return $assignment->variables->{$key};
 		}
 

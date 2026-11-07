@@ -416,6 +416,17 @@ class ContextTest extends TestCase {
 		self::assertSame(0, $context->getPendingCount());
 	}
 
+	public function testStrictAudienceMismatchGetAndPeekReturnDefault(): void {
+		// Control variant 0 has a configured value; a strict mismatch is neither assigned nor overridden, so both
+		// get and peek return the caller default, and peek queues nothing.
+		$context = $this->createReadyContext('audience_strict_control_config.json');
+		$context->setAttribute('age', 10);
+
+		self::assertSame('fallback', $context->peekVariableValue('banner.size', 'fallback'));
+		self::assertSame(0, $context->getPendingCount());
+		self::assertSame('fallback', $context->getVariableValue('banner.size', 'fallback'));
+	}
+
 	public function testPeekVariableValueReturnsAssignedVariantOnAudienceMismatchNonStrictMode(): void {
 		$context = $this->createReadyContext('audience_context.json');
 		self::assertSame("large", $context->peekVariableValue("banner.size", "small"));
