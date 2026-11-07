@@ -356,6 +356,28 @@ class ContextTest extends TestCase {
 		self::assertSame(1, $context->getPendingCount());
 	}
 
+	public function testCustomAssignmentAppliesAfterNonStrictAudienceMismatch(): void {
+		// exp_test_ab has a non-strict audience (age >= 20). A mismatch still takes a custom variant, so setting one
+		// after a cached natural read must replace it.
+		$context = $this->createReadyContext('audience_context.json');
+		$context->setAttribute('age', 10);
+		$natural = $context->getTreatment('exp_test_ab');
+
+		$custom = $natural === 1 ? 2 : 1;
+		$context->setCustomAssignment('exp_test_ab', $custom);
+		self::assertSame($custom, $context->getTreatment('exp_test_ab'));
+	}
+
+	public function testCustomAssignmentAppliesOnceMissingUnitIsSet(): void {
+		$context = $this->createReadyContext('shared_variables_missing_unit.json');
+		$context->setCustomAssignment('exp_missing_unit', 1);
+		self::assertSame('b', $context->getVariableValue('shared.color', 'def'));
+
+		$context->setUnit('device_id', '123');
+		self::assertSame(1, $context->getTreatment('exp_missing_unit'));
+		self::assertSame('a', $context->getVariableValue('shared.color', 'def'));
+	}
+
 	public function testSetCustomAssignmentClearsAssignmentCache(): void {
 		$context = $this->createReadyContext();
 

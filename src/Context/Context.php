@@ -432,9 +432,20 @@ class Context {
 		return true;
 	}
 
-	/** Whether a custom assignment would replace this assignment's variant (it is ignored when full-on, not eligible, unassigned or strictly mismatched). */
-	private function customAssignmentApplies(Assignment $assignment): bool {
-		return $assignment->assigned && $assignment->eligible && !$assignment->fullOn && !$assignment->audienceMismatch;
+	/**
+	 * Whether the cached assignment came from a path that never takes a custom assignment, so an unchanged
+	 * custom variant can't alter it: full-on, not eligible (traffic), or a strict audience mismatch. A
+	 * non-strict mismatch still takes the custom variant, and an unassigned (missing-unit) assignment must be
+	 * recomputed once the unit is set, so neither counts.
+	 */
+	private function customAssignmentIgnored(Assignment $assignment, $experiment): bool {
+		if (!$assignment->assigned) {
+			return false;
+		}
+		if ($assignment->fullOn || !$assignment->eligible) {
+			return true;
+		}
+		return $assignment->audienceMismatch && !empty($experiment->data->audienceStrict);
 	}
 
 	private function getAssignment(string $experimentName): Assignment {
@@ -456,7 +467,7 @@ class Context {
 				}
 			} else if (!array_key_exists($experimentName, $this->cassignments)
 				|| ($assignment->custom && $this->cassignments[$experimentName] === $assignment->variant)
-				|| (!$assignment->custom && !$this->customAssignmentApplies($assignment))) {
+				|| (!$assignment->custom && $this->customAssignmentIgnored($assignment, $experiment))) {
 				if ($this->experimentMatches($experiment->data, $assignment) && $this->audienceMatches($experiment->data, $assignment)) {
 					// assignment up-to-date
 					return $assignment;
