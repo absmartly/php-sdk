@@ -1,6 +1,6 @@
 <?php
 
-namespace ABSmartly\SDK;
+namespace ABSmartly;
 
 use ABSmartly\SDK\Client\Client;
 use ABSmartly\SDK\Client\ClientConfig;
@@ -9,8 +9,14 @@ use ABSmartly\SDK\Context\ContextConfig;
 use ABSmartly\SDK\Context\ContextData;
 use ABSmartly\SDK\Context\ContextDataProvider;
 use ABSmartly\SDK\Context\ContextEventHandler;
+use ABSmartly\SDK\Config;
 use ABSmartly\SDK\Http\HTTPClient;
 
+/**
+ * Entry point of the A/B Smartly PHP SDK.
+ *
+ * Also available under its former name, ABSmartly\SDK\SDK.
+ */
 final class SDK {
 
 	private Client $client;
@@ -30,7 +36,7 @@ final class SDK {
 	 *                  the Web Console and should match the available environments in your infrastructure.
 	 * @param string $application Name of the application where the SDK is installed. Applications are created on the
 	 *                  Web Console and should match the applications where your experiments will be running.
-	 * @param int $retries The number of retries before the SDK stops trying to connect.
+	 * @param int $retries The number of times a failed GET request is retried. Event publishing (PUT) is never retried.
 	 * @param int $timeout Amount of time, in milliseconds, before the SDK will stop trying to connect.
 	 * @param callable|null $eventLogger A callback function which runs after SDK events.
 	 * @return SDK SDK instance created using the credentials and details above.
@@ -69,3 +75,5 @@ final class SDK {
 		$this->client->close();
 	}
 }
+
+class_alias(SDK::class, 'ABSmartly\\SDK\\SDK');

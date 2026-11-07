@@ -63,7 +63,7 @@ class ClientConfig {
 
 
 	/**
-	 * @param int $retries The number of retries before the SDK stops trying to connect.
+	 * @param int $retries The number of times a failed GET request is retried. Event publishing (PUT) is never retried.
 	 * @return $this
 	 */
 	public function setRetries(int $retries = 5): ClientConfig {

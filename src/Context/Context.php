@@ -11,11 +11,12 @@ use ABSmartly\SDK\ExperimentVariables;
 use ABSmartly\SDK\Exposure;
 use ABSmartly\SDK\GoalAchievement;
 use ABSmartly\SDK\PublishEvent;
-use ABSmartly\SDK\SDK;
+use ABSmartly\SDK;
 use ABSmartly\SDK\VariableParser;
 use ABSmartly\SDK\VariantAssigner;
 
 use Exception;
+use JsonException;
 use Throwable;
 
 use function count;
@@ -23,7 +24,9 @@ use function get_object_vars;
 use function gettype;
 use function hash;
 use function is_int;
+use function json_decode;
 use function microtime;
+use function strpos;
 use function sprintf;
 use function trim;
 
@@ -60,6 +63,7 @@ class Context {
 	private int $pendingCount = 0;
 	private bool $closed = false;
 	private bool $ready;
+	private int $attrsSeq = 0;
 
 	public function isReady(): bool {
 		return $this->ready;
@@ -71,6 +75,10 @@ class Context {
 
 	public function isClosed(): bool {
 		return $this->closed;
+	}
+
+	public function pending(): int {
+		return $this->pendingCount;
 	}
 
 	public static function getTime(): int {
@@ -194,6 +202,61 @@ class Context {
 		return $return;
 	}
 
+	public function customFieldValue(string $experimentName, string $fieldName) {
+		$this->checkReady();
+
+		$experiment = $this->getExperiment($experimentName);
+		if ($experiment === null || !isset($experiment->data->customFieldValues)) {
+			return null;
+		}
+
+		$field = null;
+		foreach ($experiment->data->customFieldValues as $candidate) {
+			if (isset($candidate->name) && $candidate->name === $fieldName) {
+				$field = $candidate;
+				break;
+			}
+		}
+
+		if ($field === null || !isset($field->value)) {
+			return null;
+		}
+
+		$value = $field->value;
+		$type = $field->type ?? null;
+
+		if ($type === 'json' && is_string($value)) {
+			return $this->decodeCustomFieldJson($value, $experimentName, $fieldName);
+		}
+
+		if ($type === 'number' && is_string($value)) {
+			if (strpos($value, '.') !== false) {
+				return (float) $value;
+			}
+			return (int) $value;
+		}
+
+		if (strpos($type ?? '', 'boolean') === 0 && is_string($value)) {
+			return $value === 'true' || $value === '1';
+		}
+
+		return $value;
+	}
+
+	private function decodeCustomFieldJson(string $json, string $experimentName, string $fieldName) {
+		try {
+			return json_decode($json, true, 512, JSON_THROW_ON_ERROR);
+		}
+		catch (JsonException $exception) {
+			$this->logError(new InvalidArgumentException(
+				sprintf('Failed to parse JSON custom field value "%s" for experiment "%s": %s', $fieldName, $experimentName, $exception->getMessage()),
+				0,
+				$exception
+			));
+			return null;
+		}
+	}
+
 	private function experimentMatches(Experiment $experiment, Assignment $assignment): bool {
 		return $experiment->id === $assignment->id &&
 			$experiment->unitType === $assignment->unitType &&
@@ -202,12 +265,30 @@ class Context {
 			$experiment->trafficSplit === $assignment->trafficSplit;
 	}
 
+	private function audienceMatches(Experiment $experiment, Assignment $assignment): bool {
+		if (!empty($experiment->audience) && !empty((array) $experiment->audience)) {
+			if ($this->attrsSeq > ($assignment->attrsSeq ?? 0)) {
+				$attrs = $this->getAttributes();
+				$result = $this->audienceMatcher->evaluate($experiment->audience, $attrs);
+				$newAudienceMismatch = !$result;
+
+				if ($newAudienceMismatch !== $assignment->audienceMismatch) {
+					return false;
+				}
+
+				$assignment->attrsSeq = $this->attrsSeq;
+			}
+		}
+		return true;
+	}
+
 	private function getAssignment(string $experimentName): Assignment {
 		$experiment = $this->getExperiment($experimentName);
 
 		if (isset($this->assignmentCache[$experimentName])) {
 			$assignment = $this->assignmentCache[$experimentName];
-			if ($override = $this->overrides[$experimentName] ?? false) {
+			if (array_key_exists($experimentName, $this->overrides)) {
+				$override = $this->overrides[$experimentName];
 				if ($assignment->overridden && $assignment->variant === $override) {
 					// override up-to-date
 					return $assignment;
@@ -219,7 +300,7 @@ class Context {
 					return $assignment;
 				}
 			} else if (!isset($this->cassignments[$experimentName]) || $this->cassignments[$experimentName] === $assignment->variant) {
-				if ($this->experimentMatches($experiment->data, $assignment)) {
+				if ($this->experimentMatches($experiment->data, $assignment) && $this->audienceMatches($experiment->data, $assignment)) {
 					// assignment up-to-date
 					return $assignment;
 				}
@@ -250,17 +331,17 @@ class Context {
 				$assignment->audienceMismatch = !$result;
 			}
 
-			if (isset($experiment->data->audienceStrict) && !empty($assignment->audienceMismatch)) {
+			if (!empty($experiment->data->audienceStrict) && !empty($assignment->audienceMismatch)) {
 				$assignment->variant = 0;
 			}
 			else if (empty($experiment->data->fullOnVariant) && $uid = $this->units[$experiment->data->unitType] ?? null) {
 				//$unitHash = $this->getUnitHash($unitType, $uid);
 				$assigner = $this->getVariantAssigner($unitType, $uid);
 
-				$eligible = $assigner->assign(
+					$eligible = $assigner->assign(
 					$experiment->data->trafficSplit,
-					$experiment->data->seedHi,
-					$experiment->data->seedLo
+					$experiment->data->trafficSeedHi,
+					$experiment->data->trafficSeedLo
 				);
 				if ($eligible === 1) {
 					$custom = $this->cassignments[$experimentName] ?? null;
@@ -296,9 +377,11 @@ class Context {
 			$assignment->fullOnVariant = $experiment->data->fullOnVariant;
 		}
 
-		if (($experiment !== null) && ($assignment->variant < count($experiment->data->variants))) {
+		if (($experiment !== null) && $assignment->variant >= 0 && ($assignment->variant < count($experiment->data->variants))) {
 			$assignment->variables = $experiment->variables[$assignment->variant];
 		}
+
+		$assignment->attrsSeq = $this->attrsSeq;
 
 		return $assignment;
 	}
@@ -311,11 +394,17 @@ class Context {
 			return $defaultValue;
 		}
 
-		if (empty($assignment->exposed)) {
-			$this->queueExposure($assignment);
+		if ($assignment->variables !== null) {
+			if (empty($assignment->exposed)) {
+				$this->queueExposure($assignment);
+			}
+
+			if (isset($assignment->variables->{$key}) && ($assignment->assigned || $assignment->overridden)) {
+				return $assignment->variables->{$key};
+			}
 		}
 
-		return $assignment->variables->{$key} ?? $defaultValue;
+		return $defaultValue;
 	}
 
 	public function getVariableKeys(): array {
@@ -327,12 +416,13 @@ class Context {
 		return $return;
 	}
 
-	public function setAttribute(string $name, string $value): Context {
+	public function setAttribute(string $name, $value): Context {
 		$this->attributes[] = (object) [
 			'name' => $name,
 			'value' => $value,
 			'setAt' => self::getTime(),
 		];
+		++$this->attrsSeq;
 
 		return $this;
 	}
@@ -412,7 +502,7 @@ class Context {
 
 	public function peekVariableValue(string $key, $default) {
 		$assignment = $this->getVariableAssignment($key);
-		if ($assignment && isset($assignment->variables->{$key})) {
+		if ($assignment && isset($assignment->variables->{$key}) && ($assignment->assigned || $assignment->overridden)) {
 			return $assignment->variables->{$key};
 		}
 
@@ -455,6 +545,14 @@ class Context {
 		}
 
 		return $this;
+	}
+
+	public function getUnit(string $unitType) {
+		return $this->units[$unitType] ?? null;
+	}
+
+	public function getUnits(): array {
+		return $this->units;
 	}
 
 	public function setOverrides(array $overrides): Context {
@@ -520,7 +618,7 @@ class Context {
 
 	private function checkNotClosed(): void {
 		if ($this->isClosed()) {
-			throw new LogicException('ABSmartly Context is closed');
+			throw new LogicException('ABSmartly Context is finalized');
 		}
 	}
 
@@ -595,7 +693,7 @@ class Context {
 			return;
 		}
 
-		$this->logEvent(ContextEventLoggerEvent::Close, null);
+		$this->logEvent(ContextEventLoggerEvent::Finalize, null);
 		$this->closed = true;
 		$this->sdk->close();
 	}

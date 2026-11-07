@@ -14,7 +14,13 @@
     "autoload": {
         "psr-4": {
             "ABSmartly\\SDK\\": "src/"
-        }
+        },
+        "files": [
+            "src/SDK.php"
+        ],
+        "exclude-from-classmap": [
+            "src/SDK.php"
+        ]
     },
     "autoload-dev": {
         "psr-4": {
