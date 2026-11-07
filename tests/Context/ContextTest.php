@@ -378,6 +378,22 @@ class ContextTest extends TestCase {
 		self::assertSame('a', $context->getVariableValue('shared.color', 'def'));
 	}
 
+	public function testStrictAudienceExclusionWithCustomAssignmentDeduplicatesExposures(): void {
+		$context = $this->createReadyContext('audience_strict_context.json');
+		$context->setAttribute('age', 10);
+		$context->setCustomAssignment('exp_test_ab', 0);
+
+		for ($i = 0; $i < 3; $i++) {
+			self::assertSame(0, $context->getTreatment('exp_test_ab'));
+			self::assertSame(1, $context->getPendingCount());
+		}
+
+		// An attribute change that now matches the audience still lets the custom variant apply.
+		$context->setCustomAssignment('exp_test_ab', 2);
+		$context->setAttribute('age', 25);
+		self::assertSame(2, $context->getTreatment('exp_test_ab'));
+	}
+
 	public function testSetCustomAssignmentClearsAssignmentCache(): void {
 		$context = $this->createReadyContext();
 

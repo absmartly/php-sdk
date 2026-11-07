@@ -439,13 +439,14 @@ class Context {
 	 * recomputed once the unit is set, so neither counts.
 	 */
 	private function customAssignmentIgnored(Assignment $assignment, $experiment): bool {
+		// A strict audience exclusion is never assigned; attribute changes are still re-checked by audienceMatches().
+		if ($assignment->audienceMismatch && !empty($experiment->data->audienceStrict)) {
+			return true;
+		}
 		if (!$assignment->assigned) {
 			return false;
 		}
-		if ($assignment->fullOn || !$assignment->eligible) {
-			return true;
-		}
-		return $assignment->audienceMismatch && !empty($experiment->data->audienceStrict);
+		return $assignment->fullOn || !$assignment->eligible;
 	}
 
 	private function getAssignment(string $experimentName): Assignment {
