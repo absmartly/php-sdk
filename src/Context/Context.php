@@ -991,6 +991,13 @@ class Context {
 
 	public function refresh(): void {
 		$this->checkNotClosed();
+
+		// A context whose initial load failed stays failed: refresh() is a no-op that neither fetches nor
+		// applies data and emits no refresh/error event, matching the JS SDK's `_refresh` (`if (!this._failed)`).
+		if ($this->isFailed()) {
+			return;
+		}
+
 		$oldData = $this->data;
 		$oldIndex = $this->index;
 		$oldIndexVariables = $this->indexVariables;

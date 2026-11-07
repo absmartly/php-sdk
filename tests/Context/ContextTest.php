@@ -1441,7 +1441,7 @@ class ContextTest extends TestCase {
 		self::assertSame(0, $context->getPendingCount());
 	}
 
-	public function testRecoveryFromFailedState(): void {
+	public function testRefreshOnFailedContextIsANoOp(): void {
 		$clientConfig = new ClientConfig('https://demo.absmartly.io/v1', '', '', '');
 		$client = new Client($clientConfig);
 		$config = new Config($client);
@@ -1456,20 +1456,26 @@ class ContextTest extends TestCase {
 		};
 		$config->setContextDataProvider($dataProvider);
 
+		$logger = new MockContextEventLoggerProxy();
 		$eventHandler = new ContextEventHandlerMock($client);
 		$contextConfig = new ContextConfig();
 		$contextConfig->setEventHandler($eventHandler);
+		$contextConfig->setEventLogger($logger);
 		$context = (new SDK($config))->createContext($contextConfig);
 
 		self::assertTrue($context->isFailed());
 		self::assertSame(1, $callCount);
 
-		// A successful refresh recovers a context whose initial load failed.
+		$logger->clear();
+
+		// refresh() on a context whose initial load failed is a no-op: it never fetches, stays failed,
+		// and emits no refresh or error event, matching the JS SDK's `_refresh` (`if (!this._failed)`).
 		$context->refresh();
-		self::assertSame(2, $callCount);
-		self::assertFalse($context->isFailed());
+		self::assertSame(1, $callCount);
+		self::assertTrue($context->isFailed());
 		self::assertTrue($context->isReady());
-		self::assertNotEmpty($context->getExperiments());
+		self::assertEmpty($context->getExperiments());
+		self::assertEmpty($logger->events);
 	}
 
 	public function testFailedContextIsReadyWithEmptyData(): void {

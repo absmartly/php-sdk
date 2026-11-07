@@ -50,7 +50,6 @@
 
 ### Compatibility retained
 
-- `refresh()` on a context whose initial load failed fetches again, and a successful refresh clears `isFailed()`.
 - Units are stored as strings: `setUnit()`/`setUnits()` accept numbers and store their string form, and
   `getUnit()`/`getUnits()` return strings. `ContextConfig::setUnit(string, string)` and `getUnit(): ?string`
   keep their signatures for subclasses.
@@ -82,6 +81,9 @@
 
 ### Fixed
 
+- `refresh()` on a context whose initial load failed is a no-op: it no longer fetches or applies data, stays
+  failed, keeps `readyError()`, and emits no `Refresh` or `Error` event, matching the JS SDK's `_refresh`
+  (`if (!this._failed)`). A failed context can no longer be recovered by `refresh()`.
 - `Context::close()` no longer closes the SDK's shared HTTP client, so closing one context no longer breaks its
   sibling contexts. The SDK owner can still close the shared client with `SDK::close()`.
 
