@@ -12,6 +12,7 @@ use ABSmartly\SDK\Exposure;
 use ABSmartly\SDK\GoalAchievement;
 use ABSmartly\SDK\PublishEvent;
 use ABSmartly\SDK;
+use ABSmartly\SDK\Utils;
 use ABSmartly\SDK\VariableParser;
 use ABSmartly\SDK\VariantAssigner;
 
@@ -19,13 +20,17 @@ use Exception;
 use JsonException;
 use Throwable;
 
+use function array_slice;
+use function array_splice;
 use function count;
 use function get_object_vars;
 use function gettype;
 use function hash;
 use function is_int;
+use function is_object;
 use function json_decode;
 use function microtime;
+use function min;
 use function strpos;
 use function sprintf;
 use function trim;
@@ -54,6 +59,12 @@ class Context {
 	private array $assignmentCache;
 
 	private array $exposures = [];
+	/**
+	 * Assignment that produced each queued exposure, aligned by index with $exposures. Used to clear the
+	 * assignment's cached `exposed` flag if its exposure is dropped by queue-cap eviction, so a later read can
+	 * re-queue it. Kept separate from the Exposure so it never reaches the published payload.
+	 */
+	private array $exposureAssignments = [];
 	private array $achievements = [];
 
 	private array $attributes = [];
@@ -62,8 +73,17 @@ class Context {
 
 	private int $pendingCount = 0;
 	private bool $closed = false;
+	private bool $finalizing = false;
 	private bool $ready;
 	private int $attrsSeq = 0;
+	private ?Throwable $readyError = null;
+
+	/**
+	 * Upper bound on the number of exposures and goals retained after a failed publish. When a long-lived worker
+	 * holds one context through a collector outage, this stops the retry queue (and each published batch) from
+	 * growing without limit: the oldest events are dropped and an Error event is logged. 0 means no cap.
+	 */
+	public int $maxRetainedEvents = 10000;
 
 	public function isReady(): bool {
 		return $this->ready;
@@ -77,6 +97,57 @@ class Context {
 		return $this->closed;
 	}
 
+	public function isFinalizing(): bool {
+		return $this->finalizing && !$this->closed;
+	}
+
+	public function isFinalized(): bool {
+		return $this->isClosed();
+	}
+
+	public function finalize(): void {
+		$this->close();
+	}
+
+	public function readyError(): ?Throwable {
+		return $this->readyError;
+	}
+
+	public function getCustomFieldKeys(): array {
+		$this->checkReady();
+		$keys = [];
+		if (!empty($this->data->experiments)) {
+			foreach ($this->data->experiments as $experiment) {
+				if (empty($experiment->customFieldValues)) {
+					continue;
+				}
+
+				foreach ($experiment->customFieldValues as $field) {
+					if (isset($field->name)) {
+						$keys[$field->name] = true;
+					}
+				}
+			}
+		}
+		return array_keys($keys);
+	}
+
+	public function getCustomFieldValueType(string $experimentName, string $key): ?string {
+		$this->checkReady();
+		$experiment = $this->getExperiment($experimentName);
+		if ($experiment === null || empty($experiment->data->customFieldValues)) {
+			return null;
+		}
+
+		foreach ($experiment->data->customFieldValues as $field) {
+			if (isset($field->name) && $field->name === $key) {
+				return $field->type ?? null;
+			}
+		}
+
+		return null;
+	}
+
 	public function pending(): int {
 		return $this->pendingCount;
 	}
@@ -85,7 +156,7 @@ class Context {
 		return (int) (microtime(true) * 1000);
 	}
 
-	private function __construct(SDK $sdk, ContextConfig $contextConfig, ContextDataProvider $dataProvider, ?ContextData $contextData = null) {
+	private function __construct(SDK $sdk, ContextConfig $contextConfig, ContextDataProvider $dataProvider, ?ContextData $contextData = null, bool $pending = false) {
 		$this->sdk = $sdk;
 		$this->dataProvider = $dataProvider;
 		$this->setUnits($contextConfig->getUnits());
@@ -100,20 +171,34 @@ class Context {
 		$this->audienceMatcher = new AudienceMatcher();
 		$this->variableParser = new VariableParser();
 
+		if ($pending) {
+			$this->ready = false;
+			$this->data = null;
+			$this->index = [];
+			$this->indexVariables = [];
+			return;
+		}
+
 		try {
 			$this->ready = true;
 			if (!$contextData) {
-				$data = $this->data = $this->dataProvider->getContextData();
+				$data = $this->dataProvider->getContextData();
 			}
 			else {
-				$data = $this->data = $contextData;
+				$data = $contextData;
 			}
 
 			$this->setData($data);
 			$this->logEvent(ContextEventLoggerEvent::Ready, $data);
 		}
 		catch (Exception $exception) {
-			$this->setDataFailed();
+			$this->setDataFailed($exception);
+			error_log(sprintf(
+				'ABsmartly SDK CRITICAL: Context initialization failed: %s in %s:%d. Context is in failed state.',
+				$exception->getMessage(),
+				$exception->getFile(),
+				$exception->getLine()
+			));
 			$this->logError($exception);
 		}
 	}
@@ -151,7 +236,7 @@ class Context {
 				}
 
 				foreach (get_object_vars($parsed) as $key => $val) {
-					$this->indexVariables[$key] = $experimentVariables;
+					$this->addVariableExperiment($key, $experimentVariables);
 				}
 				$experimentVariables->variables[] = $parsed;
 			}
@@ -160,30 +245,94 @@ class Context {
 		}
 	}
 
-	private function setDataFailed(): void {
+	/**
+	 * Indexes $experimentVariables under $key, keeping the per-key list sorted and unique by experiment id, as the
+	 * JS SDK's _resolveVariableValue does (insertUniqueSorted by data->id).
+	 */
+	private function addVariableExperiment(string $key, ExperimentVariables $experimentVariables): void {
+		if (!isset($this->indexVariables[$key])) {
+			$this->indexVariables[$key] = [$experimentVariables];
+			return;
+		}
+
+		$list = $this->indexVariables[$key];
+		$id = $experimentVariables->data->id;
+		$insertAt = count($list);
+		foreach ($list as $i => $existing) {
+			if ($existing->data->id === $id) {
+				return;
+			}
+			if ($id < $existing->data->id) {
+				$insertAt = $i;
+				break;
+			}
+		}
+
+		array_splice($list, $insertAt, 0, [$experimentVariables]);
+		$this->indexVariables[$key] = $list;
+	}
+
+	private function setDataFailed(?Throwable $exception = null): void {
 		$this->indexVariables = [];
 		$this->index = [];
-		$this->data = null;
+		$this->data = new ContextData();
 		$this->failed = true;
+		$this->ready = true;
+		$this->readyError = $exception;
 	}
 
 	public static function createFromContextConfig(SDK $sdk, ContextConfig $contextConfig, ContextDataProvider $dataProvider, ContextEventHandler $handler, ?ContextData $contextData = null): Context {
 		$context = new Context($sdk, $contextConfig, $dataProvider, $contextData);
 		$context->setEventHandler($handler);
 
-		if ($logger = $contextConfig->getEventLogger()) {
-			$context->setEventLogger($logger);
-		}
+		return $context;
+	}
+
+	public static function createPending(SDK $sdk, ContextConfig $contextConfig, ContextDataProvider $dataProvider, ContextEventHandler $handler): Context {
+		$context = new Context($sdk, $contextConfig, $dataProvider, null, true);
+		$context->setEventHandler($handler);
 
 		return $context;
 	}
 
-	private function checkReady(): void {
+	public function setContextDataFailed(Throwable $error): void {
+		if ($this->ready) {
+			return;
+		}
+
+		$this->setDataFailed($error);
+		$this->logError($error);
+	}
+
+	public function setContextData(ContextData $contextData): void {
+		if ($this->ready) {
+			return;
+		}
+
+		try {
+			$this->setData($contextData);
+			$this->failed = false;
+			$this->ready = true;
+			$this->logEvent(ContextEventLoggerEvent::Ready, $contextData);
+		} catch (Exception $exception) {
+			$this->setDataFailed($exception);
+			$this->logError($exception);
+		}
+	}
+
+	/**
+	 * Mirrors the JS SDK `_checkReady(expectNotFinalized)`: reads throw before
+	 * the context is ready and, unless $expectNotFinalized is false, after it
+	 * has been finalized.
+	 */
+	private function checkReady(bool $expectNotFinalized = true): void {
 		if (!$this->isReady()) {
 			throw new LogicException('ABSmartly Context is not yet ready');
 		}
 
-		$this->checkNotClosed();
+		if ($expectNotFinalized) {
+			$this->checkNotClosed();
+		}
 	}
 
 	public function getExperiment(string $experimentName): ?ExperimentVariables {
@@ -191,6 +340,7 @@ class Context {
 	}
 
 	public function getExperiments(): array {
+		$this->checkReady(false);
 		$return = [];
 
 		if (!empty($this->data->experiments)) {
@@ -203,10 +353,9 @@ class Context {
 	}
 
 	public function customFieldValue(string $experimentName, string $fieldName) {
-		$this->checkReady();
-
+		$this->checkReady(false);
 		$experiment = $this->getExperiment($experimentName);
-		if ($experiment === null || !isset($experiment->data->customFieldValues)) {
+		if ($experiment === null || empty($experiment->data->customFieldValues)) {
 			return null;
 		}
 
@@ -270,7 +419,7 @@ class Context {
 			if ($this->attrsSeq > ($assignment->attrsSeq ?? 0)) {
 				$attrs = $this->getAttributes();
 				$result = $this->audienceMatcher->evaluate($experiment->audience, $attrs);
-				$newAudienceMismatch = !$result;
+				$newAudienceMismatch = $result !== null ? !$result : $assignment->audienceMismatch;
 
 				if ($newAudienceMismatch !== $assignment->audienceMismatch) {
 					return false;
@@ -280,6 +429,24 @@ class Context {
 			}
 		}
 		return true;
+	}
+
+	/**
+	 * Whether the cached assignment came from a path that never takes a custom assignment, so an unchanged
+	 * custom variant can't alter it: full-on, not eligible (traffic), or a strict audience mismatch. A
+	 * non-strict mismatch still takes the custom variant, and an unassigned (missing-unit) assignment must be
+	 * recomputed once the unit is set, so neither counts.
+	 */
+	private function customAssignmentIgnored(Assignment $assignment, $experiment): bool {
+		// A strict audience exclusion is never assigned; attribute changes are still re-checked by audienceMatches().
+		if ($assignment->audienceMismatch && !empty($experiment->data->audienceStrict)) {
+			return true;
+		}
+		if (!$assignment->assigned) {
+			// Missing unit: nothing changes until the unit is set, then the custom assignment must be evaluated.
+			return !isset($this->units[$experiment->data->unitType]);
+		}
+		return $assignment->fullOn || !$assignment->eligible;
 	}
 
 	private function getAssignment(string $experimentName): Assignment {
@@ -299,7 +466,9 @@ class Context {
 					// previously not-running experiment
 					return $assignment;
 				}
-			} else if (!isset($this->cassignments[$experimentName]) || $this->cassignments[$experimentName] === $assignment->variant) {
+			} else if (!array_key_exists($experimentName, $this->cassignments)
+				|| ($assignment->custom && $this->cassignments[$experimentName] === $assignment->variant)
+				|| (!$assignment->custom && $this->customAssignmentIgnored($assignment, $experiment))) {
 				if ($this->experimentMatches($experiment->data, $assignment) && $this->audienceMatches($experiment->data, $assignment)) {
 					// assignment up-to-date
 					return $assignment;
@@ -328,41 +497,46 @@ class Context {
 				$attrs = $this->getAttributes();
 
 				$result = $this->audienceMatcher->evaluate($experiment->data->audience, $attrs);
-				$assignment->audienceMismatch = !$result;
+				if (is_bool($result)) {
+					$assignment->audienceMismatch = !$result;
+				}
 			}
 
 			if (!empty($experiment->data->audienceStrict) && !empty($assignment->audienceMismatch)) {
 				$assignment->variant = 0;
 			}
-			else if (empty($experiment->data->fullOnVariant) && $uid = $this->units[$experiment->data->unitType] ?? null) {
-				//$unitHash = $this->getUnitHash($unitType, $uid);
-				$assigner = $this->getVariantAssigner($unitType, $uid);
+			else if (empty($experiment->data->fullOnVariant)) {
+				// Not a full-on experiment: assign via the traffic split only when the unit is present.
+				// A missing unit leaves the assignment unassigned (control) so it falls through, as in JS.
+				if (($uid = $this->units[$experiment->data->unitType] ?? null) !== null) {
+					$assigner = $this->getVariantAssigner($unitType, $uid);
 
 					$eligible = $assigner->assign(
-					$experiment->data->trafficSplit,
-					$experiment->data->trafficSeedHi,
-					$experiment->data->trafficSeedLo
-				);
-				if ($eligible === 1) {
-					$custom = $this->cassignments[$experimentName] ?? null;
-					if ($custom !== null) {
-						$assignment->variant = $custom;
-						$assignment->custom = true;
+						$experiment->data->trafficSplit,
+						$experiment->data->trafficSeedHi,
+						$experiment->data->trafficSeedLo
+					);
+					if ($eligible === 1) {
+						$custom = $this->cassignments[$experimentName] ?? null;
+						if ($custom !== null) {
+							$assignment->variant = $custom;
+							$assignment->custom = true;
+						}
+						else {
+							$assignment->variant = $assigner->assign(
+								$experiment->data->split,
+								$experiment->data->seedHi,
+								$experiment->data->seedLo
+							);
+						}
 					}
 					else {
-						$assignment->variant = $assigner->assign(
-							$experiment->data->split,
-							$experiment->data->seedHi,
-							$experiment->data->seedLo
-						);
+						$assignment->eligible = false;
+						$assignment->variant = 0;
 					}
-				}
-				else {
-					$assignment->eligible = false;
-					$assignment->variant = 0;
-				}
 
-				$assignment->assigned = true;
+					$assignment->assigned = true;
+				}
 			}
 			else {
 				$assignment->assigned = true;
@@ -388,35 +562,55 @@ class Context {
 
 	public function getVariableValue(string $key, $defaultValue = null) {
 		$this->checkReady();
-		$assignment = $this->getVariableAssignment($key);
+		return $this->resolveVariableValue($key, $defaultValue, true);
+	}
 
-		if ($assignment === null) {
-			return $defaultValue;
+	public function peekVariableValue(string $key, $default) {
+		$this->checkReady(false);
+		return $this->resolveVariableValue($key, $default, false);
+	}
+
+	/**
+	 * Ports the JS SDK `_resolveVariableValue`: walks the experiments that define $key in ascending id order. For
+	 * each one it computes the assignment; when the variant has variables, getVariableValue (not peek) queues the
+	 * exposure the first time, and if $key is present and the unit is assigned or overridden it returns that value.
+	 * Otherwise it falls through to the next experiment, and finally to $default.
+	 */
+	private function resolveVariableValue(string $key, $default, bool $exposeAssignments) {
+		$experiments = $this->indexVariables[$key] ?? [];
+
+		foreach ($experiments as $experimentVariables) {
+			$assignment = $this->getAssignment($experimentVariables->data->name);
+
+			if ($assignment->variables !== null) {
+				if ($exposeAssignments && empty($assignment->exposed)) {
+					$this->queueExposure($assignment);
+				}
+
+				// property_exists (not isset) so a present key whose value is null is still returned,
+				// matching JS: a lower-id experiment that defines $key=null shadows a later competitor.
+				if (property_exists($assignment->variables, $key) && ($assignment->assigned || $assignment->overridden)) {
+					return $assignment->variables->{$key};
+				}
+			}
 		}
 
-		if ($assignment->variables !== null) {
-			if (empty($assignment->exposed)) {
-				$this->queueExposure($assignment);
-			}
-
-			if (isset($assignment->variables->{$key}) && ($assignment->assigned || $assignment->overridden)) {
-				return $assignment->variables->{$key};
-			}
-		}
-
-		return $defaultValue;
+		return $default;
 	}
 
 	public function getVariableKeys(): array {
+		$this->checkReady(false);
 		$return = [];
-		foreach ($this->indexVariables as $variable => $experimentVars) {
-			$return[$variable] = $experimentVars->data->name;
+		foreach ($this->indexVariables as $variable => $experiments) {
+			// Keep the single-name shape for compatibility: the lowest-id experiment (first in the sorted list).
+			$return[$variable] = $experiments[0]->data->name;
 		}
 
 		return $return;
 	}
 
 	public function setAttribute(string $name, $value): Context {
+		$this->checkNotClosed();
 		$this->attributes[] = (object) [
 			'name' => $name,
 			'value' => $value,
@@ -478,6 +672,7 @@ class Context {
 		$exposure->ingestAssignment($assignment);
 
 		$this->exposures[] = $exposure;
+		$this->exposureAssignments[] = $assignment;
 		++$this->pendingCount;
 
 		$this->logEvent(ContextEventLoggerEvent::Exposure, $exposure);
@@ -493,34 +688,18 @@ class Context {
 
 	private function logError(Throwable $throwable): void {
 		if (!isset($this->eventLogger)) {
+			error_log(sprintf(
+				'ABsmartly SDK Error: %s in %s:%d',
+				$throwable->getMessage(),
+				$throwable->getFile(),
+				$throwable->getLine()
+			));
 			return;
 		}
 
 		$this->eventLogger->handleEvent($this, new ContextEventLoggerEvent(ContextEventLoggerEvent::Error, $throwable));
 	}
 
-
-	public function peekVariableValue(string $key, $default) {
-		$assignment = $this->getVariableAssignment($key);
-		if ($assignment && isset($assignment->variables->{$key}) && ($assignment->assigned || $assignment->overridden)) {
-			return $assignment->variables->{$key};
-		}
-
-		return $default;
-	}
-
-	private function getVariableAssignment(string $key): ?Assignment {
-		$experiment = $this->getVariableExperiment($key);
-		if (!$experiment) {
-			return null;
-		}
-
-		return $this->getAssignment($experiment->data->name);
-	}
-
-	private function getVariableExperiment(string $experimentName): ?ExperimentVariables {
-		return $this->indexVariables[$experimentName] ?? null;
-	}
 
 	public function getContextData(): ContextData {
 		return $this->data;
@@ -533,21 +712,14 @@ class Context {
 
 
 	public function setUnits(array $units): Context {
-		// It could have been possible to simply array_merge here, but we need
-		// to verify strict-types, hence the foreach loop.
-		foreach ($units as $key => $value) {
-			if (!is_string($value)) {
-				throw new InvalidArgumentException(
-					sprintf('Unit set value with key "%s" must be of type string, %s passed', $key, gettype($value)));
-			}
-
-			$this->setUnit($key, $value);
+		foreach ($units as $unitType => $uid) {
+			$this->setUnit((string) $unitType, $uid);
 		}
 
 		return $this;
 	}
 
-	public function getUnit(string $unitType) {
+	public function getUnit(string $unitType): ?string {
 		return $this->units[$unitType] ?? null;
 	}
 
@@ -600,16 +772,43 @@ class Context {
 		return $this->cassignments[$experimentName] ?? null;
 	}
 
-	public function setUnit(string $unitType, string $uid): Context {
-		if (isset($this->units[$unitType]) && $this->units[$unitType] !== $uid) {
-			throw new InvalidArgumentException(sprintf('Unit "%s" UID is already set', $unitType));
-		}
-		if (trim($uid) === '') {
-			throw new InvalidArgumentException(sprintf('Unit "%s" UID must not be blank', $unitType));
+	/**
+	 * Numeric UIDs are accepted and stored as strings.
+	 *
+	 * @param string|int|float $uid
+	 */
+	public function setUnit(string $unitType, $uid): Context {
+		$this->checkNotClosed();
+		$uid = self::validateUnit($unitType, $uid);
+
+		if (array_key_exists($unitType, $this->units)) {
+			if ($this->units[$unitType] !== $uid) {
+				throw new InvalidArgumentException(sprintf('Unit "%s" UID is already set', $unitType));
+			}
+			return $this;
 		}
 
 		$this->units[$unitType] = $uid;
 		return $this;
+	}
+
+	/**
+	 * @param mixed $uid
+	 */
+	private static function validateUnit(string $unitType, $uid): string {
+		if (is_int($uid) || is_float($uid)) {
+			return (string) $uid;
+		}
+
+		if (!is_string($uid)) {
+			throw new InvalidArgumentException(sprintf('Unit "%s" must be a string or a number', $unitType));
+		}
+
+		if (trim($uid) === '') {
+			throw new InvalidArgumentException(sprintf('Unit "%s" UID must not be blank', $unitType));
+		}
+
+		return $uid;
 	}
 
 	public function getPendingCount(): int {
@@ -618,13 +817,35 @@ class Context {
 
 	private function checkNotClosed(): void {
 		if ($this->isClosed()) {
-			throw new LogicException('ABSmartly Context is finalized');
+			throw new LogicException('ABSmartly Context is closed');
 		}
 	}
 
 	public function flush(): void {
+		$this->flushEvents(false);
+	}
+
+	/**
+	 * Publishes the queued exposures and goals. On a collector failure the events stay queued so a later
+	 * publish()/close() can retry them; when $rethrow is true (close()) the failure is also re-thrown to the
+	 * caller, when false (publish()/flush()) it is only logged, as in v1.0.3.
+	 */
+	private function flushEvents(bool $rethrow): void {
 		if ($this->isFailed()) {
+			$errorMsg = sprintf(
+				'ABsmartly SDK Warning: Discarding %d exposures and %d goals due to failed context state',
+				count($this->exposures),
+				count($this->achievements)
+			);
+			error_log($errorMsg);
+			if (isset($this->eventLogger)) {
+				$this->eventLogger->handleEvent($this, new ContextEventLoggerEvent(
+					ContextEventLoggerEvent::Error,
+					new \RuntimeException($errorMsg)
+				));
+			}
 			$this->exposures = [];
+			$this->exposureAssignments = [];
 			$this->achievements = [];
 			$this->pendingCount = 0;
 
@@ -640,12 +861,79 @@ class Context {
 		try {
 			$this->eventHandler->publish($event);
 			$this->logEvent(ContextEventLoggerEvent::Publish, $event);
+			$this->exposures = [];
+			$this->exposureAssignments = [];
+			$this->achievements = [];
 			$this->pendingCount = 0;
 		}
 		catch (Exception $exception) {
-			$this->failed = true;
+			error_log(sprintf(
+				'ABsmartly SDK Error: Failed to publish %d exposures and %d goals: %s. Events preserved for retry.',
+				count($this->exposures),
+				count($this->achievements),
+				$exception->getMessage()
+			));
 			$this->logError($exception);
+			$this->capRetainedEvents();
+
+			if ($rethrow) {
+				throw $exception;
+			}
 		}
+	}
+
+	/**
+	 * Drops the oldest retained exposures and goals so the queue never exceeds $maxRetainedEvents, logging an Error
+	 * event for each batch dropped. Exposures are dropped before goals.
+	 */
+	private function capRetainedEvents(): void {
+		if ($this->maxRetainedEvents <= 0) {
+			return;
+		}
+
+		$total = count($this->exposures) + count($this->achievements);
+		if ($total <= $this->maxRetainedEvents) {
+			return;
+		}
+
+		$toDrop = $total - $this->maxRetainedEvents;
+
+		$droppedExposures = min($toDrop, count($this->exposures));
+		if ($droppedExposures > 0) {
+			$droppedAssignments = array_slice($this->exposureAssignments, 0, $droppedExposures);
+			$this->exposures = array_slice($this->exposures, $droppedExposures);
+			$this->exposureAssignments = array_slice($this->exposureAssignments, $droppedExposures);
+			$toDrop -= $droppedExposures;
+
+			// Clearing an unsent exposure means a later read must be able to re-queue it, so reset the matching
+			// cached assignment's `exposed` flag, unless the cache has since been replaced with a newer
+			// assignment (which carries its own un-exposed state).
+			foreach ($droppedAssignments as $assignment) {
+				$cached = $this->assignmentCache[$assignment->name] ?? null;
+				if ($cached === $assignment) {
+					$assignment->exposed = false;
+				}
+			}
+		}
+
+		$droppedGoals = 0;
+		if ($toDrop > 0) {
+			$droppedGoals = min($toDrop, count($this->achievements));
+			$this->achievements = array_slice($this->achievements, $droppedGoals);
+		}
+
+		$dropped = $droppedExposures + $droppedGoals;
+		$this->pendingCount -= $dropped;
+
+		$errorMsg = sprintf(
+			'ABsmartly SDK Error: Retained event queue exceeded %d; dropped the oldest %d events (%d exposures, %d goals)',
+			$this->maxRetainedEvents,
+			$dropped,
+			$droppedExposures,
+			$droppedGoals
+		);
+		error_log($errorMsg);
+		$this->logError(new \RuntimeException($errorMsg));
 	}
 
 	private function buildPublishEvent(): PublishEvent {
@@ -658,13 +946,42 @@ class Context {
 		return $event;
 	}
 
-	public function track(string $goalName, ?object $properties = null): void {
+	/**
+	 * @param object|array|null $properties any object, or an associative array
+	 */
+	public function track(string $goalName, $properties = null): void {
 		$this->checkNotClosed();
+		$properties = $this->validateGoal($goalName, $properties);
 		$achievement = new GoalAchievement($goalName, static::getTime(), $properties);
 		$this->achievements[] = $achievement;
 		++$this->pendingCount;
 
 		$this->logEvent(ContextEventLoggerEvent::Goal, $achievement);
+	}
+
+	/**
+	 * @param mixed $properties
+	 */
+	private function validateGoal(string $goalName, $properties): ?object {
+		if ($properties === null) {
+			return null;
+		}
+
+		if (Utils::isObject($properties)) {
+			return clone $properties;
+		}
+
+		// Other objects (DTOs, ArrayObject, JsonSerializable) are kept as given so
+		// they serialize exactly as in earlier releases.
+		if (is_object($properties)) {
+			return $properties;
+		}
+
+		if (is_array($properties) && $properties !== [] && array_keys($properties) !== range(0, count($properties) - 1)) {
+			return (object) $properties;
+		}
+
+		throw new InvalidArgumentException(sprintf("Goal '%s' properties must be of type object.", $goalName));
 	}
 
 	public function publish(): void {
@@ -674,28 +991,58 @@ class Context {
 
 	public function refresh(): void {
 		$this->checkNotClosed();
+
+		// A context whose initial load failed stays failed: refresh() is a no-op that neither fetches nor
+		// applies data and emits no refresh/error event, matching the JS SDK's `_refresh` (`if (!this._failed)`).
+		if ($this->isFailed()) {
+			return;
+		}
+
+		$oldData = $this->data;
+		$oldIndex = $this->index;
+		$oldIndexVariables = $this->indexVariables;
 		try {
 			$data = $this->dataProvider->getContextData();
 			$this->setData($data);
+			$this->failed = false;
 			$this->logEvent(ContextEventLoggerEvent::Refresh, $data);
 		}
 		catch (Exception $exception) {
-			$this->setDataFailed();
+			$this->data = $oldData;
+			$this->index = $oldIndex;
+			$this->indexVariables = $oldIndexVariables;
+			error_log(sprintf(
+				'ABsmartly SDK Error: Failed to refresh context, keeping existing data: %s in %s:%d',
+				$exception->getMessage(),
+				$exception->getFile(),
+				$exception->getLine()
+			));
 			$this->logError($exception);
 		}
 	}
 
+	/**
+	 * Publishes any queued events and closes the context. A failed final publish is re-thrown and the context is
+	 * left open (isClosed() stays false) with its events still queued, so calling close() again retries publishing
+	 * them. The Close event is emitted only once the close succeeds.
+	 */
 	public function close(): void {
-		if ($this->getPendingCount() > 0) {
-			$this->flush();
-		}
 		if ($this->isClosed()) {
 			return;
 		}
 
-		$this->logEvent(ContextEventLoggerEvent::Finalize, null);
+		$this->finalizing = true;
+		try {
+			if ($this->getPendingCount() > 0) {
+				$this->flushEvents(true);
+			}
+		}
+		finally {
+			$this->finalizing = false;
+		}
+
+		$this->logEvent(ContextEventLoggerEvent::Close, null);
 		$this->closed = true;
-		$this->sdk->close();
 	}
 
 }

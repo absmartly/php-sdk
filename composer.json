@@ -8,7 +8,15 @@
         "ext-json": "*"
     },
     "require-dev": {
-        "phpunit/phpunit": "^9.5.26"
+        "phpunit/phpunit": "^9.5.26",
+        "react/http": "^1.9",
+        "react/async": "^3.0 || ^4.0",
+        "react/promise": "^3.0"
+    },
+    "suggest": {
+        "react/http": "Required for the ReactPHP async HTTP client (^1.9).",
+        "react/async": "Required for the ReactPHP async HTTP client (^3.0 || ^4.0).",
+        "react/promise": "Required for async SDK methods (^3.0)."
     },
     "license": "MIT",
     "autoload": {
@@ -33,5 +41,10 @@
             "email": "ayesh@aye.sh"
         }
     ],
-    "keywords": ["absmartly"]
+    "keywords": [
+        "absmartly"
+    ],
+    "scripts": {
+        "test": "phpunit"
+    }
 }

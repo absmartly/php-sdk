@@ -69,6 +69,16 @@ class ClientConfigTest extends TestCase {
 		$clientConfig->setRetries(-1);
 	}
 
+	public function testDebugInfoDoesNotContainEventLogger(): void {
+		$clientConfig = new ClientConfig('endpoint', 'key', 'app', 'env');
+		$debugInfo = $clientConfig->__debugInfo();
+		self::assertArrayNotHasKey('eventLogger', $debugInfo);
+		self::assertArrayHasKey('apiKey', $debugInfo);
+		self::assertArrayHasKey('application', $debugInfo);
+		self::assertArrayHasKey('endpoint', $debugInfo);
+		self::assertArrayHasKey('environment', $debugInfo);
+	}
+
 	public function testFluentInterface(): void {
 		$clientConfig = new ClientConfig('endpoint', 'key', 'app', 'env');
 		$result = $clientConfig->setTimeout(1000)->setRetries(3);
