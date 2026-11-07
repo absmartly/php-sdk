@@ -356,6 +356,24 @@ class ContextTest extends TestCase {
 		self::assertSame(1, $context->getPendingCount());
 	}
 
+	public function testDifferingCustomAssignmentOnFullOnRequeuesExposure(): void {
+		// Cross-SDK scenario 66: a full-on experiment (fullOnVariant 2) keeps serving its full-on variant even
+		// when a custom assignment selects a different one, but the custom variant never equals the assigned
+		// variant, so (like the JS reference) the cache is rebuilt and the exposure re-queued on every read.
+		$context = $this->createReadyContext();
+
+		self::assertSame(2, $context->getTreatment('exp_test_fullon'));
+		self::assertSame(1, $context->getPendingCount());
+
+		$context->setCustomAssignment('exp_test_fullon', 0);
+
+		self::assertSame(2, $context->getTreatment('exp_test_fullon'));
+		self::assertSame(2, $context->getPendingCount());
+
+		self::assertSame(2, $context->getTreatment('exp_test_fullon'));
+		self::assertSame(3, $context->getPendingCount());
+	}
+
 	public function testCustomAssignmentAppliesAfterNonStrictAudienceMismatch(): void {
 		// exp_test_ab has a non-strict audience (age >= 20). A mismatch still takes a custom variant, so setting one
 		// after a cached natural read must replace it.

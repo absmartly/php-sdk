@@ -432,10 +432,11 @@ class Context {
 	}
 
 	/**
-	 * Whether the cached assignment came from a path that never takes a custom assignment, so an unchanged
-	 * custom variant can't alter it: full-on, not eligible (traffic), or a strict audience mismatch. A
-	 * non-strict mismatch still takes the custom variant, and an unassigned (missing-unit) assignment must be
-	 * recomputed once the unit is set, so neither counts.
+	 * Whether the cached assignment pins variant 0 independently of the custom variant, so an unchanged read
+	 * can reuse it (and its exposure dedup) until a trigger rebuilds it: a strict audience exclusion (rebuilt
+	 * by audienceMatches() when attributes change) or a missing unit (rebuilt once the unit is set). Full-on
+	 * and not-eligible assignments are NOT pinned here: like JS, they are only reused when the custom variant
+	 * equals the assigned variant, so a differing custom variant is detected as stale and re-exposed.
 	 */
 	private function customAssignmentIgnored(Assignment $assignment, $experiment): bool {
 		// A strict audience exclusion is never assigned; attribute changes are still re-checked by audienceMatches().
@@ -446,7 +447,7 @@ class Context {
 			// Missing unit: nothing changes until the unit is set, then the custom assignment must be evaluated.
 			return !isset($this->units[$experiment->data->unitType]);
 		}
-		return $assignment->fullOn || !$assignment->eligible;
+		return false;
 	}
 
 	private function getAssignment(string $experimentName): Assignment {
@@ -467,8 +468,8 @@ class Context {
 					return $assignment;
 				}
 			} else if (!array_key_exists($experimentName, $this->cassignments)
-				|| ($assignment->custom && $this->cassignments[$experimentName] === $assignment->variant)
-				|| (!$assignment->custom && $this->customAssignmentIgnored($assignment, $experiment))) {
+				|| $this->cassignments[$experimentName] === $assignment->variant
+				|| $this->customAssignmentIgnored($assignment, $experiment)) {
 				if ($this->experimentMatches($experiment->data, $assignment) && $this->audienceMatches($experiment->data, $assignment)) {
 					// assignment up-to-date
 					return $assignment;
