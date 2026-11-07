@@ -65,7 +65,7 @@ class ContextConfig {
 	}
 
 	/**
-	 * Numeric UIDs are stored as strings, as in earlier releases.
+	 * Numeric UIDs are stored as strings.
 	 */
 	public function setUnits(array $units): ContextConfig {
 		foreach ($units as $unitType => $uid) {

@@ -24,8 +24,8 @@ class ReactHttpClient implements AsyncHttpClientInterface {
 	private Browser $browser;
 	public int $retries = 5;
 	/**
-	 * Per-attempt timeout in milliseconds, as in v1.0.3. It bounds each individual request, not the whole retry
-	 * sequence. 0 or less means no per-attempt limit.
+	 * Per-attempt timeout in milliseconds. It bounds each individual request, not the whole retry sequence; use
+	 * totalTimeout for that. 0 or less means no per-attempt limit.
 	 */
 	public int $timeout = 3000;
 	/**

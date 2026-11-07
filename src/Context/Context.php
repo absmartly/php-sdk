@@ -260,7 +260,6 @@ class Context {
 		$insertAt = count($list);
 		foreach ($list as $i => $existing) {
 			if ($existing->data->id === $id) {
-				// Already present: keep a single entry per experiment id.
 				return;
 			}
 			if ($id < $existing->data->id) {
@@ -540,7 +539,6 @@ class Context {
 				}
 			}
 			else {
-				// Full-on experiment (nonzero fullOnVariant): everyone gets the full-on variant.
 				$assignment->assigned = true;
 				$assignment->variant = $experiment->data->fullOnVariant;
 				$assignment->fullOn = true;
@@ -775,7 +773,7 @@ class Context {
 	}
 
 	/**
-	 * Numeric UIDs are accepted and stored as strings, as in earlier releases.
+	 * Numeric UIDs are accepted and stored as strings.
 	 *
 	 * @param string|int|float $uid
 	 */
