@@ -22,7 +22,7 @@ class GteOperatorTest extends TestCase {
 		self::assertTrue($this->operator->evaluate($this->evaluator, [0, 0]));
 		self::assertTrue($this->operator->evaluate($this->evaluator, [1, 0]));
 		self::assertFalse($this->operator->evaluate($this->evaluator, [0, 1]));
-		self::assertTrue($this->operator->evaluate($this->evaluator, [null, null])); /** @todo Deviation */
+		self::assertNull($this->operator->evaluate($this->evaluator, [null, null]));
 		self::assertNull($this->operator->evaluate($this->evaluator, [null, 1]));
 		self::assertNull($this->operator->evaluate($this->evaluator, [1, null])); /** @todo Deviation */
 		self::assertNull($this->operator->evaluate($this->evaluator, [0, null])); /** @todo Deviation */

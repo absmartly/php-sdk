@@ -2,7 +2,7 @@
 
 namespace ABSmartly\SDK\Context;
 
-use InvalidArgumentException;
+use ABSmartly\SDK\Exception\InvalidArgumentException;
 
 use function gettype;
 use function is_int;
@@ -64,16 +64,17 @@ class ContextConfig {
 		return $this;
 	}
 
+	/**
+	 * Numeric UIDs are stored as strings.
+	 */
 	public function setUnits(array $units): ContextConfig {
-		// It could have been possible to simply array_merge here, but we need
-		// to verify strict-types, hence the foreach loop.
 		foreach ($units as $unitType => $uid) {
 			if (!is_scalar($uid)) {
 				throw new InvalidArgumentException(
 					sprintf('Unit set value with key "%s" must be of type string, %s passed', $unitType, gettype($uid)));
 			}
 
-			$this->setUnit($unitType, (string) $uid);
+			$this->setUnit((string) $unitType, (string) $uid);
 		}
 
 		return $this;

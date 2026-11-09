@@ -30,6 +30,12 @@ class MatchOperatorTest extends TestCase {
 		self::assertFalse($this->operator->evaluate($this->evaluator, ["abcdefghijk", "xyz"]));
 	}
 
+	public function testRegexWithTildeDelimiterInPattern(): void {
+		self::assertTrue($this->operator->evaluate($this->evaluator, ["hello~world", "hello~world"]));
+		self::assertTrue($this->operator->evaluate($this->evaluator, ["test~value", "~"]));
+		self::assertFalse($this->operator->evaluate($this->evaluator, ["helloworld", "hello~world"]));
+	}
+
 	public function testRegexAutoBoundaries(): void {
 		self::assertTrue($this->operator->evaluate($this->evaluator, ["abcdefghijk", "//"]));
 		self::assertTrue($this->operator->evaluate($this->evaluator, ["abcdefghijk", "/abc/"]));
@@ -42,10 +48,10 @@ class MatchOperatorTest extends TestCase {
 		self::assertFalse($this->operator->evaluate($this->evaluator, ["abcdefghijk", "/xyz/"]));
 	}
 
-	public function testRegexFlags(): void {
-		self::assertTrue($this->operator->evaluate($this->evaluator, ["ABCDEF", "/abc/i"]));
-		self::assertFalse($this->operator->evaluate($this->evaluator, ["ABCDEF", "/abc/"]));
-		self::assertFalse($this->operator->evaluate($this->evaluator, ["foo/i", "/xyz/i"]));
+	public function testSlashesAreTreatedLiterally(): void {
+		// v1.0.3 and JS treat "/pattern/flags" as a literal-slash pattern, not as flags.
+		self::assertFalse($this->operator->evaluate($this->evaluator, ["ABCDEF", "/abc/i"]));
+		self::assertTrue($this->operator->evaluate($this->evaluator, ["abc/i", "/abc/i"]));
 	}
 
 	public function testRegexWithDelimiterCharacter(): void {
@@ -76,7 +82,6 @@ class MatchOperatorTest extends TestCase {
 		self::assertFalse($this->operator->evaluate($this->evaluator, ["foo~bar+$", "(?#\\Q)^foo~bar+$"]));
 		self::assertTrue($this->operator->evaluate($this->evaluator, ["foo~barrr", "(?x)# \\Q\n^foo~bar+$"]));
 		self::assertFalse($this->operator->evaluate($this->evaluator, ["foo~bar+$", "(?x)# \\Q\n^foo~bar+$"]));
-		self::assertTrue($this->operator->evaluate($this->evaluator, ["foo~barrr", "/# \\Q\n^foo~bar+$/x"]));
 	}
 
 	public function testDelimiterCharacterInCharacterClass(): void {
@@ -91,11 +96,11 @@ class MatchOperatorTest extends TestCase {
 		self::assertFalse($this->operator->evaluate($this->evaluator, ["~#%@!,;`", "^~#%@!,;`=$"]));
 	}
 
-	public function testEscapedClosingSlashIsNotADelimiter(): void {
+	public function testSlashesInsidePatternAreLiteral(): void {
+		// Slashes are not delimiters: "/foo\/i" matches the literal text "foo/i".
 		self::assertTrue($this->operator->evaluate($this->evaluator, ["foo/i", "/foo\\/i"]));
 		self::assertFalse($this->operator->evaluate($this->evaluator, ["FOO", "/foo\\/i"]));
-		// Two backslashes are an escaped backslash, so the slash after them still closes the pattern.
-		self::assertTrue($this->operator->evaluate($this->evaluator, ["FOO\\", "/foo\\\\/i"]));
+		self::assertFalse($this->operator->evaluate($this->evaluator, ["FOO\\", "/foo\\\\/i"]));
 	}
 
 	public function testInvalidRegexReturnsNull(): void {

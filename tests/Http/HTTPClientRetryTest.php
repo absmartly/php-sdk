@@ -13,10 +13,12 @@ class FakeClockHTTPClient extends HTTPClient {
 	/** @var array<int, array{0: int, 1: bool}> Per attempt: [elapsed ms, retryable] */
 	public array $script = [];
 	public array $attemptTimeouts = [];
+	public array $connectTimeouts = [];
 	public array $sleeps = [];
 
 	protected function transfer(int $timeoutMs) {
 		$this->attemptTimeouts[] = $timeoutMs;
+		$this->connectTimeouts[] = $this->timeout;
 		[$elapsed] = $this->script[count($this->attemptTimeouts) - 1];
 		$this->now += $elapsed;
 		return 'body';
@@ -43,15 +45,27 @@ class FakeClockHTTPClient extends HTTPClient {
 }
 
 class HTTPClientRetryTest extends TestCase {
-	private function client(int $timeout, int $retries, array $script): FakeClockHTTPClient {
+	private function client(int $totalTimeout, int $retries, array $script): FakeClockHTTPClient {
 		$client = new FakeClockHTTPClient();
-		$client->timeout = $timeout;
+		$client->timeout = 3000;
+		$client->totalTimeout = $totalTimeout;
 		$client->retries = $retries;
 		$client->script = $script;
 		return $client;
 	}
 
-	public function testTimeoutBoundsTheWholeRetrySequence(): void {
+	public function testConnectTimeoutStaysConstantAcrossAttempts(): void {
+		$client = $this->client(0, 2, array_fill(0, 3, [0, true]));
+		$client->timeout = 1234;
+		$client->run('get');
+
+		// $timeout is the connect timeout: it is applied unchanged on every attempt.
+		self::assertSame([1234, 1234, 1234], $client->connectTimeouts);
+		// With no total budget, cURL gets no overall timeout (0) each attempt.
+		self::assertSame([0, 0, 0], $client->attemptTimeouts);
+	}
+
+	public function testTotalTimeoutBoundsTheWholeRetrySequence(): void {
 		$client = $this->client(3000, 5, array_merge([[3000, true]], array_fill(0, 5, [0, true])));
 		$client->run();
 

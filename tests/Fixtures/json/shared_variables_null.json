@@ -1,0 +1,42 @@
+{
+    "experiments": [
+        {
+            "id": 21,
+            "name": "exp_value",
+            "iteration": 1,
+            "unitType": "session_id",
+            "seedHi": 11,
+            "seedLo": 22,
+            "split": [1.0],
+            "trafficSeedHi": 1,
+            "trafficSeedLo": 2,
+            "trafficSplit": [0.0, 1.0],
+            "fullOnVariant": 1,
+            "applications": [{"name": "website"}],
+            "variants": [
+                {"name": "A", "config": null},
+                {"name": "B", "config": "{\"shared.key\":\"later\"}"}
+            ],
+            "audience": null
+        },
+        {
+            "id": 20,
+            "name": "exp_null",
+            "iteration": 1,
+            "unitType": "session_id",
+            "seedHi": 33,
+            "seedLo": 44,
+            "split": [1.0],
+            "trafficSeedHi": 3,
+            "trafficSeedLo": 4,
+            "trafficSplit": [0.0, 1.0],
+            "fullOnVariant": 1,
+            "applications": [{"name": "website"}],
+            "variants": [
+                {"name": "A", "config": null},
+                {"name": "B", "config": "{\"shared.key\":null}"}
+            ],
+            "audience": null
+        }
+    ]
+}

@@ -22,6 +22,9 @@ class AudienceMatcherTest extends TestCase {
 		$audience = (object) ['filter' => null];
 		self::assertNull($this->matcher->evaluate($audience, []));
 
+		self::assertNull($this->matcher->evaluate((object) ['filter' => 'invalid'], []));
+		self::assertNull($this->matcher->evaluate((object) ['filter' => 1], []));
+
 		$audience2 = new stdClass();
 		self::assertNull($this->matcher->evaluate($audience2, []));
 	}

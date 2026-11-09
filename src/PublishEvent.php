@@ -19,16 +19,7 @@ class PublishEvent implements JsonSerializable {
 	}
 
 	public function hashUnit(string $unit): string {
-		$hash = hash('md5', $unit, true);
-
-		// Removing padding and +/ characters in the base64 encoded string.
-		$hash = strtr(base64_encode($hash), [
-			'+' => '-',
-			'/' => '_',
-			'=' => '',
-		]);
-
-		return substr($hash, 0, 22);
+		return Utils::hashUnit($unit);
 	}
 
 	public function setUnits(array $units): void {
@@ -36,7 +27,7 @@ class PublishEvent implements JsonSerializable {
 		foreach ($units as $unit => $value) {
 			$unitObject = new stdClass();
 			$unitObject->type = $unit;
-			$unitObject->uid = $this->hashUnit($value);
+			$unitObject->uid = $this->hashUnit(Utils::unitToString($value));
 
 			$this->units[] = $unitObject;
 		}
