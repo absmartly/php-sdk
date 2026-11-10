@@ -60,6 +60,32 @@ class LegacyContextConfig extends ContextConfig {
 	}
 }
 
+class ThrowingOnPublishLogger extends MockContextEventLoggerProxy {
+	public bool $throwOnPublish = true;
+
+	public function handleEvent(Context $context, ContextEventLoggerEvent $event): void {
+		parent::handleEvent($context, $event);
+		if ($this->throwOnPublish && $event->getEvent() === ContextEventLoggerEvent::Publish) {
+			throw new \RuntimeException('logger failed');
+		}
+	}
+}
+
+class MistypedDataAsyncProvider extends AsyncContextDataProvider {
+	public function __construct() {
+	}
+
+	public function getContextDataAsync(): PromiseInterface {
+		// An experiment whose `variants` is not an array makes setData() raise a TypeError, not an Exception.
+		$experiment = (object) [
+			'id' => 1, 'name' => 'exp', 'unitType' => 'session_id', 'iteration' => 1, 'seedHi' => 0, 'seedLo' => 0,
+			'split' => [1], 'trafficSeedHi' => 0, 'trafficSeedLo' => 0, 'trafficSplit' => [0, 1], 'fullOnVariant' => 0,
+			'applications' => [], 'variants' => 'not-an-array',
+		];
+		return resolve(new ContextData([$experiment]));
+	}
+}
+
 class ContextConformanceTest extends TestCase {
 
 	private function sdk(ContextDataProvider $provider): SDK {
@@ -322,5 +348,89 @@ class ContextConformanceTest extends TestCase {
 		self::assertTrue($context->isClosed());
 		self::assertSame(0, $context->getPendingCount());
 		self::assertCount(1, $handler->submitted);
+	}
+
+	public function testThrowingPublishLoggerDoesNotResendAcceptedEvents(): void {
+		$client = new Client(new ClientConfig('https://example.com', 'k', 'a', 'e'));
+		$config = new Config($client);
+		$config->setContextDataProvider(new EmptyProvider());
+		$handler = new ContextEventHandlerMock($client);
+		$config->setContextEventHandler($handler);
+		$logger = new ThrowingOnPublishLogger();
+		$cfg = new ContextConfig();
+		$cfg->setUnit('session_id', 'abc');
+		$cfg->setEventLogger($logger);
+		$context = (new SDK($config))->createContext($cfg);
+
+		foreach (['g1', 'g2', 'g3'] as $goal) {
+			$context->track($goal);
+			$context->publish();
+			self::assertSame(0, $context->getPendingCount());
+		}
+
+		$logger->throwOnPublish = false;
+		$context->close();
+
+		self::assertTrue($context->isClosed());
+		self::assertCount(3, $handler->submitted);
+		$sent = [];
+		foreach ($handler->submitted as $event) {
+			foreach ($event->goals as $goal) {
+				$sent[] = $goal->name;
+			}
+		}
+		self::assertSame(['g1', 'g2', 'g3'], $sent);
+		foreach ($logger->events as $event) {
+			self::assertNotSame(ContextEventLoggerEvent::Error, $event->getEvent());
+		}
+	}
+
+	public function testThrowingPublishLoggerDoesNotFailClose(): void {
+		$client = new Client(new ClientConfig('https://example.com', 'k', 'a', 'e'));
+		$config = new Config($client);
+		$config->setContextDataProvider(new EmptyProvider());
+		$handler = new ContextEventHandlerMock($client);
+		$config->setContextEventHandler($handler);
+		$cfg = new ContextConfig();
+		$cfg->setUnit('session_id', 'abc');
+		$cfg->setEventLogger(new ThrowingOnPublishLogger());
+		$context = (new SDK($config))->createContext($cfg);
+
+		$context->track('g1');
+		$context->close();
+
+		self::assertTrue($context->isClosed());
+		self::assertSame(0, $context->getPendingCount());
+		self::assertCount(1, $handler->submitted);
+	}
+
+	public function testFailedContextWithEmptyQueueLogsNothingOnPublish(): void {
+		$logger = new MockContextEventLoggerProxy();
+		$cfg = new ContextConfig();
+		$cfg->setUnit('session_id', 'abc');
+		$cfg->setEventLogger($logger);
+		$context = $this->settle($this->sdk(new RejectingAsyncProvider())->createContextAsync($cfg));
+		self::assertTrue($context->isFailed());
+		$logger->clear();
+
+		$context->publish();
+
+		self::assertEmpty($logger->events);
+	}
+
+	public function testMistypedAsyncDataResolvesReadyAndFailed(): void {
+		$logger = new MockContextEventLoggerProxy();
+		$cfg = new ContextConfig();
+		$cfg->setUnit('session_id', 'abc');
+		$cfg->setEventLogger($logger);
+		$result = $this->sdk(new MistypedDataAsyncProvider())->createContextPending($cfg);
+		$settled = $this->settle($result['promise']);
+
+		$context = $result['context'];
+		self::assertSame($context, $settled);
+		self::assertTrue($context->isReady());
+		self::assertTrue($context->isFailed());
+		self::assertInstanceOf(\TypeError::class, $context->readyError());
+		self::assertSame(ContextEventLoggerEvent::Error, $logger->events[0]->getEvent());
 	}
 }

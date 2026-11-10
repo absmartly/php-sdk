@@ -199,7 +199,7 @@ class Context {
 				$exception->getFile(),
 				$exception->getLine()
 			));
-			$this->logError($exception);
+			$this->logError($exception, false);
 		}
 	}
 
@@ -314,7 +314,7 @@ class Context {
 			$this->failed = false;
 			$this->ready = true;
 			$this->logEvent(ContextEventLoggerEvent::Ready, $contextData);
-		} catch (Exception $exception) {
+		} catch (Throwable $exception) {
 			$this->setDataFailed($exception);
 			$this->logError($exception);
 		}
@@ -687,8 +687,15 @@ class Context {
 		$this->eventLogger->handleEvent($this, new ContextEventLoggerEvent($event, $data));
 	}
 
-	private function logError(Throwable $throwable): void {
+	/**
+	 * Reports an error to the event logger. Without one it falls back to error_log(), unless the caller has
+	 * already written its own error_log() line ($fallbackToErrorLog false), so each error is logged once.
+	 */
+	private function logError(Throwable $throwable, bool $fallbackToErrorLog = true): void {
 		if (!isset($this->eventLogger)) {
+			if (!$fallbackToErrorLog) {
+				return;
+			}
 			error_log(sprintf(
 				'ABsmartly SDK Error: %s in %s:%d',
 				$throwable->getMessage(),
@@ -832,6 +839,10 @@ class Context {
 	 * caller, when false (publish()/flush()) it is only logged, as in v1.0.3.
 	 */
 	private function flushEvents(bool $rethrow): void {
+		if ($this->getPendingCount() === 0) {
+			return;
+		}
+
 		if ($this->isFailed()) {
 			$errorMsg = sprintf(
 				'ABsmartly SDK Warning: Discarding %d exposures and %d goals due to failed context state',
@@ -853,19 +864,10 @@ class Context {
 			return;
 		}
 
-		if ($this->getPendingCount() === 0) {
-			return;
-		}
-
 		$event = $this->buildPublishEvent();
 
 		try {
 			$this->eventHandler->publish($event);
-			$this->logEvent(ContextEventLoggerEvent::Publish, $event);
-			$this->exposures = [];
-			$this->exposureAssignments = [];
-			$this->achievements = [];
-			$this->pendingCount = 0;
 		}
 		catch (Exception $exception) {
 			error_log(sprintf(
@@ -874,12 +876,34 @@ class Context {
 				count($this->achievements),
 				$exception->getMessage()
 			));
-			$this->logError($exception);
+			$this->logError($exception, false);
 			$this->capRetainedEvents();
 
 			if ($rethrow) {
 				throw $exception;
 			}
+
+			return;
+		}
+
+		// The collector has accepted the batch: clear it before notifying the event logger so a throwing logger
+		// can never cause these events to be retained and sent again.
+		$this->exposures = [];
+		$this->exposureAssignments = [];
+		$this->achievements = [];
+		$this->pendingCount = 0;
+
+		try {
+			$this->logEvent(ContextEventLoggerEvent::Publish, $event);
+		}
+		catch (Throwable $exception) {
+			// Not a publish failure: report it without re-entering the logger that just threw.
+			error_log(sprintf(
+				'ABsmartly SDK Error: Event logger failed handling Publish: %s in %s:%d',
+				$exception->getMessage(),
+				$exception->getFile(),
+				$exception->getLine()
+			));
 		}
 	}
 
@@ -934,7 +958,7 @@ class Context {
 			$droppedGoals
 		);
 		error_log($errorMsg);
-		$this->logError(new \RuntimeException($errorMsg));
+		$this->logError(new \RuntimeException($errorMsg), false);
 	}
 
 	private function buildPublishEvent(): PublishEvent {
@@ -1018,7 +1042,7 @@ class Context {
 				$exception->getFile(),
 				$exception->getLine()
 			));
-			$this->logError($exception);
+			$this->logError($exception, false);
 		}
 	}
 
