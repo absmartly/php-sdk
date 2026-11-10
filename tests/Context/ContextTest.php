@@ -613,7 +613,7 @@ class ContextTest extends TestCase {
 	// resolved by walking the experiments in ascending id order. See tests/Fixtures/json/shared_variables.json.
 
 	public function testSharedKeyBothAssignedLowestIdWins(): void {
-		// (a) exp_low_a (id 1) and exp_high_a (id 2) both define "a.color" and both are assigned; lowest id wins.
+		// (a) exp_low_a (id 1) and exp_high_a (id 2) both define "a.color".
 		$context = $this->createReadyContext('shared_variables.json');
 		self::assertSame('low', $context->getVariableValue('a.color', 'def'));
 	}
@@ -663,7 +663,6 @@ class ContextTest extends TestCase {
 	}
 
 	public function testSharedKeyPeekReturnsSameValueAndQueuesNothing(): void {
-		// (f) peek returns the same values as get but queues no exposures.
 		$context = $this->createReadyContext('shared_variables.json');
 		$context->setAttribute('age', 5);
 
@@ -705,7 +704,6 @@ class ContextTest extends TestCase {
 		self::assertNull($context->getVariableValue('shared.key', 'fallback'));
 		self::assertSame(1, $context->getPendingCount());
 
-		// peek returns the same null without queuing further exposures.
 		self::assertNull($context->peekVariableValue('shared.key', 'fallback'));
 		self::assertSame(1, $context->getPendingCount());
 
