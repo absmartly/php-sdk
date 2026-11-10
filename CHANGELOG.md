@@ -47,6 +47,9 @@
 - **`match` treats slashes literally.** `match` no longer parses a `"/pattern/flags"` form; leading/trailing
   slashes are stripped and the rest is matched literally, as in v1.0.3 and JS (`new RegExp("/^p/i")` is a
   literal-slash pattern). PHP-only flag parsing that was briefly introduced is removed.
+- **Mutators throw after `close()`.** `setAttribute()`, `setAttributes()`, `setUnit()` and `setUnits()` now throw
+  `ABSmartly Context is closed` on a closed context, as in the JS SDK (old: they were accepted and returned the
+  context). Set attributes and units before closing.
 
 ### Compatibility retained
 
@@ -81,6 +84,14 @@
 
 ### Fixed
 
+- A batch the collector has accepted is cleared from the queue before the `Publish` event is logged, so an event
+  logger that throws on `Publish` no longer causes those exposures and goals to be retained and sent again, and is
+  not reported as a publish failure (`close()` still completes).
+- `createContextAsync()`/`createContextPending()` resolve a context that is ready and failed when the loaded data
+  raises any `Throwable` (e.g. a `TypeError` from a mistyped field), not only an `Exception`.
+- `ReactHttpClient::$timeout` of 0 or less now means no per-attempt limit, as documented (it previously made every
+  request time out immediately).
+- A failed context with nothing queued no longer logs `Discarding 0 exposures and 0 goals` on every `publish()`.
 - `refresh()` on a context whose initial load failed is a no-op: it no longer fetches or applies data, stays
   failed, keeps `readyError()`, and emits no `Refresh` or `Error` event, matching the JS SDK's `_refresh`
   (`if (!this._failed)`). A failed context can no longer be recovered by `refresh()`.
