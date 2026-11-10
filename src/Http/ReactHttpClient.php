@@ -40,8 +40,8 @@ class ReactHttpClient implements AsyncHttpClientInterface {
 
 	public function getAsync(string $url, array $query = [], array $headers = []): PromiseInterface {
 		$url = $this->buildUrl($url, $query);
-		return $this->withRetries(fn(float $timeoutSeconds) => $this->browser
-			->withTimeout($timeoutSeconds)
+		return $this->withRetries(fn(?float $timeoutSeconds) => $this->browser
+			->withTimeout($timeoutSeconds ?? false)
 			->get($url, $headers)
 			->then(fn($response) => $this->toResponse($response)));
 	}
@@ -49,16 +49,16 @@ class ReactHttpClient implements AsyncHttpClientInterface {
 	public function putAsync(string $url, array $query = [], array $headers = [], string $body = ''): PromiseInterface {
 		$url = $this->buildUrl($url, $query);
 		// Sent once: replaying a publish after a lost response could record the same events twice.
-		return $this->singleAttempt(fn(float $timeoutSeconds) => $this->browser
-			->withTimeout($timeoutSeconds)
+		return $this->singleAttempt(fn(?float $timeoutSeconds) => $this->browser
+			->withTimeout($timeoutSeconds ?? false)
 			->put($url, $headers, $body)
 			->then(fn($response) => $this->toResponse($response)));
 	}
 
 	public function postAsync(string $url, array $query = [], array $headers = [], string $body = ''): PromiseInterface {
 		$url = $this->buildUrl($url, $query);
-		return $this->singleAttempt(fn(float $timeoutSeconds) => $this->browser
-			->withTimeout($timeoutSeconds)
+		return $this->singleAttempt(fn(?float $timeoutSeconds) => $this->browser
+			->withTimeout($timeoutSeconds ?? false)
 			->post($url, $headers, $body)
 			->then(fn($response) => $this->toResponse($response)));
 	}
@@ -77,12 +77,13 @@ class ReactHttpClient implements AsyncHttpClientInterface {
 
 	/**
 	 * The timeout (in seconds) to apply to a single attempt. The per-attempt $timeout bounds each request as in
-	 * HTTPClient (0 or less means no per-attempt limit; React's Browser takes a negative timeout as "none"). When a
-	 * total budget ($totalTimeout) is set, the current attempt is additionally bounded by the time remaining before
-	 * the deadline, so a slow attempt cannot run past the budget.
+	 * HTTPClient (0 or less means no per-attempt limit, returned as null; callers pass it to React's Browser as
+	 * `false`, since a negative timeout there means "time out immediately"). When a total budget ($totalTimeout) is
+	 * set, the current attempt is additionally bounded by the time remaining before the deadline, so a slow attempt
+	 * cannot run past the budget.
 	 */
-	private function effectiveTimeoutSeconds(bool $hasDeadline, float $deadline): float {
-		$perAttempt = $this->timeout > 0 ? $this->timeout / 1000 : -1.0;
+	private function effectiveTimeoutSeconds(bool $hasDeadline, float $deadline): ?float {
+		$perAttempt = $this->timeout > 0 ? $this->timeout / 1000 : null;
 		if (!$hasDeadline) {
 			return $perAttempt;
 		}
@@ -90,7 +91,7 @@ class ReactHttpClient implements AsyncHttpClientInterface {
 		if ($remaining < 0) {
 			$remaining = 0.0;
 		}
-		return $perAttempt < 0 ? $remaining : min($perAttempt, $remaining);
+		return $perAttempt === null ? $remaining : min($perAttempt, $remaining);
 	}
 
 	private function nowMs(): float {
@@ -102,7 +103,7 @@ class ReactHttpClient implements AsyncHttpClientInterface {
 	 * by the remaining budget. A deadline watchdog rejects and cancels the in-flight request if it has not settled by
 	 * the deadline, so single-attempt methods (PUT/POST) honour the total budget too.
 	 *
-	 * @param callable(float): PromiseInterface $request
+	 * @param callable(?float): PromiseInterface $request
 	 */
 	private function singleAttempt(callable $request): PromiseInterface {
 		$hasDeadline = $this->totalTimeout > 0;
@@ -175,7 +176,7 @@ class ReactHttpClient implements AsyncHttpClientInterface {
 	 * starts once the remaining time cannot cover its back-off, each attempt is bounded by the remaining budget, and a
 	 * watchdog rejects and cancels an in-flight attempt at the deadline. The per-attempt $timeout always applies.
 	 *
-	 * @param callable(float): PromiseInterface $request
+	 * @param callable(?float): PromiseInterface $request
 	 */
 	private function withRetries(callable $request): PromiseInterface {
 		$maxAttempts = 1 + max(0, $this->retries);
@@ -257,7 +258,7 @@ class ReactHttpClient implements AsyncHttpClientInterface {
 							}
 							error_log(sprintf(
 								'ABsmartly SDK: Retrying HTTP request (attempt %d/%d) after %dms due to error: %s',
-								$n + 1,
+								$n + 2,
 								$maxAttempts,
 								$backoffMs,
 								$error->getMessage()

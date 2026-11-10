@@ -259,4 +259,19 @@ class ReactHttpClientRetryTest extends TestCase {
 		self::assertNotNull($result);
 		self::assertSame('ok', $result->content);
 	}
+
+	public function testNonPositiveTimeoutDisablesPerAttemptLimit(): void {
+		// React's Browser treats a negative timeout as "time out immediately"; `false` is its "no limit".
+		$browser = $this->createMock(Browser::class);
+		$browser->expects(self::once())->method('withTimeout')->with(false)->willReturnSelf();
+		$browser->method('get')->willReturn(resolve(new ReactResponse(200, [], 'ok')));
+		$client = new ReactHttpClient($browser);
+		$client->timeout = 0;
+
+		$result = null;
+		$client->getAsync('http://x')->then(function($r) use (&$result) { $result = $r; });
+		Loop::run();
+
+		self::assertSame('ok', $result->content);
+	}
 }
