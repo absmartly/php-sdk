@@ -68,6 +68,7 @@ class Context {
 	private array $achievements = [];
 
 	private array $attributes = [];
+	private int $attributesSeq = 0;
 	private array $overrides = [];
 	private array $cassignments = [];
 
@@ -417,7 +418,7 @@ class Context {
 	private function audienceMatches(Experiment $experiment, Assignment $assignment): bool {
 		if (!empty($experiment->audience) && !empty((array) $experiment->audience)) {
 			if ($this->attrsSeq > ($assignment->attrsSeq ?? 0)) {
-				$attrs = $this->getAttributes();
+				$attrs = $this->getEvaluationAttributes();
 				$result = $this->audienceMatcher->evaluate($experiment->audience, $attrs);
 				$newAudienceMismatch = $result !== null ? !$result : $assignment->audienceMismatch;
 
@@ -481,6 +482,7 @@ class Context {
 
 		$assignment->name = $experimentName;
 		$assignment->eligible = true;
+		$assignment->attrsSeq = $this->attributesSeq;
 
 		if (isset($this->overrides[$experimentName])) {
 			if ($experiment) {
@@ -495,7 +497,7 @@ class Context {
 		elseif ($experiment) {
 			$unitType = $experiment->data->unitType;
 			if (!empty($experiment->data->audience) && !empty((array) $experiment->data->audience)) {
-				$attrs = $this->getAttributes();
+				$attrs = $this->getEvaluationAttributes();
 
 				$result = $this->audienceMatcher->evaluate($experiment->data->audience, $attrs);
 				if (is_bool($result)) {
@@ -642,6 +644,46 @@ class Context {
 
 	public function getAttributes(): array {
 		$result = [];
+		foreach ($this->attributes as $attribute) {
+			$result[$attribute->name] = $attribute->value;
+		}
+
+		return $result;
+	}
+
+	/**
+	 * Non-empty `application` and `environment` names from the client config, which the collector also
+	 * attaches to every exposure server-side, so audience filters can target them.
+	 *
+	 * @return array<string, string>
+	 */
+	private function getSystemAttributes(): array {
+		$systemAttributes = [];
+
+		$client = $this->sdk->getClient();
+
+		$application = $client->getApplication();
+		if ($application !== '') {
+			$systemAttributes['application'] = $application;
+		}
+
+		$environment = $client->getEnvironment();
+		if ($environment !== '') {
+			$systemAttributes['environment'] = $environment;
+		}
+
+		return $systemAttributes;
+	}
+
+	/**
+	 * System attributes first, then user attributes on top, so a user-set value always wins, even one
+	 * set after an assignment was cached (the attributesSeq bump invalidates it). Used only for audience
+	 * evaluation; the publish payload is built from the user attributes alone.
+	 *
+	 * @return array<string, mixed>
+	 */
+	private function getEvaluationAttributes(): array {
+		$result = $this->getSystemAttributes();
 		foreach ($this->attributes as $attribute) {
 			$result[$attribute->name] = $attribute->value;
 		}
