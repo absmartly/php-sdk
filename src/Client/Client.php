@@ -23,8 +23,6 @@ class Client implements AsyncClientInterface {
 	private string $url;
 	private array $query;
 	private array $headers;
-	private string $application;
-	private string $environment;
 
 	public function __construct(ClientConfig $clientConfig, ?HttpClientInterface $HTTPClient = null) {
 		if (!$HTTPClient) {
@@ -38,9 +36,6 @@ class Client implements AsyncClientInterface {
 		if (property_exists($this->httpClient, 'retries')) {
 			$this->httpClient->retries = $clientConfig->getRetries();
 		}
-
-		$this->application = $clientConfig->getApplication();
-		$this->environment = $clientConfig->getEnvironment();
 
 		$this->url = rtrim($clientConfig->getEndpoint(), '/') .'/context';
 		$this->query = [
@@ -68,11 +63,11 @@ class Client implements AsyncClientInterface {
 	}
 
 	public function getApplication(): string {
-		return $this->application;
+		return $this->query['application'];
 	}
 
 	public function getEnvironment(): string {
-		return $this->environment;
+		return $this->query['environment'];
 	}
 
 	public function getContextData(): ContextData {

@@ -688,6 +688,8 @@ A/B Smartly's real-time analytics helps engineering and product teams ensure tha
   full-on variant. After upgrading, that unit is randomised normally. Those experiments are broken
   today; this is the fix, but the behaviour change is intentional and called out here explicitly.
 
-- `app_version` / `application_version` is not part of audience evaluation. A filter on
-  `app_version` does not match through the SDK.
+- `app_version` / `application_version` is not supplied automatically for audience evaluation. The
+  SDK injects only `application` and `environment`; it never adds a version attribute. An
+  explicitly set attribute of the same name (`setAttribute('app_version', ...)`) is still evaluated
+  like any other user attribute.
 

@@ -20,6 +20,7 @@ use Exception;
 use JsonException;
 use Throwable;
 
+use function array_replace;
 use function array_slice;
 use function array_splice;
 use function count;
@@ -683,12 +684,7 @@ class Context {
 	 * @return array<string, mixed>
 	 */
 	private function getEvaluationAttributes(): array {
-		$result = $this->getSystemAttributes();
-		foreach ($this->attributes as $attribute) {
-			$result[$attribute->name] = $attribute->value;
-		}
-
-		return $result;
+		return array_replace($this->getSystemAttributes(), $this->getAttributes());
 	}
 
 	private function getVariantAssigner(string $unitType, string $unitHash): VariantAssigner {
