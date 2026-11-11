@@ -250,6 +250,11 @@ $context->setAttributes(
 );
 ```  
 
+The `application` and `environment` names configured on the client are always available to audience
+filters as the `application` and `environment` attributes, without being set explicitly. A user
+attribute of the same name, set with `setAttribute()`, overrides the configured value for audience
+evaluation.
+
 ### Custom Assignments
 
 Sometimes it may be necessary to override the automatic selection of a variant. For example, if you wish to have your variant chosen based on data from an API call. This can be accomplished using the `Context->setCustomAssignment()` method.
@@ -295,3 +300,26 @@ $context->track(
     (object) ['item_count' => 1, 'total_amount' => 1999.99]
 );
 ```
+
+## Changelog
+
+### Unreleased
+
+- Audience filters now always evaluate against the `application` and `environment` names
+  configured on the client, in addition to any user-set attributes. The SDK puts those system
+  values into the attribute map first, then overlays user attributes on top, so a value set with
+  `setAttribute()` always wins (including one set after the context was created, which invalidates a
+  cached assignment). Empty values are skipped, so no key is added when a name is not configured.
+  These values are only used for local audience evaluation; nothing new is added to the publish
+  payload, since the collector already stamps `application` and `environment` on every exposure
+  server-side.
+
+  **This changes assignment for running experiments.** A unit whose experiment has Audience
+  enforced (`audienceStrict`) and an `environment` or `application` condition currently gets
+  variant 0, because the SDK never supplied those attributes and the strict mismatch beat the
+  full-on variant. After upgrading, that unit is randomised normally. Those experiments are broken
+  today; this is the fix, but the behaviour change is intentional and called out here explicitly.
+
+- `app_version` / `application_version` is not part of audience evaluation. A filter on
+  `app_version` does not match through the SDK.
+

@@ -21,6 +21,8 @@ class Assignment {
 	public bool $audienceMismatch = false;
 	public stdClass $variables;
 
+	public int $attrsSeq = 0;
+
 	public bool $exposed;
 }
 

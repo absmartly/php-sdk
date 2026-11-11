@@ -57,6 +57,10 @@ final class SDK {
 		return new SDK($sdkConfig);
 	}
 
+	public function getClient(): Client {
+		return $this->client;
+	}
+
 	public function createContext(ContextConfig $contextConfig): Context {
 		return Context::createFromContextConfig($this, $contextConfig, $this->provider, $this->handler);
 	}
