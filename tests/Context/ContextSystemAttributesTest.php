@@ -119,11 +119,35 @@ class ContextSystemAttributesTest extends TestCase {
 	}
 
 	// §4.6 Missing config: with no environment configured, the key is absent from the map, there is
-	// no crash, and a filter on environment does not match.
+	// no crash, and a filter on environment does not match. An audience that matches only when the key
+	// is *absent* (`null` on `environment`) must match, which distinguishes an omitted key from an
+	// empty-string value being inserted.
 	public function testMissingEnvironmentConfigLeavesKeyOut(): void {
 		$context = $this->createReadyContext('system_attributes_context.json', 'website', '');
 
+		// An `eq` filter on environment cannot match a missing key.
 		self::assertSame(0, $context->getTreatment('exp_environment_match'));
+
+		// A `null` filter on environment matches only because the key is absent; were the SDK to insert
+		// `environment => ''`, this would be a mismatch and the strict audience would force variant 0.
+		self::assertSame(1, $context->getTreatment('exp_environment_absent'));
+
+		$context->publish();
+		$event = $this->eventHandler->submitted[0];
+		$byName = [];
+		foreach ($event->exposures as $exposure) {
+			$byName[$exposure->name] = $exposure;
+		}
+		self::assertTrue($byName['exp_environment_match']->audienceMismatch);
+		self::assertFalse($byName['exp_environment_absent']->audienceMismatch);
+	}
+
+	// With an environment configured, the "absent key" audience must NOT match: this guards the
+	// companion direction of the omission contract above.
+	public function testPresentEnvironmentConfigFillsKey(): void {
+		$context = $this->createReadyContext();
+
+		self::assertSame(0, $context->getTreatment('exp_environment_absent'));
 
 		$context->publish();
 		$event = $this->eventHandler->submitted[0];

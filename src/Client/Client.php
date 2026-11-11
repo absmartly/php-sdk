@@ -18,8 +18,6 @@ class Client {
 	private string $url;
 	private array $query;
 	private array $headers;
-	private string $application;
-	private string $environment;
 
 	public function __construct(ClientConfig $clientConfig, ?HTTPClient $HTTPClient = null) {
 		if (!$HTTPClient) {
@@ -28,9 +26,6 @@ class Client {
 		$this->httpClient = $HTTPClient;
 		$this->httpClient->timeout = $clientConfig->getTimeout();
 		$this->httpClient->retries = $clientConfig->getRetries();
-
-		$this->application = $clientConfig->getApplication();
-		$this->environment = $clientConfig->getEnvironment();
 
 		$this->url = rtrim($clientConfig->getEndpoint(), '/') .'/context';
 		$this->query = [
@@ -54,11 +49,11 @@ class Client {
 	}
 
 	public function getApplication(): string {
-		return $this->application;
+		return $this->query['application'];
 	}
 
 	public function getEnvironment(): string {
-		return $this->environment;
+		return $this->query['environment'];
 	}
 
 	public function getContextData(): ContextData {
