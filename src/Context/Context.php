@@ -18,6 +18,7 @@ use ABSmartly\SDK\VariantAssigner;
 use Exception;
 use Throwable;
 
+use function array_replace;
 use function count;
 use function get_object_vars;
 use function gettype;
@@ -54,6 +55,7 @@ class Context {
 	private array $achievements = [];
 
 	private array $attributes = [];
+	private int $attributesSeq = 0;
 	private array $overrides = [];
 	private array $cassignments = [];
 
@@ -202,6 +204,28 @@ class Context {
 			$experiment->trafficSplit === $assignment->trafficSplit;
 	}
 
+	/**
+	 * A cached assignment stays valid while no attribute has been set since it was computed. When an
+	 * attribute was set afterwards (the sequence advanced), the audience is re-evaluated against the
+	 * current attribute map: if the mismatch outcome changed the cache is invalidated (returns false,
+	 * forcing a fresh assignment), otherwise the assignment is stamped with the new sequence and kept.
+	 */
+	private function assignmentAudienceUpToDate(ExperimentVariables $experiment, Assignment $assignment): bool {
+		if ($assignment->attrsSeq === $this->attributesSeq) {
+			return true;
+		}
+
+		if (!empty($experiment->data->audience) && !empty((array) $experiment->data->audience)) {
+			$result = $this->audienceMatcher->evaluate($experiment->data->audience, $this->getEvaluationAttributes());
+			if ((!$result) !== $assignment->audienceMismatch) {
+				return false;
+			}
+		}
+
+		$assignment->attrsSeq = $this->attributesSeq;
+		return true;
+	}
+
 	private function getAssignment(string $experimentName): Assignment {
 		$experiment = $this->getExperiment($experimentName);
 
@@ -219,7 +243,7 @@ class Context {
 					return $assignment;
 				}
 			} else if (!isset($this->cassignments[$experimentName]) || $this->cassignments[$experimentName] === $assignment->variant) {
-				if ($this->experimentMatches($experiment->data, $assignment)) {
+				if ($this->experimentMatches($experiment->data, $assignment) && $this->assignmentAudienceUpToDate($experiment, $assignment)) {
 					// assignment up-to-date
 					return $assignment;
 				}
@@ -230,6 +254,7 @@ class Context {
 
 		$assignment->name = $experimentName;
 		$assignment->eligible = true;
+		$assignment->attrsSeq = $this->attributesSeq;
 
 		if (isset($this->overrides[$experimentName])) {
 			if ($experiment) {
@@ -244,7 +269,7 @@ class Context {
 		elseif ($experiment) {
 			$unitType = $experiment->data->unitType;
 			if (!empty($experiment->data->audience) && !empty((array) $experiment->data->audience)) {
-				$attrs = $this->getAttributes();
+				$attrs = $this->getEvaluationAttributes();
 
 				$result = $this->audienceMatcher->evaluate($experiment->data->audience, $attrs);
 				$assignment->audienceMismatch = !$result;
@@ -333,6 +358,7 @@ class Context {
 			'value' => $value,
 			'setAt' => self::getTime(),
 		];
+		++$this->attributesSeq;
 
 		return $this;
 	}
@@ -362,6 +388,41 @@ class Context {
 		}
 
 		return $result;
+	}
+
+	/**
+	 * Non-empty `application` and `environment` names from the client config, which the collector also
+	 * attaches to every exposure server-side, so audience filters can target them.
+	 *
+	 * @return array<string, string>
+	 */
+	private function getSystemAttributes(): array {
+		$systemAttributes = [];
+
+		$client = $this->sdk->getClient();
+
+		$application = $client->getApplication();
+		if ($application !== '') {
+			$systemAttributes['application'] = $application;
+		}
+
+		$environment = $client->getEnvironment();
+		if ($environment !== '') {
+			$systemAttributes['environment'] = $environment;
+		}
+
+		return $systemAttributes;
+	}
+
+	/**
+	 * System attributes first, then user attributes on top, so a user-set value always wins, even one
+	 * set after an assignment was cached (the attributesSeq bump invalidates it). Used only for audience
+	 * evaluation; the publish payload is built from the user attributes alone.
+	 *
+	 * @return array<string, mixed>
+	 */
+	private function getEvaluationAttributes(): array {
+		return array_replace($this->getSystemAttributes(), $this->getAttributes());
 	}
 
 	private function getVariantAssigner(string $unitType, string $unitHash): VariantAssigner {

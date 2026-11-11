@@ -48,6 +48,14 @@ class Client {
 
 	}
 
+	public function getApplication(): string {
+		return $this->query['application'];
+	}
+
+	public function getEnvironment(): string {
+		return $this->query['environment'];
+	}
+
 	public function getContextData(): ContextData {
 		$this->authRequest();
 		$response = $this->httpClient->get($this->url, $this->query, $this->headers);
