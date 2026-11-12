@@ -467,10 +467,8 @@ class Context {
 	}
 
 	/**
-	 * Resolves the experiment's first matching assignment rule to a variant, as the JavaScript SDK's _resolveRule.
-	 * An "assign" rule whose variant is out of range, and a "split" rule whose percentages do not cover every
-	 * variant, give null (no rule applies). A split rule matched without its unit resolves to the full-on variant
-	 * (0 for an experiment that is not full-on) and is flagged so it can be re-resolved once the unit is set.
+	 * Resolves the first matching assignment rule to a variant, as the JavaScript SDK's _resolveRule. A split rule
+	 * matched without its unit gives the full-on variant and is flagged for re-resolution once the unit is set.
 	 *
 	 * @return array{variant: int, isMissingUnit: bool}|null
 	 */

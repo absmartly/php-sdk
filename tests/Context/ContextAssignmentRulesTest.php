@@ -194,7 +194,7 @@ class ContextAssignmentRulesTest extends TestCase {
 		self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_test_abc'));
 	}
 
-	// Q1 on PR #10: rule conditions are re-evaluated when attributes change after an assignment is cached.
+	// Rule conditions are re-evaluated when attributes change after an assignment is cached.
 	public function testCachedAssignmentIsRebuiltWhenARuleStartsMatching(): void {
 		$context = $this->createContext([self::assignRule(1, self::usCondition())]);
 		self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_test_abc'));

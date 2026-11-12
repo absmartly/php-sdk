@@ -56,15 +56,8 @@ class AudienceMatcher {
 
 	/**
 	 * Returns the action of the first matching assignment rule: ['variant' => int] for an "assign" rule or
-	 * ['split' => float[]] (fractions of 1) for a "split" rule, or null when no rule matches. Mirrors the
-	 * JavaScript SDK's AudienceMatcher.evaluateRules.
-	 *
-	 * A rule is skipped when it is not an object, its type is unknown, an "assign" rule has a non-integer variant,
-	 * a "split" rule has invalid percentages, its environments are present but not a list, its non-empty
-	 * environments list does not contain $environmentName (a null name never matches a non-empty list), its
-	 * conditions are not an object, or its conditions do not evaluate to true. A rule without conditions always
-	 * matches, and an empty environments list matches every environment. Variant bounds are the caller's
-	 * responsibility.
+	 * ['split' => float[]] (fractions of 1) for a "split" rule, or null when no rule matches, as the JavaScript
+	 * SDK's evaluateRules. Malformed rules are skipped. Variant bounds are the caller's responsibility.
 	 *
 	 * @param string $assignmentRules JSON of the form {"rules": [...]}
 	 * @return array{variant: int}|array{split: float[]}|null
