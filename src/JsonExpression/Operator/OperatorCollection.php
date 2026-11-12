@@ -15,6 +15,7 @@ final class OperatorCollection {
 	public OperatorInterface $gt;
 	public OperatorInterface $gte;
 	public OperatorInterface $lt;
+	public OperatorInterface $lte;
 	public OperatorInterface $semver_eq;
 	public OperatorInterface $semver_gt;
 	public OperatorInterface $semver_gte;

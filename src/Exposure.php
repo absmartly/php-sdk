@@ -16,6 +16,7 @@ class Exposure {
 	public bool $overridden;
 	public bool $fullOn;
 	public bool $custom;
+	public bool $ruleOverride = false;
 	public bool $audienceMismatch;
 
 	public function ingestAssignment(Assignment $assignment): void {

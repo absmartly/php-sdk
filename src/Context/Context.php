@@ -498,10 +498,18 @@ class Context {
 		elseif ($experiment) {
 			$unitType = $experiment->data->unitType;
 			$rule = (new \ABSmartly\SDK\AssignmentRuleMatcher())->evaluate($experiment->data->assignmentRules, $this->sdk->getClient()->getEnvironment(), $this->getEvaluationAttributes());
+			$ruleApplied = false;
 			if ($rule !== null && isset($rule['variant'])) {
 				$assignment->variant = $rule['variant'];
 				$assignment->assigned = true;
 				$assignment->ruleOverride = true;
+				$ruleApplied = true;
+			}
+			elseif ($rule !== null && isset($rule['split']) && ($uid = $this->units[$unitType] ?? null) !== null) {
+				$assignment->variant = $this->getVariantAssigner($unitType, $uid)->assign($rule['split'], $experiment->data->seedHi, $experiment->data->seedLo);
+				$assignment->assigned = true;
+				$assignment->ruleOverride = true;
+				$ruleApplied = true;
 			}
 			if (!empty($experiment->data->audience) && !empty((array) $experiment->data->audience)) {
 				$attrs = $this->getEvaluationAttributes();
@@ -512,9 +520,7 @@ class Context {
 				}
 			}
 
-			if ($rule !== null && isset($rule['variant'])) {
-			}
-			else if (!empty($experiment->data->audienceStrict) && !empty($assignment->audienceMismatch)) {
+			if (!$ruleApplied && !empty($experiment->data->audienceStrict) && !empty($assignment->audienceMismatch)) {
 				$assignment->variant = 0;
 			}
 			else if (empty($experiment->data->fullOnVariant)) {
