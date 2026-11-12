@@ -104,3 +104,7 @@
 - Lifecycle aliases (`finalize()`, `isFinalized()`, `isFinalizing()`, `readyError()`) and the
   `ContextEventLoggerEvent::Finalize` constant for cross-SDK code, custom-field key/type APIs, and shared
   `Utils` helpers.
+
+## Assignment rules and semantic versions
+
+Assignment rules may select a fixed variant (`type: assign`) or split traffic (`type: split`, percentages such as `50/50`) when their conditions and environment match. The SDK supports `semver_eq`, `semver_gt`, `semver_gte`, `semver_lt`, and `semver_lte` audience operators. The client sends its version in the `X-Agent` header and accepts an optional application version through `ClientConfig::setApplicationVersion()`.

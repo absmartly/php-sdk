@@ -26,8 +26,8 @@ class Experiment {
 	public bool $audienceStrict = false;
 	public array $applications;
 	public array $variants;
-	/** @var object[]|null The collector's array of {name, type, value} records. */
 	public ?array $customFieldValues = null;
+	public ?string $assignmentRules = null;
 
 	public function __construct(object $data) {
 		$requiredFields = ['id', 'name', 'unitType', 'iteration', 'seedHi', 'seedLo', 'split',

@@ -29,6 +29,9 @@ class Exposure {
 		$this->overridden = $assignment->overridden;
 		$this->fullOn = $assignment->fullOn;
 		$this->custom = $assignment->custom;
+		if ($assignment->ruleOverride) {
+			$this->ruleOverride = true;
+		}
 		$this->audienceMismatch = $assignment->audienceMismatch;
 	}
 

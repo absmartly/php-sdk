@@ -17,6 +17,7 @@ class Assignment {
 	public bool $eligible = false;
 	public bool $fullOn = false;
 	public bool $custom = false;
+	public bool $ruleOverride = false;
 
 	public bool $audienceMismatch = false;
 	public ?stdClass $variables = null;

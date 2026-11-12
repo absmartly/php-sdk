@@ -12,6 +12,7 @@ class ClientConfig {
 	private string $application;
 	private string $endpoint;
 	private string $environment;
+	private ?string $applicationVersion = null;
 
 	private int $retries = 5;
 	private int $timeout = 3000;
@@ -59,6 +60,15 @@ class ClientConfig {
 
 	public function getApiKey(): string {
 		return $this->apiKey;
+	}
+
+	public function setApplicationVersion(?string $version): ClientConfig {
+		$this->applicationVersion = $version === null || trim($version) === '' ? null : trim($version);
+		return $this;
+	}
+
+	public function getApplicationVersion(): ?string {
+		return $this->applicationVersion;
 	}
 
 

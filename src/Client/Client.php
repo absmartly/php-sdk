@@ -49,7 +49,7 @@ class Client implements AsyncClientInterface {
 			'X-API-Key' => $clientConfig->getApiKey(),
 			'X-Environment' => $clientConfig->getEnvironment(),
 			'X-Application' => $clientConfig->getApplication(),
-			'X-Application-Version' => '0',
+			'X-Application-Version' => $clientConfig->getApplicationVersion() ?? '0',
 		];
 	}
 
