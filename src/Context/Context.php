@@ -746,8 +746,7 @@ class Context {
 	}
 
 	/**
-	 * Non-empty `application` and `environment` names from the client config, which the collector also
-	 * attaches to every exposure server-side, so audience filters can target them.
+	 * The client's non-empty `application` and `environment` names, for audience and rule conditions.
 	 *
 	 * @return array<string, string>
 	 */
@@ -770,9 +769,7 @@ class Context {
 	}
 
 	/**
-	 * System attributes first, then user attributes on top, so a user-set value always wins, even one
-	 * set after an assignment was cached (the attrsSeq bump invalidates it). Used only for audience
-	 * evaluation; the publish payload is built from the user attributes alone.
+	 * System attributes overlaid by user attributes, for evaluation only; the publish payload uses user attributes.
 	 *
 	 * @return array<string, mixed>
 	 */

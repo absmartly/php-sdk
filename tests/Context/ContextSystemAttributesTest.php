@@ -13,11 +13,8 @@ use ABSmartly\SDK\Tests\Mocks\ContextEventHandlerMock;
 use PHPUnit\Framework\TestCase;
 
 /**
- * Covers the §4 behaviours of the "SDKs must evaluate audiences with application + environment"
- * brief: the client's application and environment names are injected into the attribute map that
- * audience filters read, user-set attributes overlay them (including after the context is created,
- * invalidating a cached assignment), empty config values are skipped, nothing new is published, and
- * app_version is gone.
+ * The client's application and environment names are visible to audience filters, user attributes overlay them,
+ * empty names are skipped, and nothing extra is published.
  */
 class ContextSystemAttributesTest extends TestCase {
 
@@ -55,7 +52,7 @@ class ContextSystemAttributesTest extends TestCase {
 		return (new SDK($config))->createContext($contextConfig);
 	}
 
-	// §4.1 Strict audience on the environment matches.
+	// Strict audience on the environment matches.
 	public function testStrictAudienceOnEnvironmentMatches(): void {
 		$context = $this->createReadyContext();
 
@@ -67,7 +64,7 @@ class ContextSystemAttributesTest extends TestCase {
 		self::assertFalse($event->exposures[0]->audienceMismatch);
 	}
 
-	// §4.2 Strict audience on the application matches.
+	// Strict audience on the application matches.
 	public function testStrictAudienceOnApplicationMatches(): void {
 		$context = $this->createReadyContext();
 
@@ -78,7 +75,7 @@ class ContextSystemAttributesTest extends TestCase {
 		self::assertFalse($event->exposures[0]->audienceMismatch);
 	}
 
-	// §4.3 No match: an environment filter for "staging" does not match in "production".
+	// No match: an environment filter for "staging" does not match in "production".
 	public function testStrictAudienceNoMatchReturnsControlVariant(): void {
 		$context = $this->createReadyContext();
 
@@ -89,7 +86,7 @@ class ContextSystemAttributesTest extends TestCase {
 		self::assertTrue($event->exposures[0]->audienceMismatch);
 	}
 
-	// §4.4 A user-set value overrides the system value: setting environment=staging before any
+	// A user-set value overrides the system value: setting environment=staging before any
 	// assignment makes the staging filter match and the production filter mismatch.
 	public function testUserAttributeOverridesSystemValue(): void {
 		$context = $this->createReadyContext();
@@ -99,7 +96,7 @@ class ContextSystemAttributesTest extends TestCase {
 		self::assertSame(0, $context->getTreatment('exp_environment_match'));
 	}
 
-	// §4.4 Re-evaluation path: an assignment cached before the attribute is set is invalidated
+	// Re-evaluation path: an assignment cached before the attribute is set is invalidated
 	// once the user overrides the value.
 	public function testCachedAssignmentInvalidatedWhenAttributeSetLater(): void {
 		$context = $this->createReadyContext();
@@ -118,7 +115,7 @@ class ContextSystemAttributesTest extends TestCase {
 		self::assertSame(1, $context->peekTreatment('exp_environment_staging'));
 	}
 
-	// §4.6 Missing config: with no environment configured, the key is absent from the map, there is
+	// Missing config: with no environment configured, the key is absent from the map, there is
 	// no crash, and a filter on environment does not match. An audience that matches only when the key
 	// is *absent* (`null` on `environment`) must match, which distinguishes an omitted key from an
 	// empty-string value being inserted.
@@ -154,7 +151,7 @@ class ContextSystemAttributesTest extends TestCase {
 		self::assertTrue($event->exposures[0]->audienceMismatch);
 	}
 
-	// §4.7 Nothing extra published: the serialized payload carries no application/environment/app_version
+	// Nothing extra published: the serialized payload carries no application/environment/app_version
 	// attribute entries injected by the SDK.
 	public function testNoSystemAttributesPublished(): void {
 		$context = $this->createReadyContext();
@@ -175,7 +172,7 @@ class ContextSystemAttributesTest extends TestCase {
 		self::assertNotContains('app_version', $attributeNames);
 	}
 
-	// §4.7 A user-set attribute is still published; only the injected system values are withheld.
+	// A user-set attribute is still published; only the injected system values are withheld.
 	public function testUserAttributesStillPublished(): void {
 		$context = $this->createReadyContext();
 		$context->setAttribute('age', '21');
@@ -192,8 +189,7 @@ class ContextSystemAttributesTest extends TestCase {
 		self::assertSame(['age'], $attributeNames);
 	}
 
-	// §4.8 app_version is gone: a filter on app_version does not match even though the SDK configures
-	// an application version header internally.
+	// app_version is not supplied automatically, so a filter on it does not match.
 	public function testAppVersionFilterDoesNotMatch(): void {
 		$context = $this->createReadyContext();
 
