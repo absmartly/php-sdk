@@ -13,12 +13,18 @@ use function json_decode;
 use function json_encode;
 use function React\Promise\reject;
 use function React\Promise\resolve;
+use function ctype_digit;
 use function rtrim;
+use function strlen;
 
 use const JSON_THROW_ON_ERROR;
 
 class Client implements AsyncClientInterface {
-	protected const VERSION = '2.0.0';
+	/** The SDK version, sent in the X-Agent header. Keep in step with the release tag (checked by the release workflow). */
+	public const SDK_VERSION = '2.0.0';
+	public const SDK_NAME = 'absmartly-php-sdk';
+	/** @deprecated Use SDK_VERSION. */
+	protected const VERSION = self::SDK_VERSION;
 	private HttpClientInterface $httpClient;
 	private string $url;
 	private array $query;
@@ -45,14 +51,31 @@ class Client implements AsyncClientInterface {
 
 		$this->headers = [
 			'Content-Type' => 'application/json; charset=utf-8',
-			'X-Agent' => 'absmartly-php-sdk/v'. static::VERSION,
+			'X-Agent' => self::SDK_NAME . '/' . static::VERSION,
 			'X-API-Key' => $clientConfig->getApiKey(),
 			'X-Environment' => $clientConfig->getEnvironment(),
 			'X-Application' => $clientConfig->getApplication(),
-			'X-Application-Version' => $clientConfig->getApplicationVersion() ?? '0',
+			'X-Application-Version' => self::applicationVersionHeader($clientConfig->getApplicationVersion()),
 		];
 	}
 
+
+	/**
+	 * The collector parses X-Application-Version as a whole number and rejects the request otherwise, so a version
+	 * that is not one (such as "2.4.1") is sent as "0", as when no version is configured.
+	 */
+	private static function applicationVersionHeader(?string $applicationVersion): string {
+		if ($applicationVersion === null || strlen($applicationVersion) > 18 || !ctype_digit($applicationVersion)) {
+			return '0';
+		}
+
+		return $applicationVersion;
+	}
+
+	/** The value sent as the X-Agent header, "<name>/<version>", e.g. "absmartly-php-sdk/2.0.0". */
+	public function getAgent(): string {
+		return $this->headers['X-Agent'];
+	}
 
 	private function authRequest(): void {
 		if (empty($this->headers['X-API-Key'])) {

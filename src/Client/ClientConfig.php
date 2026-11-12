@@ -6,6 +6,7 @@ use ABSmartly\SDK\Exception\InvalidArgumentException;
 
 use function str_repeat;
 use function strlen;
+use function trim;
 
 class ClientConfig {
 	private string $apiKey;
@@ -43,6 +44,7 @@ class ClientConfig {
 			'application' => $this->application,
 			'endpoint' => $this->endpoint,
 			'environment' => $this->environment,
+			'applicationVersion' => $this->applicationVersion,
 		];
 	}
 
@@ -62,6 +64,11 @@ class ClientConfig {
 		return $this->apiKey;
 	}
 
+	/**
+	 * Sets the application version, sent as the X-Application-Version header when it is a whole number (other
+	 * versions, such as "2.4.1", are sent as "0"). Surrounding whitespace is removed; null or a blank value means no
+	 * version is set.
+	 */
 	public function setApplicationVersion(?string $version): ClientConfig {
 		$this->applicationVersion = $version === null || trim($version) === '' ? null : trim($version);
 		return $this;

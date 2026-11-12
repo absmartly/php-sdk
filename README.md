@@ -273,6 +273,44 @@ filters as the `application` and `environment` attributes, without being set exp
 attribute of the same name, set with `setAttribute()`, overrides the configured value for audience
 evaluation.
 
+### Assignment Rules
+
+An experiment can carry assignment rules, configured in the Web Console. The first rule whose `environments`
+and `conditions` match decides the variant, ahead of the audience, traffic split, full-on variant and custom
+assignments (an override set with `setOverride()` still wins over every rule):
+
+- `assign` rules pick a fixed variant.
+- `split` rules split traffic with their own percentages, such as `20/30/50`, hashing the unit with the
+  experiment's seed. A split that does not cover every variant, or does not sum to 100 (within 0.01), is ignored.
+
+Rule conditions are audience expressions evaluated against the context attributes, including the `application`
+and `environment` names. They are re-evaluated when an attribute changes, so a cached assignment follows the rule
+that matches now; an exposure that was already queued is not taken back. A split rule that matches before its unit
+is set gives the full-on variant (variant 0 when the experiment is not full-on) until the unit is set, unless the
+treatment was already exposed. Exposures decided by a rule are flagged `ruleOverride` and excluded from analysis.
+
+### Semantic Version Conditions
+
+Audience and rule conditions can compare versions with `semver_eq`, `semver_gt`, `semver_gte`, `semver_lt` and
+`semver_lte`. A leading `v` and build metadata (`+build.7`) are ignored, missing parts count as 0 (`1.2` equals
+`1.2.0`), numeric parts compare as numbers (`1.10.0` is greater than `1.9.0`) and a release is greater than its
+pre-releases (`2.0.0` is greater than `2.0.0-rc.1`). A value that is not a version makes the comparison null.
+
+```php
+$context->setAttribute('app_version', '2.4.1');
+```
+
+### Client Metadata
+
+Every request sends the SDK name and version in the `X-Agent` header (`absmartly-php-sdk/<version>`), and the
+application version in `X-Application-Version`. Set the application version on the client configuration; the
+collector accepts whole numbers only, so other versions (such as `2.4.1`) are sent as `0`:
+
+```php
+$clientConfig = new ClientConfig($endpoint, $apiKey, $application, $environment);
+$clientConfig->setApplicationVersion('1042');
+```
+
 ### Custom Assignments
 
 Sometimes it may be necessary to override the automatic selection of a variant. For example, if you wish to have your variant chosen based on data from an API call. This can be accomplished using the `Context->setCustomAssignment()` method.
@@ -648,6 +686,17 @@ $sdk->createContextAsync($contextConfig)->then(
 );
 ```
 
+## Releasing
+
+The package is published on [Packagist](https://packagist.org/packages/absmartly/php-sdk), which picks up new
+tags through its GitHub webhook. To release:
+
+1. Set `Client::SDK_VERSION` (sent in the `X-Agent` header) to the new version and move the
+   [CHANGELOG.md](CHANGELOG.md) entries under it.
+2. Merge to `main`, then push a tag such as `v2.0.0` (`git tag v2.0.0 && git push origin v2.0.0`).
+3. The Release workflow validates `composer.json`, checks that the tag matches `Client::SDK_VERSION`, runs the
+   tests and creates the GitHub release; Packagist lists the version within a few minutes.
+
 ## About A/B Smartly
 
 **A/B Smartly** is the leading provider of state-of-the-art, on-premises, full-stack experimentation platforms for engineering and product teams that want to confidently deploy features as fast as they can develop them.
@@ -669,27 +718,4 @@ A/B Smartly's real-time analytics helps engineering and product teams ensure tha
 - [Dart SDK](https://www.github.com/absmartly/dart-sdk)
 - [Flutter SDK](https://www.github.com/absmartly/flutter-sdk)
 
-## Changelog
-
-### Unreleased
-
-- Audience filters now always evaluate against the `application` and `environment` names
-  configured on the client, in addition to any user-set attributes. The SDK puts those system
-  values into the attribute map first, then overlays user attributes on top, so a value set with
-  `setAttribute()` always wins (including one set after the context was created, which invalidates a
-  cached assignment). Empty values are skipped, so no key is added when a name is not configured.
-  These values are only used for local audience evaluation; nothing new is added to the publish
-  payload, since the collector already stamps `application` and `environment` on every exposure
-  server-side.
-
-  **This changes assignment for running experiments.** A unit whose experiment has Audience
-  enforced (`audienceStrict`) and an `environment` or `application` condition currently gets
-  variant 0, because the SDK never supplied those attributes and the strict mismatch beat the
-  full-on variant. After upgrading, that unit is randomised normally. Those experiments are broken
-  today; this is the fix, but the behaviour change is intentional and called out here explicitly.
-
-- `app_version` / `application_version` is not supplied automatically for audience evaluation. The
-  SDK injects only `application` and `environment`; it never adds a version attribute. An
-  explicitly set attribute of the same name (`setAttribute('app_version', ...)`) is still evaluated
-  like any other user attribute.
-
+See [CHANGELOG.md](CHANGELOG.md) for release notes.

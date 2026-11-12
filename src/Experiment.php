@@ -4,6 +4,7 @@ namespace ABSmartly\SDK;
 
 use function get_object_vars as get_object_varsAlias;
 use function is_array;
+use function is_string;
 use function json_decode;
 
 use function property_exists;
@@ -26,7 +27,9 @@ class Experiment {
 	public bool $audienceStrict = false;
 	public array $applications;
 	public array $variants;
+	/** @var object[]|null The collector's array of {name, type, value} records. */
 	public ?array $customFieldValues = null;
+	/** JSON of the experiment's assignment rules ({"rules": [...]}), or null when it has none. */
 	public ?string $assignmentRules = null;
 
 	public function __construct(object $data) {
@@ -53,6 +56,10 @@ class Experiment {
 		foreach ($data as $field => $value) {
 			if ($field === 'customFieldValues') {
 				$this->customFieldValues = is_array($value) ? $value : null;
+			}
+			elseif ($field === 'assignmentRules') {
+				// An object or array sent in place of the JSON string is ignored rather than failing the whole context.
+				$this->assignmentRules = is_string($value) && $value !== '' ? $value : null;
 			}
 			elseif (property_exists($this, $field) && $field !== 'audience') {
 				$this->{$field} = $value;
