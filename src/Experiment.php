@@ -3,6 +3,7 @@
 namespace ABSmartly\SDK;
 
 use function get_object_vars as get_object_varsAlias;
+use function is_array;
 use function json_decode;
 
 use function property_exists;
@@ -22,11 +23,24 @@ class Experiment {
 	public array $trafficSplit;
 	public int $fullOnVariant;
 	public ?object $audience;
-	public bool $audienceStrict;
+	public bool $audienceStrict = false;
 	public array $applications;
 	public array $variants;
+	/** @var object[]|null The collector's array of {name, type, value} records. */
+	public ?array $customFieldValues = null;
 
 	public function __construct(object $data) {
+		$requiredFields = ['id', 'name', 'unitType', 'iteration', 'seedHi', 'seedLo', 'split',
+			'trafficSeedHi', 'trafficSeedLo', 'trafficSplit', 'fullOnVariant', 'applications', 'variants'];
+
+		foreach ($requiredFields as $field) {
+			if (!property_exists($data, $field)) {
+				throw new \ABSmartly\SDK\Exception\RuntimeException(
+					sprintf('Missing required field "%s" in experiment data', $field)
+				);
+			}
+		}
+
 		if (!empty($data->audience)) {
 			$this->audience = json_decode($data->audience, false, 512, JSON_THROW_ON_ERROR);
 		}
@@ -37,7 +51,10 @@ class Experiment {
 
 		$data = get_object_varsAlias($data);
 		foreach ($data as $field => $value) {
-			if (property_exists($this, $field) && $field !== 'audience') {
+			if ($field === 'customFieldValues') {
+				$this->customFieldValues = is_array($value) ? $value : null;
+			}
+			elseif (property_exists($this, $field) && $field !== 'audience') {
 				$this->{$field} = $value;
 			}
 		}

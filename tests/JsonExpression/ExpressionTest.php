@@ -114,4 +114,14 @@ class ExpressionTest extends TestCase {
 		self::assertFalse($this->expression->evaluateBooleanExpr($this->fixtures['Returning_And_AgeTwentyAndUS_Or_AgeOverFifty'], $this->fixtures['Kate']));
 		self::assertTrue($this->expression->evaluateBooleanExpr($this->fixtures['Returning_And_AgeTwentyAndUS_Or_AgeOverFifty'], $this->fixtures['Maria']));
 	}
+
+	public function testInIsHaystackFirst(): void {
+		$country = (object) ['country' => 'UK'];
+		$haystackFirst = $this->binaryOp('in', $this->valueFor(['US', 'UK', 'ES']), $this->varFor('country'));
+		$needleFirst = $this->binaryOp('in', $this->varFor('country'), $this->valueFor(['US', 'UK', 'ES']));
+
+		self::assertTrue($this->expression->evaluateBooleanExpr($haystackFirst, $country));
+		self::assertFalse($this->expression->evaluateBooleanExpr($haystackFirst, (object) ['country' => 'PT']));
+		self::assertFalse($this->expression->evaluateBooleanExpr($needleFirst, $country));
+	}
 }

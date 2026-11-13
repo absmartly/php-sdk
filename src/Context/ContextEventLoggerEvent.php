@@ -13,6 +13,10 @@ class ContextEventLoggerEvent {
 	public const Exposure = 'Exposure';
 	public const Goal = 'Goal';
 	public const Close = 'Close';
+	/**
+	 * Cross-SDK name for the close event. Context::close() emits Close.
+	 */
+	public const Finalize = 'Finalize';
 
 	public function __construct(string $event, ?object $data) {
 		$this->event = $event;

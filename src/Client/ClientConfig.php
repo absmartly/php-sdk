@@ -4,7 +4,6 @@ namespace ABSmartly\SDK\Client;
 
 use ABSmartly\SDK\Exception\InvalidArgumentException;
 
-use function get_class;
 use function str_repeat;
 use function strlen;
 
@@ -23,6 +22,9 @@ class ClientConfig {
 		string $application,
 		string $environment
 	) {
+		if (($endpoint === '' && $apiKey !== '') || ($endpoint !== '' && $apiKey === '')) {
+			error_log('ABsmartly SDK Warning: ClientConfig created with empty endpoint or API key. This may cause runtime errors.');
+		}
 
 		$this->apiKey = $apiKey;
 		$this->application = $application;
@@ -40,7 +42,6 @@ class ClientConfig {
 			'application' => $this->application,
 			'endpoint' => $this->endpoint,
 			'environment' => $this->environment,
-			'eventLogger' => isset($this->eventLogger) ? get_class($this->eventLogger) : null,
 		];
 	}
 
@@ -63,7 +64,7 @@ class ClientConfig {
 
 
 	/**
-	 * @param int $retries The number of retries before the SDK stops trying to connect.
+	 * @param int $retries The number of times a failed GET request is retried. Event publishing (PUT) is never retried.
 	 * @return $this
 	 */
 	public function setRetries(int $retries = 5): ClientConfig {

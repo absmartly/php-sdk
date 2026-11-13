@@ -13,18 +13,23 @@ use function curl_init;
 use function curl_setopt;
 use function curl_setopt_array;
 use function curl_strerror;
+use function ceil;
+use function hrtime;
 use function http_build_query;
+use function max;
 use function rtrim;
+use function min;
 use function sprintf;
 use function strpos;
+use function usleep;
 
 use const CURL_SSLVERSION_TLSv1_2;
+use const PHP_VERSION_ID;
 use const CURLE_HTTP_RETURNED_ERROR;
 use const CURLINFO_EFFECTIVE_URL;
 use const CURLINFO_HTTP_CODE;
 use const CURLOPT_CONNECTTIMEOUT_MS;
 use const CURLOPT_CUSTOMREQUEST;
-use const CURLOPT_FAILONERROR;
 use const CURLOPT_HTTPHEADER;
 use const CURLOPT_MAXREDIRS;
 use const CURLOPT_POSTFIELDS;
@@ -34,18 +39,38 @@ use const CURLOPT_RETURNTRANSFER;
 use const CURLOPT_SSL_VERIFYHOST;
 use const CURLOPT_SSL_VERIFYPEER;
 use const CURLOPT_SSLVERSION;
+use const CURLOPT_TIMEOUT_MS;
 use const CURLOPT_URL;
 use const CURLPROTO_HTTPS;
 
-class HTTPClient {
+class HTTPClient implements HttpClientInterface {
 	/**
 	 * @var CurlHandle|resource
 	 */
 	private $curlHandle;
+	/**
+	 * Number of times a GET request is retried after a transport error or an HTTP 5xx, 408 or 429 response. PUT and
+	 * POST are sent once: replaying them could publish the same events twice.
+	 */
 	public int $retries = 5;
+	/**
+	 * Connect timeout in milliseconds (CURLOPT_CONNECTTIMEOUT_MS), as in v1.0.3. It bounds establishing the
+	 * connection only, not the complete request. 0 means no connect timeout.
+	 */
 	public int $timeout = 3000;
+	/**
+	 * Optional total budget in milliseconds for the whole request, including retries and back-off. When greater
+	 * than 0 it is applied as CURLOPT_TIMEOUT_MS per attempt, bounded by the remaining time. 0 (the default) means
+	 * no total limit.
+	 */
+	public int $totalTimeout = 0;
 
-	private function setupRequest(string $url, array $query = [], array $headers = [], string $type = 'GET', string $data = null): void {
+	private const RETRY_BASE_DELAY_MS = 50;
+	private const RETRY_MAX_DELAY_MS = 1000;
+	// 50ms << 5 already exceeds the 1s cap; capping the shift keeps it from overflowing on large retry counts.
+	private const RETRY_MAX_SHIFT = 5;
+
+	private function setupRequest(string $url, array $query = [], array $headers = [], string $type = 'GET', ?string $data = null): void {
 		$this->curlInit();
 		$flatHeaders = [];
 		foreach ($headers as $header => $value) {
@@ -70,9 +95,39 @@ class HTTPClient {
 		curl_setopt($this->curlHandle, CURLOPT_POSTFIELDS, $data);
 	}
 
-	private function fetchResponse(): Response {
-		$returnedResponse = curl_exec($this->curlHandle);
-		$this->throwOnError($returnedResponse);
+	/**
+	 * Sends the request, retrying transport errors and HTTP 5xx, 408 and 429 responses when $retry is true. When a
+	 * total budget ($totalTimeout) is set, it bounds the whole sequence: each attempt only gets the time that is
+	 * left, and no retry starts once the remaining time cannot cover its back-off. A $totalTimeout of 0 or less
+	 * means no total limit; the connect timeout ($timeout) always applies per attempt.
+	 */
+	private function fetchResponse(bool $retry): Response {
+		$hasDeadline = $this->totalTimeout > 0;
+		$deadline = $this->nowMs() + $this->totalTimeout;
+		$attempt = 0;
+		while (true) {
+			// cURL treats a timeout of 0 as "no timeout", so never pass less than 1ms when a deadline applies.
+			$attemptTimeout = $hasDeadline ? max(1, (int) ceil($deadline - $this->nowMs())) : 0;
+			$returnedResponse = $this->transfer($attemptTimeout);
+
+			if (!$retry || $attempt >= $this->retries || !$this->isRetryable()) {
+				break;
+			}
+
+			$delay = min(self::RETRY_BASE_DELAY_MS << min($attempt, self::RETRY_MAX_SHIFT), self::RETRY_MAX_DELAY_MS);
+			if ($hasDeadline && $deadline - $this->nowMs() <= $delay) {
+				break;
+			}
+
+			$this->sleepMs($delay);
+			// The sleep can overrun; don't start an attempt once the total budget is spent.
+			if ($hasDeadline && $this->nowMs() >= $deadline) {
+				break;
+			}
+			++$attempt;
+		}
+
+		$this->throwOnError($returnedResponse === false ? null : $returnedResponse);
 
 		$response = new Response();
 		$response->content = (string) $returnedResponse;
@@ -83,17 +138,46 @@ class HTTPClient {
 
 	public function get(string $url, array $query = [], array $headers = []): Response {
 		$this->setupRequest($url, $query, $headers);
-		return $this->fetchResponse();
+		return $this->fetchResponse(true);
 	}
 
 	public function put(string $url, array $query = [], array $headers = [], string $body = ''): Response {
 		$this->setupRequest($url, $query, $headers, 'PUT', $body);
-		return $this->fetchResponse();
+		return $this->fetchResponse(false);
 	}
 
 	public function post(string $url, array $query = [], array $headers = [], string $body = ''): Response {
 		$this->setupRequest($url, $query, $headers, 'POST', $body);
-		return $this->fetchResponse();
+		return $this->fetchResponse(false);
+	}
+
+	/**
+	 * @return string|false
+	 */
+	protected function transfer(int $timeoutMs) {
+		// $timeout stays the connect timeout only, as in v1.0.3. $timeoutMs is the remaining total budget and is
+		// only applied when a total timeout was opted in; 0 means cURL imposes no overall limit.
+		curl_setopt($this->curlHandle, CURLOPT_CONNECTTIMEOUT_MS, $this->timeout);
+		curl_setopt($this->curlHandle, CURLOPT_TIMEOUT_MS, $timeoutMs);
+
+		return curl_exec($this->curlHandle);
+	}
+
+	protected function nowMs(): float {
+		return hrtime(true) / 1e6;
+	}
+
+	protected function sleepMs(int $milliseconds): void {
+		usleep($milliseconds * 1000);
+	}
+
+	protected function isRetryable(): bool {
+		if (curl_errno($this->curlHandle) !== 0) {
+			return true;
+		}
+
+		$status = (int) curl_getinfo($this->curlHandle, CURLINFO_HTTP_CODE);
+		return $status >= 500 || $status === 408 || $status === 429;
 	}
 
 	private function throwOnError(?string $responseBody): void {
@@ -120,13 +204,16 @@ class HTTPClient {
 		}
 		$this->curlHandle = curl_init();
 
+		if ($this->curlHandle === false) {
+			throw new HttpClientError('Failed to initialize cURL. Is the curl extension loaded?');
+		}
+
 		// https://php.watch/articles/php-curl-security-hardening
 		curl_setopt_array($this->curlHandle, [
 			CURLOPT_RETURNTRANSFER => true,
 			CURLOPT_PROTOCOLS => CURLPROTO_HTTPS, // Always use HTTPS, never HTTP
 			CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTPS,
 			CURLOPT_MAXREDIRS => 3,
-			CURLOPT_CONNECTTIMEOUT_MS => $this->timeout,
 			CURLOPT_SSL_VERIFYHOST => 2,
 			CURLOPT_SSL_VERIFYPEER => true,
 			CURLOPT_SSLVERSION => CURL_SSLVERSION_TLSv1_2,
@@ -134,7 +221,8 @@ class HTTPClient {
 	}
 
 	public function close(): void {
-		if (isset($this->curlHandle)) {
+		// curl_close() is a no-op since PHP 8.0 and deprecated since 8.5.
+		if (isset($this->curlHandle) && PHP_VERSION_ID < 80000) {
 			curl_close($this->curlHandle);
 		}
 	}

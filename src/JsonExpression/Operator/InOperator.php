@@ -25,6 +25,9 @@ class InOperator extends BinaryOperator {
 		}
 
 		if (is_string($haystack)) {
+			if (!is_string($needle)) {
+				return null;
+			}
 			//@codeCoverageIgnoreStart
 			// due to version-dependent code
 			if (function_exists('str_contains')) {
