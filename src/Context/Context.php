@@ -20,6 +20,7 @@ use Exception;
 use JsonException;
 use Throwable;
 
+use function array_replace;
 use function array_slice;
 use function array_splice;
 use function count;
@@ -415,20 +416,97 @@ class Context {
 	}
 
 	private function audienceMatches(Experiment $experiment, Assignment $assignment): bool {
-		if (!empty($experiment->audience) && !empty((array) $experiment->audience)) {
-			if ($this->attrsSeq > ($assignment->attrsSeq ?? 0)) {
-				$attrs = $this->getAttributes();
+		$ruleKey = $this->ruleKey($experiment);
+		$ruleKeyChanged = $ruleKey !== $assignment->ruleKey;
+
+		if ($ruleKeyChanged && $ruleKey === '' && ($assignment->ruleVariant !== null || $assignment->ruleOverride)) {
+			return false;
+		}
+
+		if ($this->attrsSeq > $assignment->attrsSeq || $ruleKeyChanged) {
+			$attrs = $this->getEvaluationAttributes();
+
+			if ($ruleKey !== '') {
+				// An exposed split resolved without its unit keeps resolving as if the unit were still missing, so a
+				// unit set afterwards cannot switch the variant the user already saw.
+				$isUnitPinnedMissing = $assignment->exposed && $assignment->isRuleMissingUnit;
+				$rule = $this->resolveRule($experiment, $attrs, $isUnitPinnedMissing);
+				$ruleVariant = $rule['variant'] ?? null;
+				if ($ruleVariant !== $assignment->ruleVariant) {
+					return false;
+				}
+
+				$assignment->isRuleMissingUnit = $rule['isMissingUnit'] ?? false;
+			}
+
+			if (!$assignment->ruleOverride && !empty($experiment->audience) && !empty((array) $experiment->audience)) {
 				$result = $this->audienceMatcher->evaluate($experiment->audience, $attrs);
 				$newAudienceMismatch = $result !== null ? !$result : $assignment->audienceMismatch;
 
 				if ($newAudienceMismatch !== $assignment->audienceMismatch) {
 					return false;
 				}
-
-				$assignment->attrsSeq = $this->attrsSeq;
 			}
+
+			$assignment->ruleKey = $ruleKey;
+			$assignment->attrsSeq = $this->attrsSeq;
 		}
 		return true;
+	}
+
+	/**
+	 * Identifies the assignment rules a cached assignment was resolved against: the rules JSON and the environment
+	 * they were matched in, or '' when the experiment has none.
+	 */
+	private function ruleKey(Experiment $experiment): string {
+		if ($experiment->assignmentRules === null || $experiment->assignmentRules === '') {
+			return '';
+		}
+
+		return $experiment->assignmentRules . ':' . $this->sdk->getClient()->getEnvironment();
+	}
+
+	/**
+	 * Resolves the first matching assignment rule to a variant, as the JavaScript SDK's _resolveRule. A split rule
+	 * matched without its unit gives the full-on variant and is flagged for re-resolution once the unit is set.
+	 *
+	 * @return array{variant: int, isMissingUnit: bool}|null
+	 */
+	private function resolveRule(Experiment $experiment, array $attrs, bool $isUnitPinnedMissing): ?array {
+		if ($experiment->assignmentRules === null || $experiment->assignmentRules === '') {
+			return null;
+		}
+
+		$environment = $this->sdk->getClient()->getEnvironment();
+		$action = $this->audienceMatcher->evaluateRules(
+			$experiment->assignmentRules,
+			$environment !== '' ? $environment : null,
+			$attrs
+		);
+		if ($action === null) {
+			return null;
+		}
+
+		$variantCount = count($experiment->variants);
+		if (isset($action['variant'])) {
+			$isInBounds = $action['variant'] >= 0 && $action['variant'] < $variantCount;
+			return $isInBounds ? ['variant' => $action['variant'], 'isMissingUnit' => false] : null;
+		}
+
+		if (count($action['split']) !== $variantCount) {
+			return null;
+		}
+
+		$uid = $isUnitPinnedMissing ? null : ($this->units[$experiment->unitType] ?? null);
+		if ($uid === null) {
+			return ['variant' => $experiment->fullOnVariant, 'isMissingUnit' => true];
+		}
+
+		$assigner = $this->getVariantAssigner($experiment->unitType, $uid);
+		return [
+			'variant' => $assigner->assign($action['split'], $experiment->seedHi, $experiment->seedLo),
+			'isMissingUnit' => false,
+		];
 	}
 
 	/**
@@ -463,13 +541,17 @@ class Context {
 				}
 			}
 			else if ($experiment === null) {
-				if (!$assignment->assigned) {
+				// A rule-won assignment is not "assigned" either, but its variant came from the
+				// experiment's rules, so it must be rebuilt once the experiment is gone.
+				if (!$assignment->assigned && !$assignment->ruleOverride) {
 					// previously not-running experiment
 					return $assignment;
 				}
-			} else if (!array_key_exists($experimentName, $this->cassignments)
+			} else if ($assignment->ruleOverride
+				|| !array_key_exists($experimentName, $this->cassignments)
 				|| $this->cassignments[$experimentName] === $assignment->variant
 				|| $this->customAssignmentIgnored($assignment, $experiment)) {
+				// A matching rule wins over a custom assignment, so a custom mismatch is not staleness.
 				if ($this->experimentMatches($experiment->data, $assignment) && $this->audienceMatches($experiment->data, $assignment)) {
 					// assignment up-to-date
 					return $assignment;
@@ -494,55 +576,67 @@ class Context {
 		}
 		elseif ($experiment) {
 			$unitType = $experiment->data->unitType;
-			if (!empty($experiment->data->audience) && !empty((array) $experiment->data->audience)) {
-				$attrs = $this->getAttributes();
+			$attrs = $this->getEvaluationAttributes();
+			$assignment->ruleKey = $this->ruleKey($experiment->data);
+			$rule = $this->resolveRule($experiment->data, $attrs, false);
+			$assignment->ruleVariant = $rule['variant'] ?? null;
+			$assignment->isRuleMissingUnit = $rule['isMissingUnit'] ?? false;
 
-				$result = $this->audienceMatcher->evaluate($experiment->data->audience, $attrs);
-				if (is_bool($result)) {
-					$assignment->audienceMismatch = !$result;
-				}
-			}
-
-			if (!empty($experiment->data->audienceStrict) && !empty($assignment->audienceMismatch)) {
-				$assignment->variant = 0;
-			}
-			else if (empty($experiment->data->fullOnVariant)) {
-				// Not a full-on experiment: assign via the traffic split only when the unit is present.
-				// A missing unit leaves the assignment unassigned (control) so it falls through, as in JS.
-				if (($uid = $this->units[$experiment->data->unitType] ?? null) !== null) {
-					$assigner = $this->getVariantAssigner($unitType, $uid);
-
-					$eligible = $assigner->assign(
-						$experiment->data->trafficSplit,
-						$experiment->data->trafficSeedHi,
-						$experiment->data->trafficSeedLo
-					);
-					if ($eligible === 1) {
-						$custom = $this->cassignments[$experimentName] ?? null;
-						if ($custom !== null) {
-							$assignment->variant = $custom;
-							$assignment->custom = true;
-						}
-						else {
-							$assignment->variant = $assigner->assign(
-								$experiment->data->split,
-								$experiment->data->seedHi,
-								$experiment->data->seedLo
-							);
-						}
-					}
-					else {
-						$assignment->eligible = false;
-						$assignment->variant = 0;
-					}
-
-					$assignment->assigned = true;
-				}
+			if ($rule !== null) {
+				// A matching rule is an explicit, author-specified assignment (flagged ruleOverride so it is excluded
+				// from analysis): it wins over the audience, traffic, full-on and custom assignments.
+				$assignment->variant = $rule['variant'];
+				$assignment->ruleOverride = true;
 			}
 			else {
-				$assignment->assigned = true;
-				$assignment->variant = $experiment->data->fullOnVariant;
-				$assignment->fullOn = true;
+				if (!empty($experiment->data->audience) && !empty((array) $experiment->data->audience)) {
+					$result = $this->audienceMatcher->evaluate($experiment->data->audience, $attrs);
+					if (is_bool($result)) {
+						$assignment->audienceMismatch = !$result;
+					}
+				}
+
+				if (!empty($experiment->data->audienceStrict) && !empty($assignment->audienceMismatch)) {
+					$assignment->variant = 0;
+				}
+				else if (empty($experiment->data->fullOnVariant)) {
+					// Not a full-on experiment: assign via the traffic split only when the unit is present.
+					// A missing unit leaves the assignment unassigned (control) so it falls through, as in JS.
+					if (($uid = $this->units[$experiment->data->unitType] ?? null) !== null) {
+						$assigner = $this->getVariantAssigner($unitType, $uid);
+
+						$eligible = $assigner->assign(
+							$experiment->data->trafficSplit,
+							$experiment->data->trafficSeedHi,
+							$experiment->data->trafficSeedLo
+						);
+						if ($eligible === 1) {
+							$custom = $this->cassignments[$experimentName] ?? null;
+							if ($custom !== null) {
+								$assignment->variant = $custom;
+								$assignment->custom = true;
+							}
+							else {
+								$assignment->variant = $assigner->assign(
+									$experiment->data->split,
+									$experiment->data->seedHi,
+									$experiment->data->seedLo
+								);
+							}
+						}
+						else {
+							$assignment->eligible = false;
+							$assignment->variant = 0;
+						}
+
+						$assignment->assigned = true;
+					}
+				}
+				else {
+					$assignment->assigned = true;
+					$assignment->variant = $experiment->data->fullOnVariant;
+					$assignment->fullOn = true;
+				}
 			}
 
 			$assignment->unitType = $unitType;
@@ -574,7 +668,8 @@ class Context {
 	/**
 	 * Ports the JS SDK `_resolveVariableValue`: walks the experiments that define $key in ascending id order. For
 	 * each one it computes the assignment; when the variant has variables, getVariableValue (not peek) queues the
-	 * exposure the first time, and if $key is present and the unit is assigned or overridden it returns that value.
+	 * exposure the first time, and if $key is present and the unit is assigned, overridden or rule-assigned it returns
+	 * that value.
 	 * Otherwise it falls through to the next experiment, and finally to $default.
 	 */
 	private function resolveVariableValue(string $key, $default, bool $exposeAssignments) {
@@ -590,7 +685,8 @@ class Context {
 
 				// property_exists (not isset) so a present key whose value is null is still returned,
 				// matching JS: a lower-id experiment that defines $key=null shadows a later competitor.
-				if (property_exists($assignment->variables, $key) && ($assignment->assigned || $assignment->overridden)) {
+				if (property_exists($assignment->variables, $key)
+					&& ($assignment->assigned || $assignment->overridden || $assignment->ruleOverride)) {
 					return $assignment->variables->{$key};
 				}
 			}
@@ -647,6 +743,38 @@ class Context {
 		}
 
 		return $result;
+	}
+
+	/**
+	 * The client's non-empty `application` and `environment` names, for audience and rule conditions.
+	 *
+	 * @return array<string, string>
+	 */
+	private function getSystemAttributes(): array {
+		$systemAttributes = [];
+
+		$client = $this->sdk->getClient();
+
+		$application = $client->getApplication();
+		if ($application !== '') {
+			$systemAttributes['application'] = $application;
+		}
+
+		$environment = $client->getEnvironment();
+		if ($environment !== '') {
+			$systemAttributes['environment'] = $environment;
+		}
+
+		return $systemAttributes;
+	}
+
+	/**
+	 * System attributes overlaid by user attributes, for evaluation only; the publish payload uses user attributes.
+	 *
+	 * @return array<string, mixed>
+	 */
+	private function getEvaluationAttributes(): array {
+		return array_replace($this->getSystemAttributes(), $this->getAttributes());
 	}
 
 	private function getVariantAssigner(string $unitType, string $unitHash): VariantAssigner {
@@ -797,7 +925,20 @@ class Context {
 		}
 
 		$this->units[$unitType] = $uid;
+		$this->invalidateRuleAssignmentsMissingUnit($unitType);
 		return $this;
+	}
+
+	/**
+	 * Evicts cached split-rule assignments resolved while $unitType was missing, so they are re-resolved with the
+	 * unit. Exposed ones are kept, since re-resolving would queue a second, conflicting exposure.
+	 */
+	private function invalidateRuleAssignmentsMissingUnit(string $unitType): void {
+		foreach ($this->assignmentCache ?? [] as $experimentName => $assignment) {
+			if ($assignment->unitType === $unitType && $assignment->isRuleMissingUnit && !$assignment->exposed) {
+				unset($this->assignmentCache[$experimentName]);
+			}
+		}
 	}
 
 	/**

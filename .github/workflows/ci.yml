@@ -34,6 +34,9 @@ jobs:
           coverage: pcov
           ini-values: assert.exception=1, zend.assertions=1
 
+      - name: Validate composer.json for Packagist
+        run: composer validate --strict
+
       - name: Install composer dependencies
         run: composer update --no-interaction --prefer-dist
 

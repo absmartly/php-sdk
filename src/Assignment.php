@@ -17,6 +17,10 @@ class Assignment {
 	public bool $eligible = false;
 	public bool $fullOn = false;
 	public bool $custom = false;
+	public bool $ruleOverride = false;
+	public ?int $ruleVariant = null;
+	public bool $isRuleMissingUnit = false;
+	public string $ruleKey = '';
 
 	public bool $audienceMismatch = false;
 	public ?stdClass $variables = null;

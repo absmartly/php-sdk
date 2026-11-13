@@ -17,6 +17,8 @@ class Exposure {
 	public bool $fullOn;
 	public bool $custom;
 	public bool $audienceMismatch;
+	/** The variant was set by a matching assignment rule, so the backend excludes it from analysis like an override. */
+	public bool $ruleOverride = false;
 
 	public function ingestAssignment(Assignment $assignment): void {
 		$this->id = $assignment->id;
@@ -29,12 +31,13 @@ class Exposure {
 		$this->overridden = $assignment->overridden;
 		$this->fullOn = $assignment->fullOn;
 		$this->custom = $assignment->custom;
+		$this->ruleOverride = $assignment->ruleOverride;
 		$this->audienceMismatch = $assignment->audienceMismatch;
 	}
 
 	public static function create(
 		int $id, string $name, ?string $unit, int $variant, float $exposedAt, bool $assigned, bool $eligible,
-		bool $overridden, bool $fullOn, bool $custom, bool $audienceMismatch
+		bool $overridden, bool $fullOn, bool $custom, bool $audienceMismatch, bool $ruleOverride = false
 	): self {
 		$exposure = new self();
 		$exposure->id = $id;
@@ -48,6 +51,7 @@ class Exposure {
 		$exposure->fullOn = $fullOn;
 		$exposure->custom = $custom;
 		$exposure->audienceMismatch = $audienceMismatch;
+		$exposure->ruleOverride = $ruleOverride;
 
 		return $exposure;
 	}

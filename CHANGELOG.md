@@ -50,6 +50,10 @@
 - **Mutators throw after `close()`.** `setAttribute()`, `setAttributes()`, `setUnit()` and `setUnits()` now throw
   `ABSmartly Context is closed` on a closed context, as in the JS SDK (old: they were accepted and returned the
   context). Set attributes and units before closing.
+- **Audiences see the client's `application` and `environment`.** An experiment with Audience enforced
+  (`audienceStrict`) and an `application` or `environment` condition used to give every unit variant 0, because the
+  SDK never supplied those attributes; such units are now assigned normally. `app_version` is not supplied
+  automatically: set it with `setAttribute('app_version', ...)` to target versions.
 
 ### Compatibility retained
 
@@ -100,6 +104,26 @@
 
 ### Added
 
+- **Assignment rules.** An experiment's `assignmentRules` are evaluated in order, and the first rule whose
+  environments and conditions match decides the variant: `assign` rules pick a fixed variant and `split` rules
+  split traffic with their own percentages (such as `20/30/50`, which must sum to 100 within 0.01), hashing the
+  unit with the experiment seed. A matching rule wins over the audience (including `audienceStrict`), traffic,
+  full-on and custom assignments; an override still wins over rules. Rule conditions are re-evaluated when an
+  attribute changes; a split rule matched without its unit gives the full-on variant until the unit is set, unless
+  it was already exposed. Rule-decided exposures carry `ruleOverride: true`; every exposure now includes the
+  field. Invalid rules are skipped and an object sent in place of the rules JSON string is ignored.
+- **SemVer operators.** `semver_eq`, `semver_gt`, `semver_gte`, `semver_lt` and `semver_lte` compare versions in
+  audience and rule conditions, matching the JavaScript and Java SDKs.
+- **System attributes.** The client's `application` and `environment` names are available to audience and rule
+  conditions without being set; a user attribute of the same name wins. They are not added to the published
+  attributes.
+- **Client metadata.** `X-Agent` is now `absmartly-php-sdk/<version>` (old: `absmartly-php-sdk/v1.0.3`), from
+  the new `Client::SDK_VERSION` constant, also available as `Client::getAgent()`.
+  `ClientConfig::setApplicationVersion()` sets `X-Application-Version`, which carries whole numbers only (other
+  versions are sent as `0`, the previous fixed value).
+- **Packagist release.** `composer.json` passes `composer validate --strict` (description, homepage, support
+  links), CI validates it, and a tag-triggered Release workflow checks the tag against `Client::SDK_VERSION`,
+  runs the tests and creates the GitHub release.
 - `createSimple()` with application-before-environment ordering; the legacy factory keeps its ordering.
 - Lifecycle aliases (`finalize()`, `isFinalized()`, `isFinalizing()`, `readyError()`) and the
   `ContextEventLoggerEvent::Finalize` constant for cross-SDK code, custom-field key/type APIs, and shared
