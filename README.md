@@ -693,8 +693,10 @@ tags through its GitHub webhook. To release:
 
 1. Set `Client::SDK_VERSION` (sent in the `X-Agent` header) to the new version and move the
    [CHANGELOG.md](CHANGELOG.md) entries under it.
-2. Merge to `main`, then push a tag such as `v2.0.0` (`git tag v2.0.0 && git push origin v2.0.0`).
-3. The Release workflow validates `composer.json`, checks that the tag matches `Client::SDK_VERSION`, runs the
+2. Merge to `main`. Packagist imports a tag as soon as it is pushed, so check the version on the merged `main`
+   before tagging and push the tag only if the check passes:
+   `php .github/scripts/check-release-version.php v2.0.0 && git tag v2.0.0 && git push origin v2.0.0`.
+3. The Release workflow validates `composer.json`, re-checks that the tag matches `Client::SDK_VERSION`, runs the
    tests and creates the GitHub release; Packagist lists the version within a few minutes.
 
 ## About A/B Smartly

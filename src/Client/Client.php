@@ -13,9 +13,8 @@ use function json_decode;
 use function json_encode;
 use function React\Promise\reject;
 use function React\Promise\resolve;
-use function ctype_digit;
+use function preg_match;
 use function rtrim;
-use function strlen;
 
 use const JSON_THROW_ON_ERROR;
 
@@ -65,7 +64,7 @@ class Client implements AsyncClientInterface {
 	 * that is not one (such as "2.4.1") is sent as "0", as when no version is configured.
 	 */
 	private static function applicationVersionHeader(?string $applicationVersion): string {
-		if ($applicationVersion === null || strlen($applicationVersion) > 18 || !ctype_digit($applicationVersion)) {
+		if ($applicationVersion === null || preg_match('/^\d{1,18}$/D', $applicationVersion) !== 1) {
 			return '0';
 		}
 
