@@ -8,6 +8,7 @@ use ABSmartly\SDK\Config;
 use ABSmartly\SDK\Context\Context;
 use ABSmartly\SDK\Context\ContextConfig;
 use ABSmartly\SDK\Context\ContextData;
+use ABSmartly\SDK\Context\ContextDataProvider;
 use ABSmartly\SDK\SDK;
 use ABSmartly\SDK\Tests\Mocks\ContextDataProviderMock;
 use ABSmartly\SDK\Tests\Mocks\ContextEventHandlerMock;
@@ -315,5 +316,68 @@ class ContextAssignmentRulesTest extends TestCase {
 		// The data provider serves context.json, which has no assignment rules.
 		$context->refresh();
 		self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_test_abc'));
+	}
+
+	public function testRuleVariantOfARemovedExperimentIsRebuiltNotServedStale(): void {
+		$experiment = (object) [
+			'id' => 10,
+			'name' => 'exp_rule_removed',
+			'unitType' => 'session_id',
+			'iteration' => 1,
+			'seedHi' => 0,
+			'seedLo' => 0,
+			'split' => [0.5, 0.5],
+			'trafficSeedHi' => 0,
+			'trafficSeedLo' => 0,
+			'trafficSplit' => [0.0, 1.0],
+			'fullOnVariant' => 0,
+			'audience' => '',
+			'audienceStrict' => false,
+			'applications' => [(object) ['name' => 'website']],
+			'assignmentRules' => json_encode(['rules' => [
+				['name' => 'us', 'type' => 'assign', 'variant' => 1, 'conditions' => ['eq' => [['var' => 'country'], ['value' => 'US']]]],
+			]]),
+			'variants' => [
+				(object) ['name' => 'A', 'config' => null],
+				(object) ['name' => 'B', 'config' => null],
+			],
+		];
+
+		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', '', 'website', 'production'));
+		$config = new Config($client);
+		$config->setContextDataProvider(new class($client) extends ContextDataProvider {
+			public function getContextData(): ContextData {
+				return new ContextData([]);
+			}
+		});
+		$this->eventHandler = new ContextEventHandlerMock($client);
+		$config->setContextEventHandler($this->eventHandler);
+
+		$contextConfig = new ContextConfig();
+		$contextConfig->setUnits(['session_id' => 'svk-unit-1']);
+		$contextConfig->setPublishDelay(-1);
+		$contextConfig->setRefreshInterval(0);
+		$context = (new SDK($config))->createContextWithData($contextConfig, new ContextData([$experiment]));
+
+		$context->setAttribute('country', 'US');
+		self::assertSame(1, $context->getTreatment('exp_rule_removed'));
+		self::assertSame(1, $context->getPendingCount());
+
+		$context->refresh();
+		self::assertSame(0, $context->peekTreatment('exp_rule_removed'));
+		self::assertSame(0, $context->getTreatment('exp_rule_removed'));
+		self::assertSame(2, $context->getPendingCount());
+
+		$context->publish();
+		$exposures = array_map(static function ($exposure): array {
+			unset($exposure->exposedAt);
+			return (array) $exposure;
+		}, $this->eventHandler->submitted[0]->exposures);
+		self::assertEquals([
+			['id' => 10, 'name' => 'exp_rule_removed', 'unit' => 'session_id', 'variant' => 1, 'assigned' => false, 'eligible' => true,
+				'overridden' => false, 'fullOn' => false, 'custom' => false, 'audienceMismatch' => false, 'ruleOverride' => true],
+			['id' => 0, 'name' => 'exp_rule_removed', 'unit' => null, 'variant' => 0, 'assigned' => false, 'eligible' => true,
+				'overridden' => false, 'fullOn' => false, 'custom' => false, 'audienceMismatch' => false, 'ruleOverride' => false],
+		], $exposures);
 	}
 }

@@ -541,7 +541,9 @@ class Context {
 				}
 			}
 			else if ($experiment === null) {
-				if (!$assignment->assigned) {
+				// A rule-won assignment is not "assigned" either, but its variant came from the
+				// experiment's rules, so it must be rebuilt once the experiment is gone.
+				if (!$assignment->assigned && !$assignment->ruleOverride) {
 					// previously not-running experiment
 					return $assignment;
 				}
