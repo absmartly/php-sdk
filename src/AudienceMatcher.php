@@ -125,16 +125,19 @@ class AudienceMatcher {
 	 * @return array{variant: int}|array{split: float[]}|null
 	 */
 	private static function parseRuleAction(object $rule): ?array {
-		switch ($rule->type ?? null) {
-			case 'assign':
-				$variant = self::asInteger($rule->variant ?? null);
-				return $variant !== null ? ['variant' => $variant] : null;
-			case 'split':
-				$split = self::parseSplitPercentages($rule->percentages ?? null);
-				return $split !== null ? ['split' => $split] : null;
-			default:
-				return null;
+		// Strict comparisons: switch's loose ones would read a boolean true (and 0 on PHP 7) as "assign".
+		$type = $rule->type ?? null;
+		if ($type === 'assign') {
+			$variant = self::asInteger($rule->variant ?? null);
+			return $variant !== null ? ['variant' => $variant] : null;
 		}
+
+		if ($type === 'split') {
+			$split = self::parseSplitPercentages($rule->percentages ?? null);
+			return $split !== null ? ['split' => $split] : null;
+		}
+
+		return null;
 	}
 
 	/**

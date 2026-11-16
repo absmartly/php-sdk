@@ -91,6 +91,34 @@ class AudienceMatcherTest extends TestCase {
 		self::assertNull($this->evaluateRules([$rule(['type' => 'assign', 'variant' => 1, 'environments' => 'production'])]));
 	}
 
+	public function nonStringRuleTypeProvider(): array {
+		return [
+			'true' => [true],
+			'false' => [false],
+			'zero' => [0],
+			'one' => [1],
+			'null' => [null],
+			'object' => [['type' => 'assign']],
+			'array' => [['assign']],
+			'differently cased string' => ['Assign'],
+		];
+	}
+
+	/**
+	 * Like the JavaScript, Java and collector parsers, only the exact strings "assign" and "split" are actions, so a
+	 * malformed or future type is skipped for the next rule on every PHP version.
+	 *
+	 * @dataProvider nonStringRuleTypeProvider
+	 */
+	public function testOnlyStringRuleTypesAreActions($type): void {
+		$rules = [
+			['type' => $type, 'variant' => 1, 'percentages' => '0/100/0'],
+			self::assignRule(0),
+		];
+
+		self::assertSame(['variant' => 0], $this->evaluateRules($rules));
+	}
+
 	public function testIntegralFloatVariantIsAnInteger(): void {
 		self::assertSame(['variant' => 2], $this->matcher->evaluateRules('{"rules":[{"type":"assign","variant":2.0}]}', 'production', []));
 	}
