@@ -35,9 +35,13 @@ class Exposure {
 		$this->audienceMismatch = $assignment->audienceMismatch;
 	}
 
+	/**
+	 * Keeps the v1.0.3 signature so existing subclass overrides stay compatible; set the public $ruleOverride on the
+	 * returned exposure for a rule-decided one.
+	 */
 	public static function create(
 		int $id, string $name, ?string $unit, int $variant, float $exposedAt, bool $assigned, bool $eligible,
-		bool $overridden, bool $fullOn, bool $custom, bool $audienceMismatch, bool $ruleOverride = false
+		bool $overridden, bool $fullOn, bool $custom, bool $audienceMismatch
 	): self {
 		$exposure = new self();
 		$exposure->id = $id;
@@ -51,7 +55,6 @@ class Exposure {
 		$exposure->fullOn = $fullOn;
 		$exposure->custom = $custom;
 		$exposure->audienceMismatch = $audienceMismatch;
-		$exposure->ruleOverride = $ruleOverride;
 
 		return $exposure;
 	}
