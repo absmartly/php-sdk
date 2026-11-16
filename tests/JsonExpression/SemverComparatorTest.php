@@ -116,7 +116,6 @@ class SemverComparatorTest extends TestCase {
 			'1e21 is not its full decimal' => [1e21, '1000000000000000000000', 1],
 			'-1e21 has an empty core' => [-1e21, '1.0.0', null],
 			'1.2345e21' => [1.2345e21, '1.2345e+21', 0],
-			'trailing exponent zero is stripped like JS' => [1e210, '1e+21', 0],
 			'below 1e21 is the full decimal' => [1e20, '100000000000000000000', 0],
 			'exact half rounds up' => [1 / 65536, '0.000015258789063', 0],
 			'exact half rounds up, not to even' => [5 / 65536, '0.000076293945313', 0],
@@ -130,6 +129,40 @@ class SemverComparatorTest extends TestCase {
 	 */
 	public function testNumbersConvertLikeJavaScript(float $number, string $version, ?int $expected): void {
 		self::assertSame($expected, SemverComparator::compare($number, $version));
+	}
+
+	/**
+	 * The JavaScript SDK's stringConvert output for each number. compare() drops "+..." as build metadata, so the
+	 * exponent forms are checked on the conversion itself.
+	 */
+	public function javaScriptNumberStringProvider(): array {
+		return [
+			[1e21, '1e+21'],
+			[-1e21, '-1e+21'],
+			[1.2345e21, '1.2345e+21'],
+			[1e210, '1e+21'],
+			[1.5e300, '1.5e+3'],
+			[1.7976931348623157e308, '1.7976931348623157e+308'],
+			[1e20, '100000000000000000000'],
+			[1 / 65536, '0.000015258789063'],
+			[5 / 65536, '0.000076293945313'],
+			[-1 / 65536, '-0.000015258789063'],
+			[0.1, '0.1'],
+			[2.5, '2.5'],
+			[10.0, '10'],
+			[1e-7, '0.0000001'],
+			[1e-16, '0'],
+		];
+	}
+
+	/**
+	 * @dataProvider javaScriptNumberStringProvider
+	 */
+	public function testNumbersConvertToTheJavaScriptString(float $number, string $expected): void {
+		$method = new \ReflectionMethod(SemverComparator::class, 'stringConvert');
+		$method->setAccessible(true);
+
+		self::assertSame($expected, $method->invoke(null, $number));
 	}
 
 	/**

@@ -77,12 +77,11 @@ class Context {
 	private bool $finalizing = false;
 	private bool $ready;
 	private int $attrsSeq = 0;
-	/** getEvaluationAttributes() as of $evaluationAttributesSeq, built only when a rule or an audience needs it. */
 	private ?array $evaluationAttributes = null;
 	private int $evaluationAttributesSeq = -1;
-	/** @var array<string, string> Rule key of each experiment with assignment rules, set when its data is installed. */
+	/** @var array<string, string> */
 	private array $ruleKeys = [];
-	/** @var array<string, array|null> Each experiment's decoded rules (null when invalid), decoded on first use. */
+	/** @var array<string, array|null> null when the rules JSON is invalid. */
 	private array $parsedRules = [];
 	private ?Throwable $readyError = null;
 
@@ -430,7 +429,7 @@ class Context {
 
 	private function audienceMatches(Experiment $experiment, Assignment $assignment): bool {
 		if ($experiment->audience === null && $experiment->assignmentRules === null && $assignment->ruleKey === '') {
-			// No audience, and no rules then or now: nothing depends on attributes, as before rules existed.
+			// Nothing here depends on attributes.
 			return true;
 		}
 

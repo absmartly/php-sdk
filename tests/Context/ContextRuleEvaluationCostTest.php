@@ -80,7 +80,6 @@ class ContextRuleEvaluationCostTest extends TestCase {
 					$this->data = $data;
 				}
 
-				/** Serves the same experiments with the rule renamed: different rules JSON, the same outcome. */
 				public function getContextData(): ContextData {
 					$experiments = [];
 					foreach ($this->data->experiments as $experiment) {
@@ -189,15 +188,14 @@ class ContextRuleEvaluationCostTest extends TestCase {
 		self::assertSame(['exp_test_abc'], array_keys(self::decodedRules($context)));
 		self::assertSame($decoded, self::decodedRules($context)['exp_test_abc']);
 
-		// The data served on refresh has no rules, so nothing decoded from the previous data is kept.
 		$context->refresh();
 		self::assertSame(2, $context->getTreatment('exp_test_abc'));
 		self::assertSame([], self::decodedRules($context));
 	}
 
 	/**
-	 * A same-outcome revalidation advances the assignment's attribute and rule stamps, so later reads reuse it
-	 * without evaluating the rules again: after an unrelated attribute change and after a refresh whose rules JSON changed without changing the outcome.
+	 * JS advances assignment.ruleKey and attrsSeq after a same-outcome revalidation; a refresh here renames the rule,
+	 * which changes the rules JSON but not the outcome.
 	 */
 	public function testSameOutcomeRevalidationIsNotRepeated(): void {
 		$context = $this->createContext(self::usRule(), null, 100, true);

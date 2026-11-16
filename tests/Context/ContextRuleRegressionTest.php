@@ -13,11 +13,6 @@ use ABSmartly\SDK\Tests\Mocks\ContextDataProviderMock;
 use ABSmartly\SDK\Tests\Mocks\ContextEventHandlerMock;
 use PHPUnit\Framework\TestCase;
 
-/**
- * Pins rule and system-attribute paths that other tests leave open: reference split vectors, the configured
- * environment scoping rules while conditions see the user's, SDK construction, attribute presence, exposure reuse
- * and unknown fields.
- */
 class ContextRuleRegressionTest extends TestCase {
 	private ContextEventHandlerMock $eventHandler;
 
@@ -237,7 +232,7 @@ class ContextRuleRegressionTest extends TestCase {
 		$config = new Config($client);
 		$config->setContextDataProvider(new class($client) extends \ABSmartly\SDK\Context\ContextDataProvider {
 			public function getContextData(): ContextData {
-				// The first experiment is valid, the second is missing required fields, so setData() throws midway.
+				// setData() throws on the second experiment after installing the first.
 				return new ContextData([ContextRuleRegressionTest::validExperiment(), (object) ['name' => 'broken']]);
 			}
 		});
