@@ -271,7 +271,8 @@ $context->setAttributes([
 The `application` and `environment` names configured on the client are always available to audience
 filters as the `application` and `environment` attributes, without being set explicitly. A user
 attribute of the same name, set with `setAttribute()`, overrides the configured value for audience
-evaluation.
+evaluation. An empty name is left out, and `app_version` is never added automatically: set it with
+`setAttribute()` to target versions. These names are not added to the published attributes.
 
 ### Assignment Rules
 
@@ -284,7 +285,8 @@ assignments (an override set with `setOverride()` still wins over every rule):
   experiment's seed. A split that does not cover every variant, or does not sum to 100 (within 0.01), is ignored.
 
 Rule conditions are audience expressions evaluated against the context attributes, including the `application`
-and `environment` names. They are re-evaluated when an attribute changes, so a cached assignment follows the rule
+and `environment` names. A rule's `environments` list is always matched against the environment configured on the
+client, even when an `environment` attribute is set. They are re-evaluated when an attribute changes, so a cached assignment follows the rule
 that matches now; an exposure that was already queued is not taken back. A split rule that matches before its unit
 is set gives the full-on variant (variant 0 when the experiment is not full-on) until the unit is set, unless the
 treatment was already exposed. Exposures decided by a rule are flagged `ruleOverride` and excluded from analysis.
