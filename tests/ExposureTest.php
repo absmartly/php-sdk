@@ -37,7 +37,7 @@ PHP;
 	public function testV103SubclassOverridingCreateStillLoads(): void {
 		$script = str_replace('AUTOLOAD', var_export(dirname(__DIR__) . '/vendor/autoload.php', true), self::V103_SUBCLASS);
 
-		$file = tempnam(sys_get_temp_dir(), 'exposure') . '.php';
+		$file = tempnam(sys_get_temp_dir(), 'exposure');
 		file_put_contents($file, "<?php\n" . $script);
 		try {
 			exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($file) . ' 2>&1', $output, $exitCode);
