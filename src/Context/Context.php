@@ -429,7 +429,13 @@ class Context {
 	}
 
 	private function audienceMatches(Experiment $experiment, Assignment $assignment): bool {
+		if ($experiment->audience === null && $experiment->assignmentRules === null && $assignment->ruleKey === '') {
+			// No audience, and no rules then or now: nothing depends on attributes, as before rules existed.
+			return true;
+		}
+
 		$ruleKey = $this->ruleKey($experiment);
+
 		$ruleKeyChanged = $ruleKey !== $assignment->ruleKey;
 
 		if ($ruleKeyChanged && $ruleKey === '' && ($assignment->ruleVariant !== null || $assignment->ruleOverride)) {
@@ -564,9 +570,9 @@ class Context {
 					// previously not-running experiment
 					return $assignment;
 				}
-			} else if ($assignment->ruleOverride
-				|| !array_key_exists($experimentName, $this->cassignments)
+			} else if (!array_key_exists($experimentName, $this->cassignments)
 				|| $this->cassignments[$experimentName] === $assignment->variant
+				|| $assignment->ruleOverride
 				|| $this->customAssignmentIgnored($assignment, $experiment)) {
 				// A matching rule wins over a custom assignment, so a custom mismatch is not staleness.
 				if ($this->experimentMatches($experiment->data, $assignment) && $this->audienceMatches($experiment->data, $assignment)) {
