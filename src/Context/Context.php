@@ -445,8 +445,7 @@ class Context {
 			if ($ruleKey !== '') {
 				// An exposed split resolved without its unit keeps resolving as if the unit were still missing, so a
 				// unit set afterwards cannot switch the variant the user already saw.
-				$isUnitPinnedMissing = $assignment->exposed && $assignment->isRuleMissingUnit;
-				$rule = $this->resolveRule($experiment, $isUnitPinnedMissing);
+				$rule = $this->resolveRule($experiment, $assignment->isUnitPinnedMissing);
 				$ruleVariant = $rule['variant'] ?? null;
 				if ($ruleVariant !== $assignment->ruleVariant) {
 					return false;
@@ -824,6 +823,7 @@ class Context {
 
 		$exposure = new Exposure();
 		$assignment->exposed = true;
+		$assignment->isUnitPinnedMissing = $assignment->isUnitPinnedMissing || $assignment->isRuleMissingUnit;
 		$exposure->ingestAssignment($assignment);
 
 		$this->exposures[] = $exposure;
@@ -961,7 +961,7 @@ class Context {
 	 */
 	private function invalidateRuleAssignmentsMissingUnit(string $unitType): void {
 		foreach ($this->assignmentCache ?? [] as $experimentName => $assignment) {
-			if ($assignment->unitType === $unitType && $assignment->isRuleMissingUnit && !$assignment->exposed) {
+			if ($assignment->unitType === $unitType && $assignment->isRuleMissingUnit && !$assignment->isUnitPinnedMissing) {
 				unset($this->assignmentCache[$experimentName]);
 			}
 		}

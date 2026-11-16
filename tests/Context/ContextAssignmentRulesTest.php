@@ -291,6 +291,25 @@ class ContextAssignmentRulesTest extends TestCase {
 		self::assertSame([0], $variants);
 	}
 
+	// Queue-cap eviction clears `exposed` so a dropped exposure can be re-queued, but the user already saw the
+	// treatment, so the missing-unit pin must hold.
+	public function testExposedSplitRuleWithoutItsUnitStaysPinnedAfterItsExposureIsEvicted(): void {
+		$context = $this->createContext([self::splitRule('0/100/0', self::usCondition())], [], false);
+		$context->setAttribute('country', 'US');
+		self::assertSame(0, $context->getTreatment('exp_test_abc'));
+
+		$context->maxRetainedEvents = 1;
+		$this->eventHandler->prerun = static function (): void {
+			throw new \RuntimeException('collector down');
+		};
+		$context->getTreatment('exp_test_ab');
+		$context->publish();
+
+		$context->setUnit('session_id', self::SESSION_ID);
+		$context->setAttribute('unrelated', true);
+		self::assertSame(0, $context->getTreatment('exp_test_abc'));
+	}
+
 	public function testSplitRuleWithoutItsUnitGivesTheFullOnVariant(): void {
 		$context = $this->createContext([self::splitRule('0/100/0', null)], ['fullOnVariant' => 2], false);
 		self::assertSame(2, $context->peekTreatment('exp_test_abc'));

@@ -20,6 +20,8 @@ class Assignment {
 	public bool $ruleOverride = false;
 	public ?int $ruleVariant = null;
 	public bool $isRuleMissingUnit = false;
+	/** Exposed while resolved without its unit; unlike $exposed, not cleared when the queued exposure is evicted. */
+	public bool $isUnitPinnedMissing = false;
 	public string $ruleKey = '';
 
 	public bool $audienceMismatch = false;
