@@ -63,6 +63,17 @@ class AudienceMatcher {
 	 * @return array{variant: int}|array{split: float[]}|null
 	 */
 	public function evaluateRules(string $assignmentRules, ?string $environmentName, array $attributes): ?array {
+		$rules = $this->parseRules($assignmentRules);
+		return $rules !== null ? $this->evaluateParsedRules($rules, $environmentName, $attributes) : null;
+	}
+
+	/**
+	 * Decodes assignment rules JSON once so it can be evaluated repeatedly, as the JavaScript SDK's parseRules.
+	 *
+	 * @param string $assignmentRules JSON of the form {"rules": [...]}
+	 * @return array|null The rules list, or null when the JSON is invalid or has no rules list.
+	 */
+	public function parseRules(string $assignmentRules): ?array {
 		try {
 			$parsed = json_decode($assignmentRules, false, 512, JSON_THROW_ON_ERROR);
 		}
@@ -75,7 +86,16 @@ class AudienceMatcher {
 			return null;
 		}
 
-		foreach ($parsed->rules as $rule) {
+		return $parsed->rules;
+	}
+
+	/**
+	 * evaluateRules() for rules already decoded by parseRules().
+	 *
+	 * @return array{variant: int}|array{split: float[]}|null
+	 */
+	public function evaluateParsedRules(array $rules, ?string $environmentName, array $attributes): ?array {
+		foreach ($rules as $rule) {
 			if (!is_object($rule)) {
 				continue;
 			}

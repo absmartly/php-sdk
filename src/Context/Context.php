@@ -77,6 +77,13 @@ class Context {
 	private bool $finalizing = false;
 	private bool $ready;
 	private int $attrsSeq = 0;
+	/** getEvaluationAttributes() as of $evaluationAttributesSeq, built only when a rule or an audience needs it. */
+	private ?array $evaluationAttributes = null;
+	private int $evaluationAttributesSeq = -1;
+	/** @var array<string, string> Rule key of each experiment with assignment rules, set when its data is installed. */
+	private array $ruleKeys = [];
+	/** @var array<string, array|null> Each experiment's decoded rules (null when invalid), decoded on first use. */
+	private array $parsedRules = [];
 	private ?Throwable $readyError = null;
 
 	/**
@@ -218,6 +225,9 @@ class Context {
 		$this->data = $data;
 		$this->index = [];
 		$this->indexVariables = [];
+		$this->ruleKeys = [];
+		$this->parsedRules = [];
+		$environment = $this->sdk->getClient()->getEnvironment();
 
 		foreach ($data->experiments as $experiment) {
 			$experimentVariables = new ExperimentVariables();
@@ -243,6 +253,9 @@ class Context {
 			}
 
 			$this->index[$experiment->name] = $experimentVariables;
+			if ($experimentVariables->data->assignmentRules !== null) {
+				$this->ruleKeys[$experiment->name] = $experimentVariables->data->assignmentRules . ':' . $environment;
+			}
 		}
 	}
 
@@ -424,13 +437,11 @@ class Context {
 		}
 
 		if ($this->attrsSeq > $assignment->attrsSeq || $ruleKeyChanged) {
-			$attrs = $this->getEvaluationAttributes();
-
 			if ($ruleKey !== '') {
 				// An exposed split resolved without its unit keeps resolving as if the unit were still missing, so a
 				// unit set afterwards cannot switch the variant the user already saw.
 				$isUnitPinnedMissing = $assignment->exposed && $assignment->isRuleMissingUnit;
-				$rule = $this->resolveRule($experiment, $attrs, $isUnitPinnedMissing);
+				$rule = $this->resolveRule($experiment, $isUnitPinnedMissing);
 				$ruleVariant = $rule['variant'] ?? null;
 				if ($ruleVariant !== $assignment->ruleVariant) {
 					return false;
@@ -440,7 +451,7 @@ class Context {
 			}
 
 			if (!$assignment->ruleOverride && !empty($experiment->audience) && !empty((array) $experiment->audience)) {
-				$result = $this->audienceMatcher->evaluate($experiment->audience, $attrs);
+				$result = $this->audienceMatcher->evaluate($experiment->audience, $this->getEvaluationAttributes());
 				$newAudienceMismatch = $result !== null ? !$result : $assignment->audienceMismatch;
 
 				if ($newAudienceMismatch !== $assignment->audienceMismatch) {
@@ -456,14 +467,11 @@ class Context {
 
 	/**
 	 * Identifies the assignment rules a cached assignment was resolved against: the rules JSON and the environment
-	 * they were matched in, or '' when the experiment has none.
+	 * they were matched in, or '' when the experiment has none. Built once per data install, so an unchanged read
+	 * compares the same string rather than building and comparing a copy of the rules.
 	 */
 	private function ruleKey(Experiment $experiment): string {
-		if ($experiment->assignmentRules === null || $experiment->assignmentRules === '') {
-			return '';
-		}
-
-		return $experiment->assignmentRules . ':' . $this->sdk->getClient()->getEnvironment();
+		return $this->ruleKeys[$experiment->name] ?? '';
 	}
 
 	/**
@@ -472,16 +480,25 @@ class Context {
 	 *
 	 * @return array{variant: int, isMissingUnit: bool}|null
 	 */
-	private function resolveRule(Experiment $experiment, array $attrs, bool $isUnitPinnedMissing): ?array {
-		if ($experiment->assignmentRules === null || $experiment->assignmentRules === '') {
+	private function resolveRule(Experiment $experiment, bool $isUnitPinnedMissing): ?array {
+		if ($experiment->assignmentRules === null) {
+			return null;
+		}
+
+		if (!array_key_exists($experiment->name, $this->parsedRules)) {
+			$this->parsedRules[$experiment->name] = $this->audienceMatcher->parseRules($experiment->assignmentRules);
+		}
+
+		$rules = $this->parsedRules[$experiment->name];
+		if (empty($rules)) {
 			return null;
 		}
 
 		$environment = $this->sdk->getClient()->getEnvironment();
-		$action = $this->audienceMatcher->evaluateRules(
-			$experiment->assignmentRules,
+		$action = $this->audienceMatcher->evaluateParsedRules(
+			$rules,
 			$environment !== '' ? $environment : null,
-			$attrs
+			$this->getEvaluationAttributes()
 		);
 		if ($action === null) {
 			return null;
@@ -576,9 +593,8 @@ class Context {
 		}
 		elseif ($experiment) {
 			$unitType = $experiment->data->unitType;
-			$attrs = $this->getEvaluationAttributes();
 			$assignment->ruleKey = $this->ruleKey($experiment->data);
-			$rule = $this->resolveRule($experiment->data, $attrs, false);
+			$rule = $this->resolveRule($experiment->data, false);
 			$assignment->ruleVariant = $rule['variant'] ?? null;
 			$assignment->isRuleMissingUnit = $rule['isMissingUnit'] ?? false;
 
@@ -590,7 +606,7 @@ class Context {
 			}
 			else {
 				if (!empty($experiment->data->audience) && !empty((array) $experiment->data->audience)) {
-					$result = $this->audienceMatcher->evaluate($experiment->data->audience, $attrs);
+					$result = $this->audienceMatcher->evaluate($experiment->data->audience, $this->getEvaluationAttributes());
 					if (is_bool($result)) {
 						$assignment->audienceMismatch = !$result;
 					}
@@ -774,7 +790,12 @@ class Context {
 	 * @return array<string, mixed>
 	 */
 	private function getEvaluationAttributes(): array {
-		return array_replace($this->getSystemAttributes(), $this->getAttributes());
+		if ($this->evaluationAttributesSeq !== $this->attrsSeq) {
+			$this->evaluationAttributes = array_replace($this->getSystemAttributes(), $this->getAttributes());
+			$this->evaluationAttributesSeq = $this->attrsSeq;
+		}
+
+		return $this->evaluationAttributes;
 	}
 
 	private function getVariantAssigner(string $unitType, string $unitHash): VariantAssigner {
