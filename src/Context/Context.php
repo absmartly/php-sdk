@@ -1188,6 +1188,8 @@ class Context {
 		$oldData = $this->data;
 		$oldIndex = $this->index;
 		$oldIndexVariables = $this->indexVariables;
+		$oldRuleKeys = $this->ruleKeys;
+		$oldParsedRules = $this->parsedRules;
 		try {
 			$data = $this->dataProvider->getContextData();
 			$this->setData($data);
@@ -1198,6 +1200,8 @@ class Context {
 			$this->data = $oldData;
 			$this->index = $oldIndex;
 			$this->indexVariables = $oldIndexVariables;
+			$this->ruleKeys = $oldRuleKeys;
+			$this->parsedRules = $oldParsedRules;
 			error_log(sprintf(
 				'ABsmartly SDK Error: Failed to refresh context, keeping existing data: %s in %s:%d',
 				$exception->getMessage(),

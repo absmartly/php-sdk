@@ -119,6 +119,13 @@ class AudienceMatcherTest extends TestCase {
 		self::assertSame(['variant' => 0], $this->evaluateRules($rules));
 	}
 
+	public function testAConditionThatThrowsFallsThroughToTheNextRule(): void {
+		$tooDeep = ['var' => implode('/', array_fill(0, 100, 'a'))];
+		$rules = [self::assignRule(1, ['eq' => [$tooDeep, ['value' => 1]]]), self::assignRule(2)];
+
+		self::assertSame(['variant' => 2], $this->evaluateRules($rules));
+	}
+
 	public function testIntegralFloatVariantIsAnInteger(): void {
 		self::assertSame(['variant' => 2], $this->matcher->evaluateRules('{"rules":[{"type":"assign","variant":2.0}]}', 'production', []));
 	}

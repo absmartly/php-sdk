@@ -230,4 +230,31 @@ class ContextRuleRegressionTest extends TestCase {
 
 		self::assertFalse(property_exists($context->getExperiment('exp')->data, 'futureField'));
 	}
+
+	public function testAFailedRefreshKeepsTheRules(): void {
+		$experiment = self::experiment(['assignmentRules' => self::rules(['type' => 'assign', 'variant' => 1])]);
+		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'key', 'website', 'production'));
+		$config = new Config($client);
+		$config->setContextDataProvider(new class($client) extends \ABSmartly\SDK\Context\ContextDataProvider {
+			public function getContextData(): ContextData {
+				// The first experiment is valid, the second is missing required fields, so setData() throws midway.
+				return new ContextData([ContextRuleRegressionTest::validExperiment(), (object) ['name' => 'broken']]);
+			}
+		});
+		$config->setContextEventHandler(new ContextEventHandlerMock($client));
+		$contextConfig = new ContextConfig();
+		$contextConfig->setUnits(['session_id' => 'e791e240fcd3df7d238cfc285f475e8152fcc0ec']);
+		$context = (new SDK($config))->createContextWithData($contextConfig, new ContextData([$experiment]));
+
+		self::assertSame(1, $context->getTreatment('exp'));
+		$context->refresh();
+		self::assertSame(1, $context->getTreatment('exp'));
+		$context->setAttribute('unrelated', true);
+		self::assertSame(1, $context->getTreatment('exp'));
+		self::assertSame(1, $context->getPendingCount());
+	}
+
+	public static function validExperiment(): object {
+		return self::experiment(['name' => 'other', 'id' => 8, 'assignmentRules' => self::rules(['type' => 'assign', 'variant' => 2])]);
+	}
 }
