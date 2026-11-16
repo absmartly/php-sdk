@@ -80,6 +80,12 @@ class ClientTest extends TestCase {
 			'semantic version' => ['2.4.1', '0'],
 			'blank' => ['  ', '0'],
 			'too long for the collector' => ['1234567890123456789', '0'],
+			'longest the collector accepts' => ['123456789012345678', '123456789012345678'],
+			'padded whole number' => [' 1004 ', '1004'],
+			'negative' => ['-1', '0'],
+			'signed' => ['+1', '0'],
+			'non-ASCII digits' => ["\u{661}\u{662}", '0'],
+			'empty' => ['', '0'],
 		];
 	}
 
@@ -93,8 +99,12 @@ class ClientTest extends TestCase {
 			$config->setApplicationVersion($version);
 		}
 
-		(new Client($config, $http))->getContextData();
+		$client = new Client($config, $http);
+		$client->getContextData();
+		$client->publish(new PublishEvent());
 
-		self::assertSame($expected, $http->headers[0]['X-Application-Version']);
+		self::assertCount(2, $http->headers);
+		self::assertSame($expected, $http->headers[0]['X-Application-Version'], 'GET');
+		self::assertSame($expected, $http->headers[1]['X-Application-Version'], 'PUT');
 	}
 }
