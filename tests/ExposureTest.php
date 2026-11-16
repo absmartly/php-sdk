@@ -14,7 +14,7 @@ class ExposureTest extends TestCase {
 		$script = sprintf(
 			'require %s; require %s; echo get_class(\Customer\App\CustomerExposure::create(1, "a", null, 0, 0.0, true, true, false, false, false, false));',
 			var_export(dirname(__DIR__) . '/vendor/autoload.php', true),
-			var_export(__DIR__ . '/Fixtures/Legacy/CustomerExposure.php', true)
+			var_export(__DIR__ . '/Fixtures/Legacy/CustomerExposure.php.inc', true)
 		);
 
 		exec(escapeshellarg(PHP_BINARY) . ' -r ' . escapeshellarg($script) . ' 2>&1', $output, $exitCode);
