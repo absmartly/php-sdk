@@ -21,8 +21,8 @@ use function is_infinite;
 use function is_object;
 use function is_string;
 use function json_decode;
-use function ltrim;
 use function preg_match;
+use function preg_replace;
 use function sprintf;
 
 use const JSON_THROW_ON_ERROR;
@@ -216,11 +216,12 @@ class AudienceMatcher {
 	}
 
 	/**
-	 * JavaScript parseFloat: leading whitespace is skipped and the longest decimal prefix is parsed, so "50abc"
+	 * JavaScript parseFloat: leading ECMAScript whitespace is skipped and the longest decimal prefix is parsed, so "50abc"
 	 * is 50 and "abc" is NaN.
 	 */
 	public static function parseFloat(string $value): float {
-		$value = ltrim($value, " \t\n\r\v\f");
+		// ECMAScript StrWhiteSpaceChar: ASCII whitespace, U+00A0, U+FEFF, U+2028, U+2029 and the Zs category.
+		$value = preg_replace('/^[\t\n\x0B\f\r \x{A0}\x{1680}\x{2000}-\x{200A}\x{2028}\x{2029}\x{202F}\x{205F}\x{3000}\x{FEFF}]+/u', '', $value) ?? $value;
 		if (preg_match('/^[+-]?Infinity/', $value) === 1) {
 			return $value[0] === '-' ? -INF : INF;
 		}

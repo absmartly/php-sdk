@@ -2,6 +2,7 @@
 declare(strict_types=1);
 namespace ABSmartly\SDK\JsonExpression;
 
+use function abs;
 use function count;
 use function explode;
 use function is_bool;
@@ -11,14 +12,18 @@ use function is_int;
 use function is_nan;
 use function is_string;
 use function ltrim;
+use function ord;
 use function max;
 use function preg_match;
-use function rtrim;
+use function preg_replace;
 use function sprintf;
 use function strcmp;
 use function strlen;
+use function strspn;
 use function strpos;
 use function substr;
+use function substr_replace;
+use function trim;
 
 /**
  * Semantic version comparison used by the semver_* operators, matching the JavaScript and Java SDKs: a leading
@@ -86,8 +91,9 @@ final class SemverComparator {
 	}
 
 	/**
-	 * Numbers are formatted like the JavaScript SDK's `toFixed(15)` with trailing zeros removed, so 2.5 is "2.5"
-	 * and 10 is "10" regardless of PHP's precision settings.
+	 * Numbers are formatted like the JavaScript SDK's `x.toFixed(15).replace(/\.?0{0,15}$/, "")`, regardless of
+	 * PHP's precision settings: 2.5 is "2.5", 10 is "10", and from 1e21 up toFixed gives JavaScript's shortest
+	 * exponent form, so 1e21 is "1e+21" (and, as in JavaScript, 1e210 loses its trailing zero to "1e+21").
 	 *
 	 * @param mixed $value
 	 */
@@ -108,10 +114,52 @@ final class SemverComparator {
 			if (is_infinite($value)) {
 				return $value > 0 ? 'Infinity' : '-Infinity';
 			}
-			return rtrim(rtrim(sprintf('%.15F', $value), '0'), '.');
+
+			$number = abs($value) >= 1e21 ? self::shortestExponentForm($value) : self::toFixed15($value);
+			return preg_replace('/\.?0{0,15}$/D', '', $number, 1);
 		}
 
 		return null;
+	}
+
+	/**
+	 * JavaScript's Number.prototype.toFixed(15) for |x| < 1e21: the exact value rounded to 15 decimals, an exact
+	 * half rounding away from zero (PHP's sprintf rounds such a tie to even).
+	 */
+	private static function toFixed15(float $value): string {
+		$sign = $value < 0 ? '-' : '';
+		$value = abs($value);
+
+		// 53 decimals tell an exact tie (a value with exactly 16 decimals, the last being 5) from its neighbours:
+		// any other double within the toFixed range differs from a tie by far more than 1e-53.
+		$exact = sprintf('%.53F', $value);
+		$point = strpos($exact, '.');
+		if (substr($exact, $point + 16, 1) !== '5' || trim(substr($exact, $point + 17), '0') !== '') {
+			return $sign . sprintf('%.15F', $value);
+		}
+
+		$digits = substr($exact, 0, $point) . substr($exact, $point + 1, 15);
+		for ($i = strlen($digits) - 1; $i >= 0 && $digits[$i] === '9'; --$i) {
+			$digits[$i] = '0';
+		}
+		$digits = $i < 0 ? '1' . $digits : substr_replace($digits, (string) ((int) $digits[$i] + 1), $i, 1);
+
+		return $sign . substr($digits, 0, -15) . '.' . substr($digits, -15);
+	}
+
+	/**
+	 * JavaScript's Number.prototype.toString() for |x| >= 1e21: the fewest significant digits that read back as
+	 * $value, as d[.ddd]e+n.
+	 */
+	private static function shortestExponentForm(float $value): string {
+		for ($precision = 0; $precision < 16; ++$precision) {
+			$number = sprintf('%.' . $precision . 'e', $value);
+			if ((float) $number === $value) {
+				return $number;
+			}
+		}
+
+		return sprintf('%.16e', $value);
 	}
 
 	/**
@@ -162,7 +210,29 @@ final class SemverComparator {
 			return 1;
 		}
 
-		return self::sign(strcmp($a, $b));
+		return self::compareUtf16($a, $b);
+	}
+
+	/**
+	 * JavaScript orders strings by UTF-16 code unit. UTF-8 byte order is code point order, which differs only where
+	 * a supplementary character (a surrogate pair, from 0xD800; UTF-8 lead byte F0-F4) meets one in U+E000-U+FFFF
+	 * (lead byte EE or EF).
+	 */
+	private static function compareUtf16(string $a, string $b): int {
+		$result = self::sign(strcmp($a, $b));
+		$i = strspn($a ^ $b, "\0");
+		if ($result === 0 || !isset($a[$i], $b[$i])) {
+			return $result;
+		}
+
+		$aLead = ord($a[$i]);
+		$bLead = ord($b[$i]);
+		if (($aLead >= 0xF0 && ($bLead === 0xEE || $bLead === 0xEF))
+			|| ($bLead >= 0xF0 && ($aLead === 0xEE || $aLead === 0xEF))) {
+			return -$result;
+		}
+
+		return $result;
 	}
 
 	private static function isNumeric(string $identifier): bool {

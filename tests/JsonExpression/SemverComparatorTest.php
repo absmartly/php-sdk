@@ -104,4 +104,47 @@ class SemverComparatorTest extends TestCase {
 		self::assertNull(SemverComparator::compare('1.0.0', 'v'));
 		self::assertNull(SemverComparator::compare('-alpha', '1.0.0'));
 	}
+
+	/**
+	 * Expected values come from the JavaScript SDK's versionCompare, whose stringConvert is
+	 * x.toFixed(15).replace(/\.?0{0,15}$/, ""): toFixed falls back to String(x) from 1e21 up and rounds an exact
+	 * half up.
+	 */
+	public function javaScriptNumberConversionProvider(): array {
+		return [
+			'1e21 is "1e+21"' => [1e21, '1e+21', 0],
+			'1e21 is not its full decimal' => [1e21, '1000000000000000000000', 1],
+			'-1e21 has an empty core' => [-1e21, '1.0.0', null],
+			'1.2345e21' => [1.2345e21, '1.2345e+21', 0],
+			'trailing exponent zero is stripped like JS' => [1e210, '1e+21', 0],
+			'below 1e21 is the full decimal' => [1e20, '100000000000000000000', 0],
+			'exact half rounds up' => [1 / 65536, '0.000015258789063', 0],
+			'exact half rounds up, not to even' => [5 / 65536, '0.000076293945313', 0],
+			'non-tie keeps the nearest' => [3 / 65536, '0.000045776367188', 0],
+			'rounding carries' => [9.9999999999999995, '10', 0],
+		];
+	}
+
+	/**
+	 * @dataProvider javaScriptNumberConversionProvider
+	 */
+	public function testNumbersConvertLikeJavaScript(float $number, string $version, ?int $expected): void {
+		self::assertSame($expected, SemverComparator::compare($number, $version));
+	}
+
+	/**
+	 * JavaScript compares identifiers by UTF-16 code unit, so a character above U+FFFF (a surrogate pair, from
+	 * U+D800) sorts before U+E000-U+FFFF; digits are ASCII only.
+	 */
+	public function testIdentifiersCompareByUtf16CodeUnitLikeJavaScript(): void {
+		self::assertSame(1, SemverComparator::compare("1.0.0-\u{FF5E}", "1.0.0-\u{1F600}"));
+		self::assertSame(-1, SemverComparator::compare("1.0.0-\u{1F600}", "1.0.0-\u{FF5E}"));
+		self::assertSame(1, SemverComparator::compare("1.0.0-a\u{E000}", "1.0.0-a\u{10000}"));
+		self::assertSame(-1, SemverComparator::compare("1.0.0-\u{D7FF}", "1.0.0-\u{10000}"));
+		self::assertSame(1, SemverComparator::compare("1.0.0-\u{E9}", '1.0.0-z'));
+		self::assertSame(1, SemverComparator::compare("1.0.0-\u{661}", '1.0.0-2'));
+		self::assertSame(1, SemverComparator::compare("1.\u{661}.0", '1.1.0'));
+		self::assertSame(1, SemverComparator::compare("1.0.0-\u{FF11}", '1.0.0-1'));
+		self::assertSame(1, SemverComparator::compare(' 1.0.0', '1.0.0'));
+	}
 }

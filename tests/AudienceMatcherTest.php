@@ -176,4 +176,18 @@ class AudienceMatcherTest extends TestCase {
 		self::assertSame([1.0], AudienceMatcher::parseSplitPercentages('1e2'));
 		self::assertNull(AudienceMatcher::parseSplitPercentages('50/'));
 	}
+
+	/**
+	 * JavaScript's parseFloat skips ECMAScript whitespace (including U+00A0, U+FEFF, U+2028 and every Zs
+	 * character), but not U+180E or U+0085.
+	 */
+	public function testSplitPercentagesSkipEcmaScriptWhitespace(): void {
+		foreach (["\u{A0}", "\u{FEFF}", "\u{1680}", "\u{2000}", "\u{200A}", "\u{2028}", "\u{2029}", "\u{202F}", "\u{205F}", "\u{3000}", "\v", " \u{3000}\t"] as $space) {
+			self::assertSame([0.5, 0.5], AudienceMatcher::parseSplitPercentages($space . '50/' . $space . '50'), json_encode($space));
+		}
+
+		foreach (["\u{180E}", "\u{85}", "\u{200B}"] as $notSpace) {
+			self::assertNull(AudienceMatcher::parseSplitPercentages($notSpace . '50/50'), json_encode($notSpace));
+		}
+	}
 }
