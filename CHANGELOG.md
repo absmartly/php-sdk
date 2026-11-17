@@ -25,7 +25,9 @@ single-attempt GET are all kept). The behaviour changes below are the agreed cro
   as `0`, the previous fixed value).
 - **Async API (optional ReactPHP).** `ReactHttpClient`, `SDK::createContextAsync()`/`createContextPending()`,
   `AsyncContextDataProvider`, `AsyncContextEventHandler` and the `ClientInterface`/`HttpClientInterface`
-  interfaces. ReactPHP stays optional: install the suggested packages to use them.
+  interfaces. ReactPHP stays optional: install the suggested packages to use them. Unlike `HTTPClient`,
+  `ReactHttpClient` retries a failed GET by default (`$retries`, non-blocking back-off); set `$retries = 0` to
+  disable it.
 - **Opt-in HTTP retries.** `HTTPClient::$totalTimeout` sets a total budget for a request; when it is set, GET is
   retried up to `$retries` times on transport errors and HTTP 5xx/408/429. Without it a request is sent once, as
   in 1.0.3. PUT and POST are never retried.
@@ -36,8 +38,9 @@ single-attempt GET are all kept). The behaviour changes below are the agreed cro
   `ContextEventLoggerEvent::Finalize` constant. `Context::$maxRetainedEvents` caps events kept for retry after
   failed publishes (default 10,000).
 - `ABSmartly\SDK` is an alias of `ABSmartly\SDK\SDK`, the entry class name the 2.x line will use.
-- `setUnit()`/`setUnits()` accept int and float UIDs (stored as strings), `setAttribute()` accepts non-string
-  values, and `track()` accepts an associative array of properties.
+- `setUnits()` accepts int and float UIDs (stored as strings; `setUnit()` keeps its `string $uid` parameter, so
+  non-strict callers' numbers convert as before), `setAttribute()` accepts non-string values, and `track()` accepts
+  any object or an associative array of properties.
 
 ### Changed
 
@@ -62,31 +65,45 @@ single-attempt GET are all kept). The behaviour changes below are the agreed cro
   `_resolveVariableValue`); `getVariableKeys()` keeps its shape and reports the lowest-id experiment. *Affects:*
   experiments sharing variable keys (1.0.3 used the last one loaded).
 
+- **Traffic eligibility uses the traffic seed.** Eligibility for experiments with traffic below 100% is assigned
+  with `trafficSeedHi`/`trafficSeedLo`, as in every other SDK and the backend (1.0.3 reused the variant seed).
+  *Affects:* running experiments with partial traffic re-bucket eligibility (about a quarter of units move on a 50%
+  experiment); restart or start a new iteration of affected experiments when upgrading.
+- **`audienceStrict: false` is honoured.** Only a strict audience forces variant 0 on a mismatch (1.0.3 forced it
+  when the field was present at all). *Affects:* non-strict experiments, whose mismatching units are now assigned.
+- **Unit id `"0"` is assigned.** 1.0.3 treated it as missing and served control. *Affects:* units whose id is `"0"`.
+- **A failed `close()` throws and leaves the context open.** It re-throws the collector error with the events still
+  queued; a later `close()` retries, and `Close` is emitted once the close succeeds (1.0.3 logged the error, closed
+  and lost the events). `publish()` keeps the 1.0.3 behaviour of logging and returning. *Affects:* code calling
+  `close()` without a `try`/`catch` while the collector is unreachable; catch the exception or call `publish()`.
+- **Mutators throw after `close()`.** `setAttribute()`, `setAttributes()`, `setUnit()` and `setUnits()` throw
+  `ABSmartly Context is closed`, as `track()` already did, as the README's "seal the context" says, and as JS does.
+  *Affects:* code that sets attributes or units on a closed context; set them before closing.
+- **`refresh()` on a context whose first load failed is a no-op** (JS `_refresh`): it stays failed and serves
+  control; create a new context to recover (1.0.3 re-fetched and recovered). A `refresh()` that fails now keeps the
+  existing data instead of emptying the context. *Affects:* code that relied on `refresh()` to recover a context
+  whose `createContext()` failed.
+- **Wider `Context` parameter types.** `setAttribute(string $name, $value)` and `track(string $goalName,
+  $properties = null)` accept typed attribute values and array properties (1.0.3: `string $value`, `?object
+  $properties`). Callers are unaffected. A class extending `Context` that redeclares these two methods with the
+  1.0.3 types no longer loads on PHP 8; `Context` has a private constructor and is only created by the SDK, so such a
+  subclass could not be used with 1.0.3 either.
+- `var_dump()` of a `ClientConfig` (`__debugInfo()`) also lists `applicationVersion`.
+
 ### Fixed
 
-- Traffic eligibility uses `trafficSeedHi`/`trafficSeedLo`, as in every other SDK and the backend (1.0.3 reused the
-  variant seed). *Affects:* running experiments with traffic below 100% re-bucket eligibility; restart or start a
-  new iteration of affected experiments when upgrading.
-- `audienceStrict: false` is honoured: only a strict audience forces variant 0 on a mismatch (1.0.3 forced it when
-  the field was present at all).
-- Unit id `"0"`/`0` is assigned (1.0.3 treated it as missing and served control).
 - Audience operators: a null operand gives null (no match) instead of comparing as equal; `in` with a number needle
   in a string haystack gives null instead of a PHP `TypeError`; deep equality ignores object key order and compares
   nested values; `match` uses a delimiter the pattern does not contain, so a pattern with `/` no longer errors.
   *Affects:* audiences that matched only because of these defects.
 - A failed publish no longer discards every queued event and marks the context failed: events stay queued for the
   next `publish()`/`close()`, `publish()` still logs and returns, and `isFailed()` only reports a failed load.
-- A failed `close()` re-throws the collector error and leaves the context open with its events queued; a later
-  `close()` retries, and `Close` is emitted once the close succeeds. 1.0.3 swallowed the error and closed, losing
-  the events.
-- `setAttribute()`, `setAttributes()`, `setUnit()` and `setUnits()` throw `ABSmartly Context is closed` after
-  `close()`, as `track()` already did and as documented ("seal the context").
 - `Context::close()` no longer closes the SDK's shared HTTP client, so closing one context no longer breaks
   sibling contexts. `SDK::close()` still closes it.
-- `refresh()` that fails keeps the existing data instead of emptying the context; `refresh()` on a context whose
-  initial load failed is a no-op (JS `_refresh`).
 - `getVariableValue()` and `peekVariableValue()` agree: both return the default when the unit is neither
   assigned nor overridden (1.0.3's peek returned the control variant's value).
+- An experiment missing a required field no longer fails the whole context: it is left out (an `Error` event is
+  logged) and the other experiments still load.
 - The JSON decoder accepts payloads nested deeper than 16 levels (`Client::decode()`).
 - A batch the collector accepted is cleared before the `Publish` event is logged, so a throwing event logger can
   no longer cause it to be sent again.

@@ -6,6 +6,7 @@ use ABSmartly\SDK\Assignment;
 use ABSmartly\SDK\AudienceMatcher;
 use ABSmartly\SDK\Exception\InvalidArgumentException;
 use ABSmartly\SDK\Exception\LogicException;
+use ABSmartly\SDK\Exception\RuntimeException;
 use ABSmartly\SDK\Experiment;
 use ABSmartly\SDK\ExperimentVariables;
 use ABSmartly\SDK\Exposure;
@@ -224,7 +225,14 @@ class Context {
 
 		foreach ($data->experiments as $experiment) {
 			$experimentVariables = new ExperimentVariables();
-			$experimentVariables->data = new Experiment($experiment);
+			try {
+				$experimentVariables->data = new Experiment($experiment);
+			}
+			catch (RuntimeException $exception) {
+				// An experiment missing a required field degrades only itself: it is left out, the others still load.
+				$this->logError($exception);
+				continue;
+			}
 			$experimentVariables->variables = [];
 
 			foreach ($experiment->variants as $variant) {
@@ -862,8 +870,11 @@ class Context {
 
 	public function setUnits(array $units): Context {
 		foreach ($units as $unitType => $uid) {
-			if (!is_string($uid) && !is_int($uid) && !is_float($uid)) {
-				// The v1.0.3 message, so code that matches it keeps working; numbers are now accepted as well.
+			if (is_int($uid) || is_float($uid)) {
+				// Numbers are stored as their string form; other non-strings keep the v1.0.3 error.
+				$uid = (string) $uid;
+			}
+			if (!is_string($uid)) {
 				throw new InvalidArgumentException(
 					sprintf('Unit set value with key "%s" must be of type string, %s passed', $unitType, gettype($uid)));
 			}
@@ -926,12 +937,7 @@ class Context {
 		return $this->cassignments[$experimentName] ?? null;
 	}
 
-	/**
-	 * Numeric UIDs are accepted and stored as strings.
-	 *
-	 * @param string|int|float $uid
-	 */
-	public function setUnit(string $unitType, $uid): Context {
+	public function setUnit(string $unitType, string $uid): Context {
 		$this->checkNotClosed();
 		$uid = self::validateUnit($unitType, $uid);
 
@@ -959,23 +965,7 @@ class Context {
 		}
 	}
 
-	/**
-	 * @param mixed $uid
-	 */
-	private static function validateUnit(string $unitType, $uid): string {
-		if (is_int($uid) || is_float($uid)) {
-			return (string) $uid;
-		}
-
-		if (is_bool($uid)) {
-			// v1.0.3 declared string $uid, so a non-strict caller's bool was coerced ("1", or "" which is blank).
-			$uid = (string) $uid;
-		}
-
-		if (!is_string($uid)) {
-			throw new InvalidArgumentException(sprintf('Unit "%s" must be a string or a number', $unitType));
-		}
-
+	private static function validateUnit(string $unitType, string $uid): string {
 		if (trim($uid) === '') {
 			throw new InvalidArgumentException(sprintf('Unit "%s" UID must not be blank', $unitType));
 		}

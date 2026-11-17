@@ -232,8 +232,8 @@ class ContextRuleRegressionTest extends TestCase {
 		$config = new Config($client);
 		$config->setContextDataProvider(new class($client) extends \ABSmartly\SDK\Context\ContextDataProvider {
 			public function getContextData(): ContextData {
-				// setData() throws on the second experiment after installing the first.
-				return new ContextData([ContextRuleRegressionTest::validExperiment(), (object) ['name' => 'broken']]);
+				// setData() throws on the second experiment (invalid audience JSON) after installing the first.
+				return new ContextData([ContextRuleRegressionTest::validExperiment(), ContextRuleRegressionTest::brokenExperiment()]);
 			}
 		});
 		$config->setContextEventHandler(new ContextEventHandlerMock($client));
@@ -247,6 +247,10 @@ class ContextRuleRegressionTest extends TestCase {
 		$context->setAttribute('unrelated', true);
 		self::assertSame(1, $context->getTreatment('exp'));
 		self::assertSame(1, $context->getPendingCount());
+	}
+
+	public static function brokenExperiment(): object {
+		return self::experiment(['name' => 'broken', 'id' => 9, 'audience' => '{not json']);
 	}
 
 	public static function validExperiment(): object {

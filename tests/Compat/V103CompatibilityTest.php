@@ -8,6 +8,7 @@ use ABSmartly\SDK\Config;
 use ABSmartly\SDK\Context\ContextConfig;
 use ABSmartly\SDK\Context\ContextData;
 use ABSmartly\SDK\Context\ContextDataProvider;
+use ABSmartly\SDK\Context\ContextEventLoggerEvent;
 use ABSmartly\SDK\Http\HTTPClient;
 use ABSmartly\SDK\Http\Response;
 use ABSmartly\SDK\SDK;
@@ -98,5 +99,34 @@ class V103CompatibilityTest extends TestCase {
 		$context->refresh();
 
 		self::assertSame('', file_get_contents($this->errorLogFile));
+	}
+
+	public function testAssignmentVariablesKeepsItsV103Type(): void {
+		$type = (new \ReflectionProperty(\ABSmartly\SDK\Assignment::class, 'variables'))->getType();
+		self::assertSame('stdClass', (string) $type);
+		self::assertFalse($type->allowsNull());
+	}
+
+	public function testAnExperimentMissingARequiredFieldDegradesOnlyItself(): void {
+		$fixture = json_decode(file_get_contents(__DIR__ . '/../Fixtures/json/context.json'));
+		$broken = clone $fixture->experiments[0];
+		$broken->name = 'exp_broken';
+		unset($broken->seedHi);
+		$fixture->experiments[] = $broken;
+
+		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'key', 'app', 'env'));
+		$config = new Config($client);
+		$config->setContextEventHandler(new ContextEventHandlerMock($client));
+		$logger = new \ABSmartly\SDK\Tests\Mocks\MockContextEventLoggerProxy();
+		$contextConfig = (new ContextConfig())->setUnit('session_id', 'e791e240fcd3df7d238cfc285f475e8152fcc0ec');
+		$contextConfig->setEventLogger($logger);
+		$context = (new SDK($config))->createContextWithData($contextConfig, new ContextData($fixture->experiments));
+
+		self::assertFalse($context->isFailed());
+		self::assertSame(1, $context->getTreatment('exp_test_ab'));
+		self::assertSame(0, $context->getTreatment('exp_broken'));
+		self::assertNull($context->getExperiment('exp_broken'));
+		self::assertSame(ContextEventLoggerEvent::Error, $logger->events[0]->getEvent());
+		self::assertStringContainsString('seedHi', $logger->events[0]->getData()->getMessage());
 	}
 }
