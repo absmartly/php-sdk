@@ -8,24 +8,13 @@ use ABSmartly\SDK\Config;
 use ABSmartly\SDK\Context\Context;
 use ABSmartly\SDK\Context\ContextConfig;
 use ABSmartly\SDK\Context\ContextData;
-use ABSmartly\SDK\Context\ContextDataProvider;
 use ABSmartly\SDK\Context\ContextEventLoggerEvent;
 use ABSmartly\SDK\Exposure;
 use ABSmartly\SDK\SDK;
 use ABSmartly\SDK\Tests\Mocks\ContextEventHandlerMock;
+use ABSmartly\SDK\Tests\Mocks\HoldoutDataProvider;
 use ABSmartly\SDK\Tests\Mocks\MockContextEventLoggerProxy;
 use PHPUnit\Framework\TestCase;
-
-class HoldoutDataProvider extends ContextDataProvider {
-	public ?ContextData $next = null;
-
-	public function __construct() {
-	}
-
-	public function getContextData(): ContextData {
-		return $this->next;
-	}
-}
 
 class ThrowingExposureLogger extends MockContextEventLoggerProxy {
 	/** @var callable(Exposure): bool */
