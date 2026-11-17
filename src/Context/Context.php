@@ -260,15 +260,6 @@ class Context {
 			}
 		}
 
-		// A dropped arm of a holdout that is gone or at a new iteration can't be queued again, so stop waiting for it.
-		foreach ($this->droppedHoldoutArms as $holdoutKey => $_) {
-			$arm = $this->holdoutAssignmentCache[$holdoutKey];
-			$live = $this->holdoutsById[$arm->id] ?? null;
-			if ($live === null || $live->iteration !== $arm->iteration) {
-				unset($this->droppedHoldoutArms[$holdoutKey]);
-			}
-		}
-
 		foreach ($data->experiments as $experiment) {
 			$experimentVariables = new ExperimentVariables();
 			$experimentVariables->data = new Experiment($experiment);
@@ -308,6 +299,23 @@ class Context {
 					ksort($holdouts);
 					$this->experimentHoldouts[$experiment->name] = array_values($holdouts);
 					$this->hasHoldouts = true;
+				}
+			}
+		}
+
+		// Last, so a refresh that throws above leaves the marks as they were. A dropped arm whose holdout is gone, at a
+		// new iteration or covering nothing can't be queued again, so stop waiting for it.
+		if ($this->droppedHoldoutArms !== []) {
+			$covering = [];
+			foreach ($this->experimentHoldouts as $holdouts) {
+				foreach ($holdouts as $holdout) {
+					$covering[$holdout->id] = $holdout;
+				}
+			}
+			foreach ($this->droppedHoldoutArms as $holdoutKey => $_) {
+				$arm = $this->holdoutAssignmentCache[$holdoutKey];
+				if (!isset($covering[$arm->id]) || $covering[$arm->id]->iteration !== $arm->iteration) {
+					unset($this->droppedHoldoutArms[$holdoutKey]);
 				}
 			}
 		}
