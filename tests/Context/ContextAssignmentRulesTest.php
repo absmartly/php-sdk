@@ -307,6 +307,10 @@ class ContextAssignmentRulesTest extends TestCase {
 
 		$context->setUnit('session_id', self::SESSION_ID);
 		$context->setAttribute('unrelated', true);
+		self::assertSame(0, $context->peekTreatment('exp_test_abc'));
+		// Revalidating again keeps the pin: it is sticky, not recomputed from the cleared `exposed` flag.
+		$context->setAttribute('unrelated', false);
+		self::assertSame(0, $context->peekTreatment('exp_test_abc'));
 		self::assertSame(0, $context->getTreatment('exp_test_abc'));
 	}
 
@@ -330,6 +334,22 @@ class ContextAssignmentRulesTest extends TestCase {
 		self::assertCount(1, $exposures);
 		self::assertSame(0, $exposures[0]->variant);
 		self::assertTrue($exposures[0]->ruleOverride);
+	}
+
+	// Only an exposure pins: a peeked assignment revalidated onto a split without its unit still re-resolves once the
+	// unit is set.
+	public function testPeekedAssignmentRevalidatedOntoASplitWithoutItsUnitIsReResolvedOnceTheUnitIsSet(): void {
+		$gbCondition = ['and' => [['eq' => [['var' => 'country'], ['value' => 'GB']]]]];
+		$context = $this->createContext([self::assignRule(0, self::usCondition()), self::splitRule('0/100/0', $gbCondition)], [], false);
+
+		$context->setAttribute('country', 'US');
+		$treatments = [$context->peekTreatment('exp_test_abc')];
+		$context->setAttribute('country', 'GB');
+		$treatments[] = $context->peekTreatment('exp_test_abc');
+		$context->setUnit('session_id', self::SESSION_ID);
+		$treatments[] = $context->peekTreatment('exp_test_abc');
+
+		self::assertSame([0, 0, 1], $treatments);
 	}
 
 	public function testSplitRuleWithoutItsUnitGivesTheFullOnVariant(): void {
