@@ -112,6 +112,19 @@
 
 ### Added
 
+- **Holdouts.** `ContextData::$holdouts` carries the collector's `holdouts` and `Experiment::$holdoutIds` (and
+  `$holdoutType`) the ids that cover each experiment, as in the JavaScript and Java SDKs. A unit held out by any of
+  an experiment's holdouts gets control (variant 0, not assigned) without an exposure of its own, ahead of the
+  audience, full-on, traffic and custom assignment; an override or a matching assignment rule still wins. Arm 0 of
+  a holdout holds the unit out; a 3-arm holdout's arm 1 holds out only experiments that are not full-on (the arm
+  count comes from `split`, never `holdoutType`). Each holdout publishes one ordinary exposure (its `id`, `name`
+  and arm as `variant`, hashed with the covered experiment's unit type) per unit type, on the first exposing
+  `getTreatment()`/`getVariableValue()` of an experiment it covers; peeks publish nothing. The arm is kept until
+  the holdout's iteration changes, so a same-iteration seed or split edit does not re-randomize or re-expose, and a
+  unit set later re-resolves a not-yet-exposed experiment. A held-out unit's `getVariableValue()` returns the
+  control value unless another experiment assigns the key. Holdouts without a usable `split`, ids that name no
+  holdout and unknown fields are ignored. `new ContextData($experiments)` keeps working (no holdouts), and payloads
+  without holdouts take the same cached read path as before.
 - **Assignment rules.** An experiment's `assignmentRules` are evaluated in order, and the first rule whose
   environments and conditions match decides the variant: `assign` rules pick a fixed variant and `split` rules
   split traffic with their own percentages (such as `20/30/50`, which must sum to 100 within 0.01), hashing the

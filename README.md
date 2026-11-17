@@ -291,6 +291,29 @@ that matches now; an exposure that was already queued is not taken back. A split
 is set gives the full-on variant (variant 0 when the experiment is not full-on) until the unit is set, unless the
 treatment was already exposed. Exposures decided by a rule are flagged `ruleOverride` and excluded from analysis.
 
+### Holdouts
+
+A holdout keeps a share of units out of every experiment it covers, so their long-term effect can be measured.
+Holdouts arrive with the context data (`ContextData::$holdouts`) and cover the experiments that list them in
+`holdoutIds`; nothing needs configuring in the SDK.
+
+- A unit in a holdout's held-out arm (variant 0) gets control (variant 0) for each covered experiment, and
+  `getTreatment()` sends no exposure for that experiment. In a 3-arm holdout, arm 1 holds out only experiments that
+  are not full-on.
+- The first `getTreatment()` or `getVariableValue()` on a covered experiment sends one exposure for each of its
+  holdouts (once per holdout and unit type), with the holdout's arm as the variant. `peekTreatment()` and
+  `peekVariableValue()` send nothing.
+- An override (`setOverride()`) and a matching assignment rule win over a holdout; a custom assignment does not.
+- `getVariableValue()` for a held-out unit returns the control variant's value when no other experiment assigns the
+  key.
+
+When creating a context from pre-fetched data, pass the holdouts too:
+
+```php
+$contextData = new ContextData($payload->experiments, $payload->holdouts ?? []);
+$context = $sdk->createContextWithData($contextConfig, $contextData);
+```
+
 ### Semantic Version Conditions
 
 Audience and rule conditions can compare versions with `semver_eq`, `semver_gt`, `semver_gte`, `semver_lt` and
