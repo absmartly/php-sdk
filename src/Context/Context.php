@@ -97,10 +97,11 @@ class Context {
 	/** Whether any assignment may carry holdouts: set once some installed data covered an experiment. */
 	private bool $hasHoldouts = false;
 	/**
-	 * Bumped when the retained-event cap drops a holdout exposure, so an exposed assignment re-checks its holdout arms
-	 * only after that happened, not on every read.
+	 * @var array<string, true> Cached holdout arms ("<holdout id>:<unit type>") whose exposure the retained-event cap
+	 * dropped and that are not queued again yet. Exposed assignments re-check their holdout arms only while one is
+	 * outstanding, not on every read.
 	 */
-	private int $droppedHoldoutExposures = 0;
+	private array $droppedHoldoutArms = [];
 	/**
 	 * @var array<string, Assignment> Holdout arms by "<holdout id>:<unit type>", kept across refreshes and reused
 	 * while the holdout's iteration is unchanged, so a same-iteration seed or split edit never re-randomizes a unit.
@@ -958,15 +959,14 @@ class Context {
 	}
 
 	/**
-	 * Exposes $assignment on an exposing read. Once the retained-event cap has dropped a holdout exposure, an exposed
-	 * assignment with holdouts also re-queues its dropped arms; every other read is a no-op, as in JS.
+	 * Exposes $assignment on an exposing read. An exposed assignment with holdouts re-queues any of its arms whose
+	 * exposure the retained-event cap dropped. Callers skip exposed assignments while nothing is dropped, as in JS.
 	 */
 	private function exposeAssignment(Assignment $assignment): void {
 		if (!$assignment->exposed) {
 			$this->triggerExposures($assignment);
 		}
-		elseif ($this->droppedHoldoutExposures !== 0 && $assignment->holdoutAssignments !== null
-			&& ($error = $this->triggerHoldoutExposures($assignment)) !== null) {
+		elseif ($assignment->holdoutAssignments !== null && ($error = $this->triggerHoldoutExposures($assignment)) !== null) {
 			throw $error;
 		}
 	}
@@ -998,7 +998,7 @@ class Context {
 			$assignment = $this->getAssignment($experimentVariables->data->name);
 
 			if ($assignment->variables !== null) {
-				if ($exposeAssignments && (!$assignment->exposed || $this->droppedHoldoutExposures !== 0)) {
+				if ($exposeAssignments && (!$assignment->exposed || $this->droppedHoldoutArms !== [])) {
 					$this->exposeAssignment($assignment);
 				}
 
@@ -1117,7 +1117,7 @@ class Context {
 	public function getTreatment(string $experimentName): int {
 		$this->checkReady();
 		$assignment = $this->getAssignment($experimentName);
-		if (!$assignment->exposed || $this->droppedHoldoutExposures !== 0) {
+		if (!$assignment->exposed || $this->droppedHoldoutArms !== []) {
 			$this->exposeAssignment($assignment);
 		}
 
@@ -1127,6 +1127,10 @@ class Context {
 	private function queueExposure(Assignment $assignment): void {
 		if (!empty($assignment->exposed)) {
 			return;
+		}
+
+		if ($this->droppedHoldoutArms !== [] && $assignment->holdoutArmCount !== 0) {
+			unset($this->droppedHoldoutArms[$assignment->id . ':' . $assignment->unitType]);
 		}
 
 		$exposure = new Exposure();
@@ -1416,13 +1420,13 @@ class Context {
 			// assignment (which carries its own un-exposed state).
 			foreach ($droppedAssignments as $assignment) {
 				$cached = $this->assignmentCache[$assignment->name] ?? null;
-				$cachedHoldout = $this->holdoutAssignmentCache[$assignment->id . ':' . $assignment->unitType] ?? null;
+				$holdoutKey = $assignment->id . ':' . $assignment->unitType;
 				if ($cached === $assignment) {
 					$assignment->exposed = false;
 				}
-				elseif ($cachedHoldout === $assignment) {
+				elseif (($this->holdoutAssignmentCache[$holdoutKey] ?? null) === $assignment) {
 					$assignment->exposed = false;
-					++$this->droppedHoldoutExposures;
+					$this->droppedHoldoutArms[$holdoutKey] = true;
 				}
 			}
 		}

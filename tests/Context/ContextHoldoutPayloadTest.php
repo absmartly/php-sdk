@@ -471,6 +471,58 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertSame([[11, 'holdout_a', 'session_id', 0]], $this->published($context));
 	}
 
+	// getVariableValue() re-queues a holdout exposure the cap dropped, like getTreatment(); once it is queued again
+	// the exposed reads go back to skipping the arms.
+	public function testVariableReadRequeuesAHoldoutExposureDroppedByTheRetainedEventCap(): void {
+		$experiment = self::experiment(1, 'exp', [11]);
+		$experiment->variants = [(object) ['name' => 'A', 'config' => '{"color":"control"}'],
+			(object) ['name' => 'B', 'config' => '{"color":"treatment"}']];
+		$context = $this->createContext(new ContextData([$experiment], [self::holdout(11, 'holdout_a', 13, 111)]));
+		$context->maxRetainedEvents = 1;
+		$this->eventHandler->prerun = function () {
+			throw new \RuntimeException('collector down');
+		};
+
+		self::assertSame('control', $context->getVariableValue('color', 'default'));
+		$context->track('goal');
+		$context->publish();
+		self::assertSame(1, $context->getPendingCount());
+
+		$this->eventHandler->prerun = null;
+		self::assertSame('control', $context->getVariableValue('color', 'default'));
+		self::assertSame(2, $context->getPendingCount());
+		self::assertSame([], self::droppedHoldoutArms($context));
+		self::assertSame([[11, 'holdout_a', 'session_id', 0]], $this->published($context));
+	}
+
+	private static function droppedHoldoutArms(Context $context): array {
+		$property = new \ReflectionProperty(Context::class, 'droppedHoldoutArms');
+		if (PHP_VERSION_ID < 80100) {
+			$property->setAccessible(true);
+		}
+		return $property->getValue($context);
+	}
+
+	// A refresh that removes an experiment's holdouts rebuilds its suppressed assignment, so the unit is assigned again.
+	public function testRefreshRemovingCoverageReassignsTheUnit(): void {
+		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'test-api-key', 'website', 'production'));
+		$config = new Config($client);
+		$provider = new HoldoutDataProvider();
+		$config->setContextDataProvider($provider);
+		$this->eventHandler = new ContextEventHandlerMock($client);
+		$config->setContextEventHandler($this->eventHandler);
+		$contextConfig = new ContextConfig();
+		$contextConfig->setUnits(['session_id' => self::UID]);
+		$context = (new SDK($config))->createContextWithData($contextConfig,
+			new ContextData([self::experiment(1, 'exp', [11])], [self::holdout(11, 'holdout_a', 13, 111)]));
+
+		self::assertSame(0, $context->peekTreatment('exp'));
+
+		$provider->next = new ContextData([self::experiment(1, 'exp', [])], []);
+		$context->refresh();
+		self::assertSame(1, $context->peekTreatment('exp'));
+	}
+
 	private function publishedBody(ContextData $data): string {
 		$context = $this->createContext($data, ['session_id' => self::UID, 'user_id' => '123', 'email' => 'a@b.c']);
 		$context->setAttribute('age', 21);
