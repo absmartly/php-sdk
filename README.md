@@ -6,22 +6,21 @@ A/B Smartly - PHP SDK
 
 The A/B Smartly PHP SDK is compatible with PHP versions 7.4 and later. For the best performance and code readability, PHP 8.1 or later is recommended. This SDK is being constantly tested with the nightly builds of PHP to ensure it is compatible with the latest PHP version.
 
-### Backwards Compatibility Note
+### Upgrading from 1.0.x
 
-The SDK entry class is now `ABSmartly\SDK`. The previous fully qualified name, `ABSmartly\SDK\SDK`, is still available as an alias, so existing code keeps working without changes.
-
-### Migrating to 2.0 (breaking)
-
-Traffic eligibility now uses the experiment's traffic seed, as in the other SDKs, which re-buckets running experiments whose traffic split is below 100%. `audienceStrict: false` is now honoured, and audience operators return null for null operands (see the CHANGELOG). Restart or start a new iteration of affected experiments when upgrading.
-
-Everything else keeps its 1.x behaviour: units are stored as strings, `track()` accepts any object, `publish()` logs collector failures instead of throwing (the events stay queued for retry), a failed `close()` throws and leaves the context open so it can be retried, `close()` emits `Close` once it succeeds, `refresh()` on a context whose initial load failed is a no-op that stays failed (matching the JS SDK) — create a new context to recover — and error messages are unchanged. The legacy `ABSmartly\SDK\SDK` name, factory parameter ordering, `ContextEventHandler` contracts, and `PublishEvent::hashUnit(string)` override signature remain supported. ReactPHP is optional for synchronous use. See [CHANGELOG.md](CHANGELOG.md) for the full migration notes and audience/custom-field corrections.
+1.1.0 is a non-breaking release of 1.0.3: existing code compiles and runs unchanged. The entry class is still
+`ABSmartly\SDK\SDK` (also available as `ABSmartly\SDK`, the name the 2.x line uses), and method signatures, error
+messages, the HTTP connect timeout and the single-attempt GET of 1.0.3 are kept. Behaviour changes are limited to the
+agreed cross-SDK contract (assignment rules, SemVer operators, system attributes, the versioned `X-Agent`,
+`ruleOverride` on exposures, shared variable keys) and bug fixes; each one, and who it affects, is listed in
+[CHANGELOG.md](CHANGELOG.md).
 
 ## Installation
 
 A/B Smartly PHP SDK can be installed with [`composer`](https://getcomposer.org):
 
 ```bash
-composer require absmartly/php-sdk
+composer require absmartly/php-sdk:^1.1
 ```
 
 ## Getting Started
@@ -37,7 +36,7 @@ This example assumes an API Key, an Application, and an Environment have been cr
 Once the SDK is installed, it can be initialized in your project using the simple API:
 
 ```php
-use ABSmartly\SDK;
+use ABSmartly\SDK\SDK;
 
 $sdk = SDK::createWithDefaults(
   endpoint: $endpoint,
@@ -51,7 +50,7 @@ Note that the above example uses named parameters introduced in PHP 8.0. Althoug
 
 Example for PHP 7.4:
 ```php
-use ABSmartly\SDK;
+use ABSmartly\SDK\SDK;
 
 $sdk = SDK::createWithDefaults(
   $endpoint, $apiKey, $environment, $application
@@ -66,7 +65,7 @@ The above is a shortcut that creates an SDK instance quickly using default value
 use ABSmartly\SDK\Client\ClientConfig;
 use ABSmartly\SDK\Client\Client;
 use ABSmartly\SDK\Config;
-use ABSmartly\SDK;
+use ABSmartly\SDK\SDK;
 
 $clientConfig = new ClientConfig($endpoint, $apiKey, $application, $environment);
 $client = new Client($clientConfig);
@@ -90,7 +89,7 @@ use ABSmartly\SDK\Client\ClientConfig;
 use ABSmartly\SDK\Client\Client;
 use ABSmartly\SDK\Http\ReactHttpClient;
 use ABSmartly\SDK\Config;
-use ABSmartly\SDK;
+use ABSmartly\SDK\SDK;
 
 $clientConfig = new ClientConfig($endpoint, $apiKey, $application, $environment);
 
@@ -114,7 +113,7 @@ The async HTTP client uses ReactPHP promises and allows for non-blocking I/O ope
 | `apiKey`                | `string`                                       | &#9989;   | `null`                                        | Your API key which can be found on the Web Console.                                                                                                                           |
 | `environment`           | `string`                                       | &#9989;   | `null`                                        | The environment of the platform where the SDK is installed. Environments are created on the Web Console and should match the available environments in your infrastructure.   |
 | `application`           | `string`                                       | &#9989;   | `null`                                        | The name of the application where the SDK is installed. Applications are created on the Web Console and should match the applications where your experiments will be running. |
-| `retries`               | `int`                                          | &#10060;  | `5`                                           | The number of times a failed GET request is retried. Event publishing (PUT) is never retried.                                                                                 |
+| `retries`               | `int`                                          | &#10060;  | `5`                                           | The number of times a failed GET request is retried when `HTTPClient::$totalTimeout` is set (retries are off otherwise, as in 1.0.x). Event publishing (PUT) is never retried. |
 | `timeout`               | `int`                                          | &#10060;  | `3000`                                        | An amount of time, in milliseconds, before the SDK will stop trying to connect.                                                                                               |
 | `eventLogger`           | `ContextEventLogger`                           | &#10060;  | `null`                                        | A callback function which runs after SDK events. See [Custom Event Logger](#custom-event-logger) below.                                                                      |
 | `contextDataProvider`   | `ContextDataProvider`                          | &#10060;  | auto                                          | Custom provider for context data (advanced usage)                                                                                                                             |
@@ -448,7 +447,7 @@ return [
 namespace App\Providers;
 
 use Illuminate\Support\ServiceProvider;
-use ABSmartly\SDK;
+use ABSmartly\SDK\SDK;
 
 class ABSmartlyServiceProvider extends ServiceProvider
 {
@@ -473,7 +472,7 @@ class ABSmartlyServiceProvider extends ServiceProvider
 namespace App\Http\Middleware;
 
 use Closure;
-use ABSmartly\SDK;
+use ABSmartly\SDK\SDK;
 use ABSmartly\SDK\Context\ContextConfig;
 
 class ABSmartlyContext
@@ -535,8 +534,8 @@ Symfony applications can integrate A/B Smartly using dependency injection and ev
 ```php
 // config/services.yaml
 services:
-    ABSmartly\SDK:
-        factory: ['ABSmartly\SDK', 'createWithDefaults']
+    ABSmartly\SDK\SDK:
+        factory: ['ABSmartly\SDK\SDK', 'createWithDefaults']
         arguments:
             $endpoint: '%env(ABSMARTLY_ENDPOINT)%'
             $apiKey: '%env(ABSMARTLY_API_KEY)%'
@@ -548,7 +547,7 @@ services:
 
 namespace App\EventSubscriber;
 
-use ABSmartly\SDK;
+use ABSmartly\SDK\SDK;
 use ABSmartly\SDK\Context\ContextConfig;
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
 use Symfony\Component\HttpKernel\Event\RequestEvent;
@@ -629,7 +628,7 @@ use ABSmartly\SDK\Client\ClientConfig;
 use ABSmartly\SDK\Client\Client;
 use ABSmartly\SDK\Http\HTTPClient;
 use ABSmartly\SDK\Config;
-use ABSmartly\SDK;
+use ABSmartly\SDK\SDK;
 use ABSmartly\SDK\Context\ContextConfig;
 
 $httpClient = new HTTPClient();
@@ -656,7 +655,7 @@ use ABSmartly\SDK\Client\ClientConfig;
 use ABSmartly\SDK\Client\Client;
 use ABSmartly\SDK\Http\ReactHttpClient;
 use ABSmartly\SDK\Config;
-use ABSmartly\SDK;
+use ABSmartly\SDK\SDK;
 use ABSmartly\SDK\Context\ContextConfig;
 use React\EventLoop\Loop;
 
@@ -697,7 +696,7 @@ tags through its GitHub webhook. To release:
    [CHANGELOG.md](CHANGELOG.md) entries under it.
 2. Merge to `main`. Packagist imports a tag as soon as it is pushed, so check the version on the merged `main`
    before tagging and push the tag only if the check passes:
-   `php .github/scripts/check-release-version.php v2.0.0 && git tag v2.0.0 && git push origin v2.0.0`.
+   `php .github/scripts/check-release-version.php v1.1.0 && git tag v1.1.0 && git push origin v1.1.0`.
 3. The Release workflow validates `composer.json`, re-checks that the tag matches `Client::SDK_VERSION`, runs the
    tests and creates the GitHub release; Packagist lists the version within a few minutes.
 
