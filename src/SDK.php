@@ -113,6 +113,10 @@ final class SDK {
 		return $sdkConfig;
 	}
 
+	public function getClient(): Client {
+		return $this->client;
+	}
+
 	public function createContext(ContextConfig $contextConfig): Context {
 		$this->applyEventLogger($contextConfig);
 		return Context::createFromContextConfig($this, $contextConfig, $this->provider, $this->handler);

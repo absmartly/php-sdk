@@ -1,6 +1,8 @@
 {
     "name": "absmartly/php-sdk",
     "type": "library",
+    "description": "A/B Smartly PHP SDK for running experiments and feature flags with the A/B Smartly platform.",
+    "homepage": "https://github.com/absmartly/php-sdk",
     "require": {
         "php-64bit": "^7.4 || ^8.0",
         "lastguest/murmurhash": "~2.1.1",
@@ -42,9 +44,17 @@
         }
     ],
     "keywords": [
-        "absmartly"
+        "absmartly",
+        "ab-testing",
+        "split-testing",
+        "experimentation",
+        "feature-flags"
     ],
     "scripts": {
         "test": "phpunit"
+    },
+    "support": {
+        "issues": "https://github.com/absmartly/php-sdk/issues",
+        "source": "https://github.com/absmartly/php-sdk"
     }
 }

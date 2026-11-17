@@ -16,6 +16,11 @@ final class OperatorCollection {
 	public OperatorInterface $gte;
 	public OperatorInterface $lt;
 	public OperatorInterface $lte;
+	public OperatorInterface $semver_eq;
+	public OperatorInterface $semver_gt;
+	public OperatorInterface $semver_gte;
+	public OperatorInterface $semver_lt;
+	public OperatorInterface $semver_lte;
 
 	public function __construct() {
 		$this->null = new NullOperator();
@@ -29,6 +34,11 @@ final class OperatorCollection {
 		$this->or = new OrOperator();
 		$this->lt = new LtOperator();
 		$this->lte = new LteOperator();
+		$this->semver_eq = new SemverEqOperator();
+		$this->semver_gt = new SemverGtOperator();
+		$this->semver_gte = new SemverGteOperator();
+		$this->semver_lt = new SemverLtOperator();
+		$this->semver_lte = new SemverLteOperator();
 		$this->in = new InOperator();
 		$this->match = new MatchOperator();
 	}

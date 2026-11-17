@@ -86,4 +86,19 @@ class ClientConfigTest extends TestCase {
 		self::assertSame(1000, $clientConfig->getTimeout());
 		self::assertSame(3, $clientConfig->getRetries());
 	}
+
+	public function testApplicationVersion(): void {
+		$clientConfig = new ClientConfig('endpoint', 'key', 'app', 'env');
+		self::assertNull($clientConfig->getApplicationVersion());
+
+		self::assertSame($clientConfig, $clientConfig->setApplicationVersion(' 2.4.1 '));
+		self::assertSame('2.4.1', $clientConfig->getApplicationVersion());
+
+		$clientConfig->setApplicationVersion('');
+		self::assertNull($clientConfig->getApplicationVersion());
+
+		$clientConfig->setApplicationVersion('3');
+		$clientConfig->setApplicationVersion(null);
+		self::assertNull($clientConfig->getApplicationVersion());
+	}
 }

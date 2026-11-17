@@ -1536,7 +1536,9 @@ class ContextTest extends TestCase {
 		self::assertFalse($context->isReady());
 
 		$method = new \ReflectionMethod($context, 'setDataFailed');
-		$method->setAccessible(true);
+		if (PHP_VERSION_ID < 80100) {
+			$method->setAccessible(true);
+		}
 		$method->invoke($context, new \RuntimeException('boom'));
 
 		self::assertTrue($context->isReady());

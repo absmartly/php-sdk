@@ -50,6 +50,10 @@
 - **Mutators throw after `close()`.** `setAttribute()`, `setAttributes()`, `setUnit()` and `setUnits()` now throw
   `ABSmartly Context is closed` on a closed context, as in the JS SDK (old: they were accepted and returned the
   context). Set attributes and units before closing.
+- **Audiences see the client's `application` and `environment`.** An experiment with Audience enforced
+  (`audienceStrict`) and an `application` or `environment` condition used to give every unit variant 0, because the
+  SDK never supplied those attributes; such units are now assigned normally. `app_version` is not supplied
+  automatically: set it with `setAttribute('app_version', ...)` to target versions.
 
 ### Compatibility retained
 
@@ -81,6 +85,14 @@
   `ABSmartly Context is not yet ready` on a pending context created with `createContextPending()`.
 - `createContextAsync()`/`createContextPending()` resolve a failed load with a context that is ready and failed,
   has empty data, stores `readyError()` and logs an `Error` event.
+- **Published exposure schema: `ruleOverride` is always present.** Every exposure in the publish payload (and
+  `Exposure` serialized with `json_encode`) now carries `ruleOverride`, `false` unless an assignment rule decided
+  the variant, as the JavaScript SDK sends it. Consumers that validate the exported exposure schema strictly
+  must accept the new field. `Exposure::create()` keeps its v1.0.3 11-parameter signature, so existing subclass
+  overrides still load; set the public `$ruleOverride` property on the result for a rule-decided exposure.
+- **`X-Agent` drops the `v` prefix.** The header is `absmartly-php-sdk/2.0.0` (old: `absmartly-php-sdk/v1.0.3`),
+  the same `<name>/<version>` form as the other SDKs. The collector stores it as an opaque string.
+- `var_dump()` of a `ClientConfig` (its `__debugInfo()`) now also lists `applicationVersion`.
 
 ### Fixed
 
@@ -100,6 +112,29 @@
 
 ### Added
 
+- **Assignment rules.** An experiment's `assignmentRules` are evaluated in order, and the first rule whose
+  environments and conditions match decides the variant: `assign` rules pick a fixed variant and `split` rules
+  split traffic with their own percentages (such as `20/30/50`, which must sum to 100 within 0.01), hashing the
+  unit with the experiment seed. A matching rule wins over the audience (including `audienceStrict`), traffic,
+  full-on and custom assignments; an override still wins over rules. Rule conditions are re-evaluated when an
+  attribute changes; a split rule matched without its unit gives the full-on variant until the unit is set, unless
+  it was already exposed. Rule-decided exposures carry `ruleOverride: true`; every exposure now includes the
+  field. Invalid rules are skipped (including a rule whose `type` is not exactly the string `assign` or `split`)
+  and an object sent in place of the rules JSON string is ignored. Rules JSON is decoded once per data load, and
+  experiments without usable rules or an audience do no attribute work.
+- **SemVer operators.** `semver_eq`, `semver_gt`, `semver_gte`, `semver_lt` and `semver_lte` compare versions in
+  audience and rule conditions, matching the JavaScript and Java SDKs (numbers convert like JavaScript's
+  `toFixed(15)`, so `1e21` is `"1e+21"`; identifiers compare by UTF-16 code unit).
+- **System attributes.** The client's `application` and `environment` names are available to audience and rule
+  conditions without being set; a user attribute of the same name wins. They are not added to the published
+  attributes.
+- **Client metadata.** `X-Agent` is built from the new `Client::SDK_VERSION` constant, also available as
+  `Client::getAgent()` (see Changed).
+  `ClientConfig::setApplicationVersion()` sets `X-Application-Version`, which carries whole numbers only (other
+  versions are sent as `0`, the previous fixed value).
+- **Packagist release.** `composer.json` passes `composer validate --strict` (description, homepage, support
+  links), CI validates it, and a tag-triggered Release workflow checks the tag against `Client::SDK_VERSION`,
+  runs the tests and creates the GitHub release.
 - `createSimple()` with application-before-environment ordering; the legacy factory keeps its ordering.
 - Lifecycle aliases (`finalize()`, `isFinalized()`, `isFinalizing()`, `readyError()`) and the
   `ContextEventLoggerEvent::Finalize` constant for cross-SDK code, custom-field key/type APIs, and shared

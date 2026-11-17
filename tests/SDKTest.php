@@ -62,7 +62,9 @@ class SDKTest extends TestCase {
 		$sdk = new SDK($config);
 
 		$prop = new ReflectionProperty(SDK::class, 'eventLogger');
-		$prop->setAccessible(true);
+		if (PHP_VERSION_ID < 80100) {
+			$prop->setAccessible(true);
+		}
 		self::assertSame($logger, $prop->getValue($sdk));
 	}
 

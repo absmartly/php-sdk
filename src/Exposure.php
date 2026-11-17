@@ -17,6 +17,8 @@ class Exposure {
 	public bool $fullOn;
 	public bool $custom;
 	public bool $audienceMismatch;
+	/** The variant was set by a matching assignment rule, so the backend excludes it from analysis like an override. */
+	public bool $ruleOverride = false;
 
 	public function ingestAssignment(Assignment $assignment): void {
 		$this->id = $assignment->id;
@@ -29,9 +31,14 @@ class Exposure {
 		$this->overridden = $assignment->overridden;
 		$this->fullOn = $assignment->fullOn;
 		$this->custom = $assignment->custom;
+		$this->ruleOverride = $assignment->ruleOverride;
 		$this->audienceMismatch = $assignment->audienceMismatch;
 	}
 
+	/**
+	 * Keeps the v1.0.3 signature so existing subclass overrides stay compatible; set the public $ruleOverride on the
+	 * returned exposure for a rule-decided one.
+	 */
 	public static function create(
 		int $id, string $name, ?string $unit, int $variant, float $exposedAt, bool $assigned, bool $eligible,
 		bool $overridden, bool $fullOn, bool $custom, bool $audienceMismatch
