@@ -20,6 +20,7 @@ use Exception;
 use JsonException;
 use Throwable;
 
+use function array_intersect_key;
 use function array_replace;
 use function array_slice;
 use function array_splice;
@@ -98,9 +99,9 @@ class Context {
 	/** Whether any assignment may carry holdouts: set once some installed data covered an experiment. */
 	private bool $hasHoldouts = false;
 	/**
-	 * @var array<string, true> Cached holdout arms ("<holdout id>:<unit type>") whose exposure the retained-event cap
-	 * dropped and that are not queued again yet. Exposed assignments re-check their holdout arms only while one is
-	 * outstanding, not on every read.
+	 * @var array<int, Assignment> Holdout arms, by spl_object_id(), whose exposure the retained-event cap dropped while
+	 * they were the cached arm, and that are not queued again yet. Exposed assignments re-check their holdout arms only
+	 * while one is outstanding, not on every read.
 	 */
 	private array $droppedHoldoutArms = [];
 	/**
@@ -316,11 +317,7 @@ class Context {
 					}
 				}
 			}
-			foreach ($this->droppedHoldoutArms as $holdoutKey => $_) {
-				if (!isset($pinned[spl_object_id($this->holdoutAssignmentCache[$holdoutKey])])) {
-					unset($this->droppedHoldoutArms[$holdoutKey]);
-				}
-			}
+			$this->droppedHoldoutArms = array_intersect_key($this->droppedHoldoutArms, $pinned);
 		}
 	}
 
@@ -1150,12 +1147,7 @@ class Context {
 		}
 
 		if ($this->droppedHoldoutArms !== []) {
-			$holdoutKey = $assignment->id . ':' . $assignment->unitType;
-			// Only the cached arm clears the mark: neither a retired arm an override still pins nor an experiment that
-			// shares the holdout's id may hide the live arm's dropped exposure.
-			if (($this->holdoutAssignmentCache[$holdoutKey] ?? null) === $assignment) {
-				unset($this->droppedHoldoutArms[$holdoutKey]);
-			}
+			unset($this->droppedHoldoutArms[spl_object_id($assignment)]);
 		}
 
 		$exposure = new Exposure();
@@ -1445,13 +1437,12 @@ class Context {
 			// assignment (which carries its own un-exposed state).
 			foreach ($droppedAssignments as $assignment) {
 				$cached = $this->assignmentCache[$assignment->name] ?? null;
-				$holdoutKey = $assignment->id . ':' . $assignment->unitType;
 				if ($cached === $assignment) {
 					$assignment->exposed = false;
 				}
-				elseif (($this->holdoutAssignmentCache[$holdoutKey] ?? null) === $assignment) {
+				elseif (($this->holdoutAssignmentCache[$assignment->id . ':' . $assignment->unitType] ?? null) === $assignment) {
 					$assignment->exposed = false;
-					$this->droppedHoldoutArms[$holdoutKey] = true;
+					$this->droppedHoldoutArms[spl_object_id($assignment)] = $assignment;
 				}
 			}
 		}

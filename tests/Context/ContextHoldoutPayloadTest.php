@@ -582,17 +582,58 @@ class ContextHoldoutPayloadTest extends TestCase {
 
 		$provider->next = new ContextData([self::experiment(1, 'exp', [11])], [$holdout]);
 		$context->refresh();
-		self::assertSame(['11:session_id' => true], self::droppedHoldoutArms($context));
+		self::assertCount(1, self::droppedHoldoutArms($context));
 
 		// Coverage removed: the cached assignment still pins the arm until it is read again.
 		$provider->next = new ContextData([self::experiment(1, 'exp', [])], [$holdout]);
 		$context->refresh();
-		self::assertSame(['11:session_id' => true], self::droppedHoldoutArms($context));
+		self::assertCount(1, self::droppedHoldoutArms($context));
 
 		$context->maxRetainedEvents = 10000;
 		self::assertSame(1, $context->getTreatment('exp'));
 		$context->refresh();
 		self::assertSame([], self::droppedHoldoutArms($context));
+	}
+
+	// After an iteration bump, the dropped exposure of the old arm (pinned by a removed experiment) and of the new arm
+	// are tracked apart, so both are queued again whichever is read first.
+	public function testDroppedOldAndNewArmsAreRequeuedInEitherReadOrder(): void {
+		foreach ([['exp_old', 'exp_new'], ['exp_new', 'exp_old']] as $order) {
+			[$context, $provider] = $this->contextWithProvider(
+				new ContextData([self::experiment(1, 'exp_old', [11])], [self::holdout(11, 'holdout_a', 13, 111)]));
+			self::assertSame(0, $context->getTreatment('exp_old'));
+			$context->maxRetainedEvents = 1;
+			$this->failNextPublish($context);
+
+			$bumped = self::holdout(11, 'holdout_a', 1, 222);
+			$bumped->iteration = 2;
+			$provider->next = new ContextData([self::experiment(2, 'exp_new', [11])], [$bumped]);
+			$context->refresh();
+			$context->maxRetainedEvents = 10000;
+			foreach ($order as $name) {
+				$context->getTreatment($name);
+			}
+
+			$holdoutExposures = array_values(array_filter($this->published($context), fn($exposure) => $exposure[0] === 11));
+			sort($holdoutExposures);
+			self::assertSame([[11, 'holdout_a', 'session_id', 0], [11, 'holdout_a', 'session_id', 1]], $holdoutExposures,
+				implode(',', $order));
+		}
+	}
+
+	// A refresh while a mark is outstanding skips the null arms of an assignment whose unit isn't set.
+	public function testRefreshWithADroppedMarkToleratesAnAssignmentWithAMissingUnit(): void {
+		$holdout = self::holdout(11, 'holdout_a', 13, 111);
+		$data = new ContextData([self::experiment(1, 'exp', [11]), self::experiment(2, 'exp_user', [11], 'user_id')], [$holdout]);
+		[$context, $provider] = $this->contextWithProvider($data);
+		self::assertSame(0, $context->getTreatment('exp'));
+		self::assertSame(0, $context->peekTreatment('exp_user'));
+		$context->maxRetainedEvents = 1;
+		$this->failNextPublish($context);
+
+		$provider->next = $data;
+		$context->refresh();
+		self::assertCount(1, self::droppedHoldoutArms($context));
 	}
 
 	// A refresh that removes the covered experiment, alone or with its holdout, keeps the cached assignment, so the
