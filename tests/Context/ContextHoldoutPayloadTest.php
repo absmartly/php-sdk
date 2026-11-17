@@ -501,4 +501,17 @@ class ContextHoldoutPayloadTest extends TestCase {
 
 		self::assertSame(1, $context->getTreatment('exp'));
 	}
+
+	// JS can't tell 11.0 from 11, so integral floats name and seed a holdout like integers; the caller's data is untouched.
+	public function testIntegralFloatIdsAndSeedsAreIntegers(): void {
+		$payload = json_decode('{"experiments":[' . json_encode(self::experiment(1, 'exp', [])) . '],"holdouts":[{"id":11.0,"name":"holdout_a",'
+			. '"iteration":1.0,"seedHi":13.0,"seedLo":111.0,"split":[0.1,0.9]}]}', false, 512, JSON_THROW_ON_ERROR);
+		$payload->experiments[0]->holdoutIds = [11.0, 11.5, 1e30];
+		$context = $this->createContext(new ContextData($payload->experiments, $payload->holdouts));
+
+		self::assertSame(0, $context->getTreatment('exp'));
+		self::assertSame([[11, 'holdout_a', 'session_id', 0]], $this->published($context));
+		self::assertSame(11.0, $payload->holdouts[0]->id);
+		self::assertSame(13.0, $payload->holdouts[0]->seedHi);
+	}
 }

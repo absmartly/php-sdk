@@ -4,6 +4,10 @@ namespace ABSmartly\SDK;
 
 use function get_object_vars as get_object_varsAlias;
 use function array_filter;
+use function abs;
+use function array_map;
+use function floor;
+use function is_float;
 use function array_values;
 use function is_array;
 use function is_string;
@@ -68,8 +72,13 @@ class Experiment {
 				$this->assignmentRules = is_string($value) && $value !== '' ? $value : null;
 			}
 			elseif ($field === 'holdoutIds') {
-				// Non-integer ids can't name a holdout, so they are dropped rather than failing the whole context.
-				$this->holdoutIds = is_array($value) ? array_values(array_filter($value, 'is_int')) : null;
+				// Ids that aren't integers (integral floats such as 11.0 count) can't name a holdout, so they are dropped
+				// rather than failing the whole context.
+				$this->holdoutIds = is_array($value)
+					? array_values(array_filter(array_map(static function ($id) {
+						return is_float($id) && floor($id) === $id && abs($id) < 9.2233720368547758E18 ? (int) $id : $id;
+					}, $value), 'is_int'))
+					: null;
 			}
 			elseif ($field === 'holdoutType') {
 				$this->holdoutType = is_string($value) ? $value : null;

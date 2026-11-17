@@ -25,6 +25,7 @@ use function array_slice;
 use function array_splice;
 use function array_values;
 use function count;
+use function floor;
 use function get_object_vars;
 use function gettype;
 use function hash;
@@ -248,8 +249,8 @@ class Context {
 		$environment = $this->sdk->getClient()->getEnvironment();
 
 		foreach ($data->holdouts as $holdout) {
-			if (self::isServableHoldout($holdout)) {
-				$this->holdoutsById[$holdout->id] = $holdout;
+			if (($servable = self::servableHoldout($holdout)) !== null) {
+				$this->holdoutsById[$servable->id] = $servable;
 			}
 		}
 
@@ -299,32 +300,61 @@ class Context {
 
 	/**
 	 * A holdout entry is used only when it has the fields its arm is drawn from and a non-empty numeric split, as in
-	 * JS (`holdout.split && holdout.split.length > 0`). Anything else is ignored, so experiments it would have covered
-	 * assign normally. Unknown fields are ignored.
+	 * JS (`holdout.split && holdout.split.length > 0`); anything else gives null, so experiments it would have
+	 * covered assign normally. Integral floats (`11.0`) count as integers, since JS can't tell them apart; such an
+	 * entry is copied with integer fields rather than changed in place. Unknown fields are ignored.
 	 */
-	private static function isServableHoldout($holdout): bool {
+	private static function servableHoldout($holdout): ?object {
 		if (!is_object($holdout)) {
-			return false;
+			return null;
 		}
 
+		$integers = [];
 		foreach (['id', 'iteration', 'seedHi', 'seedLo'] as $field) {
-			if (!property_exists($holdout, $field) || !is_int($holdout->{$field})) {
-				return false;
+			$value = property_exists($holdout, $field) ? self::integralValue($holdout->{$field}) : null;
+			if ($value === null) {
+				return null;
+			}
+			if (!is_int($holdout->{$field})) {
+				$integers[$field] = $value;
 			}
 		}
 
 		if (!property_exists($holdout, 'name') || !is_string($holdout->name)
 			|| !property_exists($holdout, 'split') || !is_array($holdout->split) || $holdout->split === []) {
-			return false;
+			return null;
 		}
 
 		foreach ($holdout->split as $value) {
 			if (!is_int($value) && !is_float($value)) {
-				return false;
+				return null;
 			}
 		}
 
-		return true;
+		if ($integers === []) {
+			return $holdout;
+		}
+
+		$copy = clone $holdout;
+		foreach ($integers as $field => $value) {
+			$copy->{$field} = $value;
+		}
+		return $copy;
+	}
+
+	/**
+	 * $value as an int when it is an integer or an integral float within the int range (JSON `11.0`), else null.
+	 *
+	 * @param mixed $value
+	 */
+	private static function integralValue($value): ?int {
+		if (is_int($value)) {
+			return $value;
+		}
+		if (is_float($value) && floor($value) === $value && $value >= -9.2233720368547758E18 && $value < 9.2233720368547758E18) {
+			return (int) $value;
+		}
+		return null;
 	}
 
 	/**
