@@ -507,9 +507,12 @@ class ContextHoldoutPayloadTest extends TestCase {
 		$payload = json_decode('{"experiments":[' . json_encode(self::experiment(1, 'exp', [])) . '],"holdouts":[{"id":11.0,"name":"holdout_a",'
 			. '"iteration":1.0,"seedHi":13.0,"seedLo":111.0,"split":[0.1,0.9]}]}', false, 512, JSON_THROW_ON_ERROR);
 		$payload->experiments[0]->holdoutIds = [11.0, 11.5, 1e30];
+		$payload->experiments[] = self::experiment(2, 'exp_sibling', [11]);
 		$context = $this->createContext(new ContextData($payload->experiments, $payload->holdouts));
 
+		// The sibling reuses the arm (iteration 1.0 is 1), so the holdout is exposed once.
 		self::assertSame(0, $context->getTreatment('exp'));
+		self::assertSame(0, $context->getTreatment('exp_sibling'));
 		self::assertSame([[11, 'holdout_a', 'session_id', 0]], $this->published($context));
 		self::assertSame(11.0, $payload->holdouts[0]->id);
 		self::assertSame(13.0, $payload->holdouts[0]->seedHi);
