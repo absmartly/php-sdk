@@ -160,7 +160,9 @@ class SemverComparatorTest extends TestCase {
 	 */
 	public function testNumbersConvertToTheJavaScriptString(float $number, string $expected): void {
 		$method = new \ReflectionMethod(SemverComparator::class, 'stringConvert');
-		$method->setAccessible(true);
+		if (PHP_VERSION_ID < 80100) {
+			$method->setAccessible(true);
+		}
 
 		self::assertSame($expected, $method->invoke(null, $number));
 	}
@@ -178,6 +180,9 @@ class SemverComparatorTest extends TestCase {
 		self::assertSame(1, SemverComparator::compare("1.0.0-\u{661}", '1.0.0-2'));
 		self::assertSame(1, SemverComparator::compare("1.\u{661}.0", '1.1.0'));
 		self::assertSame(1, SemverComparator::compare("1.0.0-\u{FF11}", '1.0.0-1'));
+		// A non-ASCII digit is not a digit: U+0661 compares as text against "a", not as a number below it.
+		self::assertSame(1, SemverComparator::compare("1.0.0-\u{661}", '1.0.0-a'));
+		self::assertSame(-1, SemverComparator::compare('1.0.0-a', "1.0.0-\u{661}"));
 		self::assertSame(1, SemverComparator::compare(' 1.0.0', '1.0.0'));
 	}
 }

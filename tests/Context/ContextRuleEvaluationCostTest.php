@@ -107,7 +107,9 @@ class ContextRuleEvaluationCostTest extends TestCase {
 
 	private static function decodedRules(Context $context): array {
 		$property = new ReflectionProperty(Context::class, 'parsedRules');
-		$property->setAccessible(true);
+		if (PHP_VERSION_ID < 80100) {
+			$property->setAccessible(true);
+		}
 		return $property->getValue($context);
 	}
 
