@@ -308,14 +308,11 @@ class ContextAssignmentRulesTest extends TestCase {
 		$context->setUnit('session_id', self::SESSION_ID);
 		$context->setAttribute('unrelated', true);
 		self::assertSame(0, $context->peekTreatment('exp_test_abc'));
-		// Revalidating again keeps the pin: it is sticky, not recomputed from the cleared `exposed` flag.
 		$context->setAttribute('unrelated', false);
 		self::assertSame(0, $context->peekTreatment('exp_test_abc'));
 		self::assertSame(0, $context->getTreatment('exp_test_abc'));
 	}
 
-	// An assignment exposed via an assign rule and then revalidated onto a same-variant split that matched without
-	// its unit is pinned too, so setting the unit afterwards cannot switch the variant the user already saw.
 	public function testExposedAssignmentRevalidatedOntoASplitWithoutItsUnitStaysPinned(): void {
 		$gbCondition = ['and' => [['eq' => [['var' => 'country'], ['value' => 'GB']]]]];
 		$context = $this->createContext([self::assignRule(0, self::usCondition()), self::splitRule('0/100/0', $gbCondition)], [], false);
@@ -336,8 +333,6 @@ class ContextAssignmentRulesTest extends TestCase {
 		self::assertTrue($exposures[0]->ruleOverride);
 	}
 
-	// Only an exposure pins: a peeked assignment revalidated onto a split without its unit still re-resolves once the
-	// unit is set.
 	public function testPeekedAssignmentRevalidatedOntoASplitWithoutItsUnitIsReResolvedOnceTheUnitIsSet(): void {
 		$gbCondition = ['and' => [['eq' => [['var' => 'country'], ['value' => 'GB']]]]];
 		$context = $this->createContext([self::assignRule(0, self::usCondition()), self::splitRule('0/100/0', $gbCondition)], [], false);
