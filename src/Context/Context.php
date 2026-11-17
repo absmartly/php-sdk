@@ -39,6 +39,7 @@ use function ksort;
 use function microtime;
 use function min;
 use function property_exists;
+use function spl_object_id;
 use function sprintf;
 use function strpos;
 use function trim;
@@ -303,18 +304,20 @@ class Context {
 			}
 		}
 
-		// Last, so a refresh that throws above leaves the marks as they were. A dropped arm whose holdout is gone, at a
-		// new iteration or covering nothing can't be queued again, so stop waiting for it.
+		// Last, so a refresh that throws above leaves the marks as they were. Only an exposed cached assignment can queue
+		// a dropped arm again (a new assignment queues its arms anyway), so a mark whose arm no cached assignment pins
+		// any more is forgotten.
 		if ($this->droppedHoldoutArms !== []) {
-			$covering = [];
-			foreach ($this->experimentHoldouts as $holdouts) {
-				foreach ($holdouts as $holdout) {
-					$covering[$holdout->id] = $holdout;
+			$pinned = [];
+			foreach ($this->assignmentCache ?? [] as $assignment) {
+				foreach ($assignment->holdoutAssignments ?? [] as $arm) {
+					if ($arm !== null) {
+						$pinned[spl_object_id($arm)] = true;
+					}
 				}
 			}
 			foreach ($this->droppedHoldoutArms as $holdoutKey => $_) {
-				$arm = $this->holdoutAssignmentCache[$holdoutKey];
-				if (!isset($covering[$arm->id]) || $covering[$arm->id]->iteration !== $arm->iteration) {
+				if (!isset($pinned[spl_object_id($this->holdoutAssignmentCache[$holdoutKey])])) {
 					unset($this->droppedHoldoutArms[$holdoutKey]);
 				}
 			}

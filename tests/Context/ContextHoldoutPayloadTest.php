@@ -553,20 +553,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertSame([[11, 'exp_eleven', 'session_id', 1], [11, 'holdout_a', 'session_id', 0]], $this->published($context));
 	}
 
-	// A dropped arm whose holdout a refresh removed can't be queued again, so exposed reads stop re-checking for it.
-	public function testRefreshForgetsADroppedArmWhoseHoldoutIsGone(): void {
-		[$context, $provider] = $this->contextWithProvider(
-			new ContextData([self::experiment(1, 'exp', [11])], [self::holdout(11, 'holdout_a', 13, 111)]));
-		self::assertSame(0, $context->getTreatment('exp'));
-		$context->maxRetainedEvents = 1;
-		$this->failNextPublish($context);
-		self::assertSame(['11:session_id' => true], self::droppedHoldoutArms($context));
-
-		$provider->next = new ContextData([self::experiment(1, 'exp', [])], []);
-		$context->refresh();
-		self::assertSame([], self::droppedHoldoutArms($context));
-	}
-
 	// A refresh that fails part-way keeps the dropped mark, so the held-back holdout exposure is still queued again.
 	public function testFailedRefreshKeepsADroppedHoldoutExposurePending(): void {
 		[$context, $provider] = $this->contextWithProvider(
@@ -585,9 +571,9 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertSame([[11, 'holdout_a', 'session_id', 0]], $this->published($context));
 	}
 
-	// A refresh with the same holdout keeps the dropped mark; one that bumps its iteration or stops covering any
-	// experiment with it forgets the mark, since nothing can queue that arm again.
-	public function testRefreshKeepsADroppedArmOnlyWhileItsHoldoutStillCoversAnExperiment(): void {
+	// A dropped mark stays while a cached assignment pins its arm, even one for an experiment or holdout a refresh
+	// removed, and is forgotten once nothing does.
+	public function testRefreshKeepsADroppedArmWhileACachedAssignmentPinsIt(): void {
 		$holdout = self::holdout(11, 'holdout_a', 13, 111);
 		[$context, $provider] = $this->contextWithProvider(new ContextData([self::experiment(1, 'exp', [11])], [$holdout]));
 		self::assertSame(0, $context->getTreatment('exp'));
@@ -598,19 +584,58 @@ class ContextHoldoutPayloadTest extends TestCase {
 		$context->refresh();
 		self::assertSame(['11:session_id' => true], self::droppedHoldoutArms($context));
 
+		// Coverage removed: the cached assignment still pins the arm until it is read again.
 		$provider->next = new ContextData([self::experiment(1, 'exp', [])], [$holdout]);
 		$context->refresh();
-		self::assertSame([], self::droppedHoldoutArms($context));
+		self::assertSame(['11:session_id' => true], self::droppedHoldoutArms($context));
 
-		[$context, $provider] = $this->contextWithProvider(new ContextData([self::experiment(1, 'exp', [11])], [$holdout]));
-		self::assertSame(0, $context->getTreatment('exp'));
-		$context->maxRetainedEvents = 1;
-		$this->failNextPublish($context);
-		$bumped = clone $holdout;
-		$bumped->iteration = 2;
-		$provider->next = new ContextData([self::experiment(1, 'exp', [11])], [$bumped]);
+		$context->maxRetainedEvents = 10000;
+		self::assertSame(1, $context->getTreatment('exp'));
 		$context->refresh();
 		self::assertSame([], self::droppedHoldoutArms($context));
+	}
+
+	// A refresh that removes the covered experiment, alone or with its holdout, keeps the cached assignment, so the
+	// next read still queues the holdout exposure the cap dropped.
+	public function testRemovedExperimentStillRequeuesItsDroppedHoldoutExposure(): void {
+		foreach ([[self::holdout(11, 'holdout_a', 13, 111)], []] as $holdouts) {
+			[$context, $provider] = $this->contextWithProvider(
+				new ContextData([self::experiment(1, 'exp', [11])], [self::holdout(11, 'holdout_a', 13, 111)]));
+			self::assertSame(0, $context->getTreatment('exp'));
+			$context->maxRetainedEvents = 1;
+			$this->failNextPublish($context);
+
+			$provider->next = new ContextData([self::experiment(2, 'exp_other', [])], $holdouts);
+			$context->refresh();
+
+			$context->maxRetainedEvents = 10000;
+			self::assertSame(0, $context->getTreatment('exp'));
+			self::assertSame([[11, 'holdout_a', 'session_id', 0]], $this->published($context), (string) count($holdouts));
+		}
+	}
+
+	// An exposed read with nothing dropped returns before touching the holdout arms, as JS does: a stale arm name is
+	// left as it was rather than refreshed.
+	public function testExposedReadsSkipTheHoldoutArmsWhileNothingIsDropped(): void {
+		$experiment = self::experiment(1, 'exp', [11]);
+		$experiment->variants = [(object) ['name' => 'A', 'config' => '{"color":"control"}'],
+			(object) ['name' => 'B', 'config' => '{"color":"treatment"}']];
+		[$context] = $this->contextWithProvider(new ContextData([$experiment], [self::holdout(11, 'holdout_a', 13, 111)]));
+		self::assertSame(0, $context->getTreatment('exp'));
+
+		$arm = self::invokeGetAssignment($context, 'exp')->holdoutAssignments[0];
+		$arm->name = 'sentinel';
+		self::assertSame(0, $context->getTreatment('exp'));
+		self::assertSame('control', $context->getVariableValue('color', 'default'));
+		self::assertSame('sentinel', $arm->name);
+	}
+
+	private static function invokeGetAssignment(Context $context, string $name) {
+		$method = new \ReflectionMethod(Context::class, 'getAssignment');
+		if (PHP_VERSION_ID < 80100) {
+			$method->setAccessible(true);
+		}
+		return $method->invoke($context, $name);
 	}
 
 	private static function droppedHoldoutArms(Context $context): array {
