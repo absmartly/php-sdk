@@ -42,6 +42,13 @@ class ExperimentTest extends TestCase {
 		self::assertTrue($experiment->audienceStrict);
 	}
 
+	public function testApplicationsIsOptionalAsInV103(): void {
+		$data = $this->createExperimentData();
+		unset($data->applications);
+		$experiment = new Experiment($data);
+		self::assertSame('test_exp', $experiment->name);
+	}
+
 	public function testMissingRequiredFieldThrows(): void {
 		$data = (object) ['id' => 1, 'name' => 'test'];
 		$this->expectException(\ABSmartly\SDK\Exception\RuntimeException::class);

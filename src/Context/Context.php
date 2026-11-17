@@ -11,7 +11,7 @@ use ABSmartly\SDK\ExperimentVariables;
 use ABSmartly\SDK\Exposure;
 use ABSmartly\SDK\GoalAchievement;
 use ABSmartly\SDK\PublishEvent;
-use ABSmartly\SDK;
+use ABSmartly\SDK\SDK;
 use ABSmartly\SDK\Utils;
 use ABSmartly\SDK\VariableParser;
 use ABSmartly\SDK\VariantAssigner;
@@ -200,13 +200,7 @@ class Context {
 		}
 		catch (Exception $exception) {
 			$this->setDataFailed($exception);
-			error_log(sprintf(
-				'ABsmartly SDK CRITICAL: Context initialization failed: %s in %s:%d. Context is in failed state.',
-				$exception->getMessage(),
-				$exception->getFile(),
-				$exception->getLine()
-			));
-			$this->logError($exception, false);
+			$this->logError($exception);
 		}
 	}
 
@@ -700,7 +694,7 @@ class Context {
 		foreach ($experiments as $experimentVariables) {
 			$assignment = $this->getAssignment($experimentVariables->data->name);
 
-			if ($assignment->variables !== null) {
+			if (isset($assignment->variables)) {
 				if ($exposeAssignments && empty($assignment->exposed)) {
 					$this->queueExposure($assignment);
 				}
@@ -844,20 +838,11 @@ class Context {
 	}
 
 	/**
-	 * Reports an error to the event logger. Without one it falls back to error_log(), unless the caller has
-	 * already written its own error_log() line ($fallbackToErrorLog false), so each error is logged once.
+	 * Reports an error to the event logger as an Error event. Without an event logger nothing is written, as in
+	 * v1.0.3.
 	 */
-	private function logError(Throwable $throwable, bool $fallbackToErrorLog = true): void {
+	private function logError(Throwable $throwable): void {
 		if (!isset($this->eventLogger)) {
-			if (!$fallbackToErrorLog) {
-				return;
-			}
-			error_log(sprintf(
-				'ABsmartly SDK Error: %s in %s:%d',
-				$throwable->getMessage(),
-				$throwable->getFile(),
-				$throwable->getLine()
-			));
 			return;
 		}
 
@@ -877,6 +862,11 @@ class Context {
 
 	public function setUnits(array $units): Context {
 		foreach ($units as $unitType => $uid) {
+			if (!is_string($uid) && !is_int($uid) && !is_float($uid)) {
+				// The v1.0.3 message, so code that matches it keeps working; numbers are now accepted as well.
+				throw new InvalidArgumentException(
+					sprintf('Unit set value with key "%s" must be of type string, %s passed', $unitType, gettype($uid)));
+			}
 			$this->setUnit((string) $unitType, $uid);
 		}
 
@@ -977,6 +967,11 @@ class Context {
 			return (string) $uid;
 		}
 
+		if (is_bool($uid)) {
+			// v1.0.3 declared string $uid, so a non-strict caller's bool was coerced ("1", or "" which is blank).
+			$uid = (string) $uid;
+		}
+
 		if (!is_string($uid)) {
 			throw new InvalidArgumentException(sprintf('Unit "%s" must be a string or a number', $unitType));
 		}
@@ -1013,18 +1008,7 @@ class Context {
 		}
 
 		if ($this->isFailed()) {
-			$errorMsg = sprintf(
-				'ABsmartly SDK Warning: Discarding %d exposures and %d goals due to failed context state',
-				count($this->exposures),
-				count($this->achievements)
-			);
-			error_log($errorMsg);
-			if (isset($this->eventLogger)) {
-				$this->eventLogger->handleEvent($this, new ContextEventLoggerEvent(
-					ContextEventLoggerEvent::Error,
-					new \RuntimeException($errorMsg)
-				));
-			}
+			// A context whose data never loaded has nothing to publish against; drop the events silently, as v1.0.3.
 			$this->exposures = [];
 			$this->exposureAssignments = [];
 			$this->achievements = [];
@@ -1039,13 +1023,7 @@ class Context {
 			$this->eventHandler->publish($event);
 		}
 		catch (Exception $exception) {
-			error_log(sprintf(
-				'ABsmartly SDK Error: Failed to publish %d exposures and %d goals: %s. Events preserved for retry.',
-				count($this->exposures),
-				count($this->achievements),
-				$exception->getMessage()
-			));
-			$this->logError($exception, false);
+			$this->logError($exception);
 			$this->capRetainedEvents();
 
 			if ($rethrow) {
@@ -1126,8 +1104,7 @@ class Context {
 			$droppedExposures,
 			$droppedGoals
 		);
-		error_log($errorMsg);
-		$this->logError(new \RuntimeException($errorMsg), false);
+		$this->logError(new \RuntimeException($errorMsg));
 	}
 
 	private function buildPublishEvent(): PublishEvent {
@@ -1209,13 +1186,7 @@ class Context {
 			$this->indexVariables = $oldIndexVariables;
 			$this->ruleKeys = $oldRuleKeys;
 			$this->parsedRules = $oldParsedRules;
-			error_log(sprintf(
-				'ABsmartly SDK Error: Failed to refresh context, keeping existing data: %s in %s:%d',
-				$exception->getMessage(),
-				$exception->getFile(),
-				$exception->getLine()
-			));
-			$this->logError($exception, false);
+			$this->logError($exception);
 		}
 	}
 

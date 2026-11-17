@@ -228,7 +228,21 @@ class ContextConformanceTest extends TestCase {
 	public function testInvalidUnitTypeIsRejected(): void {
 		$context = $this->context();
 		$this->expectExceptionMessage('Unit "x" must be a string or a number');
+		$context->setUnit('x', ['uid']);
+	}
+
+	public function testBooleanUnitIsCoercedAsInV103(): void {
+		// v1.0.3 declared `string $uid` without strict_types, so PHP coerced a bool: true is "1", false is blank.
+		$context = $this->context();
 		$context->setUnit('x', true);
+		self::assertSame('1', $context->getUnit('x'));
+		$this->expectExceptionMessage('Unit "y" UID must not be blank');
+		$context->setUnit('y', false);
+	}
+
+	public function testSetUnitsKeepsTheV103MessageForNonScalars(): void {
+		$this->expectExceptionMessage('Unit set value with key "x" must be of type string, array passed');
+		$this->context()->setUnits(['x' => ['uid']]);
 	}
 
 	public function testTrackRejectsNonObjectProperties(): void {

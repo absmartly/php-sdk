@@ -55,14 +55,22 @@ class HTTPClientRetryTest extends TestCase {
 	}
 
 	public function testConnectTimeoutStaysConstantAcrossAttempts(): void {
-		$client = $this->client(0, 2, array_fill(0, 3, [0, true]));
+		$client = $this->client(60000, 2, array_fill(0, 3, [0, true]));
 		$client->timeout = 1234;
 		$client->run('get');
 
 		// $timeout is the connect timeout: it is applied unchanged on every attempt.
 		self::assertSame([1234, 1234, 1234], $client->connectTimeouts);
-		// With no total budget, cURL gets no overall timeout (0) each attempt.
-		self::assertSame([0, 0, 0], $client->attemptTimeouts);
+	}
+
+	public function testWithoutATotalBudgetAGetIsSentOnceAsInV103(): void {
+		$client = $this->client(0, 5, array_fill(0, 6, [0, true]));
+		$client->run('get');
+
+		// No total budget: cURL gets no overall timeout (0) and nothing is retried, so a synchronous createContext
+		// against an unreachable collector costs one connect timeout, as in v1.0.3.
+		self::assertSame([0], $client->attemptTimeouts);
+		self::assertSame([], $client->sleeps);
 	}
 
 	public function testTotalTimeoutBoundsTheWholeRetrySequence(): void {
@@ -107,11 +115,10 @@ class HTTPClientRetryTest extends TestCase {
 	}
 
 	public function testBackOffIsCappedForLargeRetryCounts(): void {
-		$client = $this->client(0, 70, array_fill(0, 71, [0, true]));
+		$client = $this->client(PHP_INT_MAX >> 12, 70, array_fill(0, 71, [0, true]));
 		$client->run();
 
 		self::assertCount(71, $client->attemptTimeouts);
-		self::assertSame(0, $client->attemptTimeouts[0], 'A timeout of 0 means no limit');
 		self::assertSame(1000, max($client->sleeps));
 		self::assertSame(1000, end($client->sleeps));
 	}
