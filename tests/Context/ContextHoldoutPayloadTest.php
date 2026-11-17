@@ -495,6 +495,78 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertSame([[11, 'holdout_a', 'session_id', 0]], $this->published($context));
 	}
 
+	private function contextWithProvider(ContextData $data, array $overrides = []): array {
+		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'test-api-key', 'website', 'production'));
+		$config = new Config($client);
+		$provider = new HoldoutDataProvider();
+		$config->setContextDataProvider($provider);
+		$this->eventHandler = new ContextEventHandlerMock($client);
+		$config->setContextEventHandler($this->eventHandler);
+		$contextConfig = new ContextConfig();
+		$contextConfig->setUnits(['session_id' => self::UID]);
+		$contextConfig->setOverrides($overrides);
+		return [(new SDK($config))->createContextWithData($contextConfig, $data), $provider];
+	}
+
+	private function failNextPublish(Context $context): void {
+		$this->eventHandler->prerun = function () {
+			throw new \RuntimeException('collector down');
+		};
+		$context->track('goal');
+		$context->publish();
+		$this->eventHandler->prerun = null;
+	}
+
+	// Queuing a retired arm that an override still pins must not hide the live arm's dropped exposure.
+	public function testRetiredArmDoesNotClearTheLiveArmsDroppedExposure(): void {
+		[$context, $provider] = $this->contextWithProvider(
+			new ContextData([self::experiment(1, 'exp_override', [11]), self::experiment(2, 'exp', [11])], [self::holdout(11, 'holdout_a', 1, 222)]),
+			['exp_override' => 1]);
+		self::assertSame(1, $context->peekTreatment('exp_override'));
+
+		$bumped = self::holdout(11, 'holdout_a', 13, 111);
+		$bumped->iteration = 2;
+		$provider->next = new ContextData([self::experiment(2, 'exp', [11])], [$bumped]);
+		$context->refresh();
+		self::assertSame(0, $context->getTreatment('exp'));
+		$context->maxRetainedEvents = 1;
+		$this->failNextPublish($context);
+		self::assertSame(1, $context->getPendingCount());
+
+		self::assertSame(1, $context->getTreatment('exp_override'));
+		self::assertSame(0, $context->getTreatment('exp'));
+		self::assertSame([[1, 'exp_override', 'session_id', 1], [11, 'holdout_a', 'session_id', 1], [11, 'holdout_a', 'session_id', 0]],
+			$this->published($context));
+	}
+
+	// An experiment whose id and unit type match a dropped holdout's is not that holdout's arm.
+	public function testExperimentWithAHoldoutsIdDoesNotClearItsDroppedExposure(): void {
+		[$context] = $this->contextWithProvider(new ContextData(
+			[self::experiment(1, 'exp', [11]), self::experiment(11, 'exp_eleven', [])], [self::holdout(11, 'holdout_a', 13, 111)]));
+		self::assertSame(0, $context->getTreatment('exp'));
+		$context->maxRetainedEvents = 1;
+		$this->failNextPublish($context);
+
+		$context->maxRetainedEvents = 10000;
+		self::assertSame(1, $context->getTreatment('exp_eleven'));
+		self::assertSame(0, $context->getTreatment('exp'));
+		self::assertSame([[11, 'exp_eleven', 'session_id', 1], [11, 'holdout_a', 'session_id', 0]], $this->published($context));
+	}
+
+	// A dropped arm whose holdout a refresh removed can't be queued again, so exposed reads stop re-checking for it.
+	public function testRefreshForgetsADroppedArmWhoseHoldoutIsGone(): void {
+		[$context, $provider] = $this->contextWithProvider(
+			new ContextData([self::experiment(1, 'exp', [11])], [self::holdout(11, 'holdout_a', 13, 111)]));
+		self::assertSame(0, $context->getTreatment('exp'));
+		$context->maxRetainedEvents = 1;
+		$this->failNextPublish($context);
+		self::assertSame(['11:session_id' => true], self::droppedHoldoutArms($context));
+
+		$provider->next = new ContextData([self::experiment(1, 'exp', [])], []);
+		$context->refresh();
+		self::assertSame([], self::droppedHoldoutArms($context));
+	}
+
 	private static function droppedHoldoutArms(Context $context): array {
 		$property = new \ReflectionProperty(Context::class, 'droppedHoldoutArms');
 		if (PHP_VERSION_ID < 80100) {

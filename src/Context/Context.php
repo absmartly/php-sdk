@@ -260,6 +260,15 @@ class Context {
 			}
 		}
 
+		// A dropped arm of a holdout that is gone or at a new iteration can't be queued again, so stop waiting for it.
+		foreach ($this->droppedHoldoutArms as $holdoutKey => $_) {
+			$arm = $this->holdoutAssignmentCache[$holdoutKey];
+			$live = $this->holdoutsById[$arm->id] ?? null;
+			if ($live === null || $live->iteration !== $arm->iteration) {
+				unset($this->droppedHoldoutArms[$holdoutKey]);
+			}
+		}
+
 		foreach ($data->experiments as $experiment) {
 			$experimentVariables = new ExperimentVariables();
 			$experimentVariables->data = new Experiment($experiment);
@@ -1129,8 +1138,13 @@ class Context {
 			return;
 		}
 
-		if ($this->droppedHoldoutArms !== [] && $assignment->holdoutArmCount !== 0) {
-			unset($this->droppedHoldoutArms[$assignment->id . ':' . $assignment->unitType]);
+		if ($this->droppedHoldoutArms !== []) {
+			$holdoutKey = $assignment->id . ':' . $assignment->unitType;
+			// Only the cached arm clears the mark: neither a retired arm an override still pins nor an experiment that
+			// shares the holdout's id may hide the live arm's dropped exposure.
+			if (($this->holdoutAssignmentCache[$holdoutKey] ?? null) === $assignment) {
+				unset($this->droppedHoldoutArms[$holdoutKey]);
+			}
 		}
 
 		$exposure = new Exposure();
