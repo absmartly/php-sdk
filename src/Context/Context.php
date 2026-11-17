@@ -452,6 +452,8 @@ class Context {
 				}
 
 				$assignment->isRuleMissingUnit = $rule['isMissingUnit'] ?? false;
+				$assignment->isUnitPinnedMissing = $assignment->isUnitPinnedMissing
+					|| ($assignment->exposed && $assignment->isRuleMissingUnit);
 			}
 
 			if (!$assignment->ruleOverride && !empty($experiment->audience) && !empty((array) $experiment->audience)) {

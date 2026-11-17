@@ -310,6 +310,28 @@ class ContextAssignmentRulesTest extends TestCase {
 		self::assertSame(0, $context->getTreatment('exp_test_abc'));
 	}
 
+	// An assignment exposed via an assign rule and then revalidated onto a same-variant split that matched without
+	// its unit is pinned too, so setting the unit afterwards cannot switch the variant the user already saw.
+	public function testExposedAssignmentRevalidatedOntoASplitWithoutItsUnitStaysPinned(): void {
+		$gbCondition = ['and' => [['eq' => [['var' => 'country'], ['value' => 'GB']]]]];
+		$context = $this->createContext([self::assignRule(0, self::usCondition()), self::splitRule('0/100/0', $gbCondition)], [], false);
+
+		$context->setAttribute('country', 'US');
+		$treatments = [$context->getTreatment('exp_test_abc')];
+		$context->setAttribute('country', 'GB');
+		$treatments[] = $context->getTreatment('exp_test_abc');
+		$context->setUnit('session_id', self::SESSION_ID);
+		$treatments[] = $context->getTreatment('exp_test_abc');
+		$context->setAttribute('unrelated', true);
+		$treatments[] = $context->getTreatment('exp_test_abc');
+
+		self::assertSame([0, 0, 0, 0], $treatments);
+		$exposures = $this->publishedExposures($context);
+		self::assertCount(1, $exposures);
+		self::assertSame(0, $exposures[0]->variant);
+		self::assertTrue($exposures[0]->ruleOverride);
+	}
+
 	public function testSplitRuleWithoutItsUnitGivesTheFullOnVariant(): void {
 		$context = $this->createContext([self::splitRule('0/100/0', null)], ['fullOnVariant' => 2], false);
 		self::assertSame(2, $context->peekTreatment('exp_test_abc'));
