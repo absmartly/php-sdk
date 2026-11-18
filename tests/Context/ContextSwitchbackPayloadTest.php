@@ -256,7 +256,17 @@ class ContextSwitchbackPayloadTest extends TestCase {
 	public function testANonStringSwitchbackNameServesControl(): void {
 		$experiment = self::switchback(2);
 		$experiment->name = 1.5;
-		$context = $this->createContext(self::dataOf($experiment, self::unitExperiment()));
+		// PHP 8.1+ deprecates the implicit float-to-int key conversion this malformed name triggers; PHPUnit would turn it
+		// into an exception that fails the install.
+		set_error_handler(static function (): bool {
+			return true;
+		}, E_DEPRECATED);
+		try {
+			$context = $this->createContext(self::dataOf($experiment, self::unitExperiment()));
+		}
+		finally {
+			restore_error_handler();
+		}
 		self::assertSame(0, $context->getTreatment('1.5'));
 		self::assertSame(-1, $context->getVariableValue('missing', -1));
 		self::assertFalse($context->isFailed());
