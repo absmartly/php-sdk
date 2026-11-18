@@ -49,8 +49,9 @@ class HTTPClient implements HttpClientInterface {
 	 */
 	private $curlHandle;
 	/**
-	 * Number of times a GET request is retried after a transport error or an HTTP 5xx, 408 or 429 response. PUT and
-	 * POST are sent once: replaying them could publish the same events twice.
+	 * Number of times a GET request is retried after a transport error or an HTTP 5xx, 408 or 429 response. Retries
+	 * are opt-in: as in v1.0.3, a request is sent once unless $totalTimeout sets a total budget that bounds them. PUT
+	 * and POST are always sent once: replaying them could publish the same events twice.
 	 */
 	public int $retries = 5;
 	/**
@@ -60,8 +61,8 @@ class HTTPClient implements HttpClientInterface {
 	public int $timeout = 3000;
 	/**
 	 * Optional total budget in milliseconds for the whole request, including retries and back-off. When greater
-	 * than 0 it is applied as CURLOPT_TIMEOUT_MS per attempt, bounded by the remaining time. 0 (the default) means
-	 * no total limit.
+	 * than 0 it is applied as CURLOPT_TIMEOUT_MS per attempt, bounded by the remaining time, and enables the GET
+	 * retries ($retries). 0 (the default) means no total limit and no retries, as in v1.0.3.
 	 */
 	public int $totalTimeout = 0;
 
@@ -96,10 +97,10 @@ class HTTPClient implements HttpClientInterface {
 	}
 
 	/**
-	 * Sends the request, retrying transport errors and HTTP 5xx, 408 and 429 responses when $retry is true. When a
-	 * total budget ($totalTimeout) is set, it bounds the whole sequence: each attempt only gets the time that is
-	 * left, and no retry starts once the remaining time cannot cover its back-off. A $totalTimeout of 0 or less
-	 * means no total limit; the connect timeout ($timeout) always applies per attempt.
+	 * Sends the request, retrying transport errors and HTTP 5xx, 408 and 429 responses when $retry is true and a
+	 * total budget ($totalTimeout) is set. The budget bounds the whole sequence: each attempt only gets the time that
+	 * is left, and no retry starts once the remaining time cannot cover its back-off. A $totalTimeout of 0 or less
+	 * means no total limit and a single attempt, as in v1.0.3; the connect timeout ($timeout) always applies.
 	 */
 	private function fetchResponse(bool $retry): Response {
 		$hasDeadline = $this->totalTimeout > 0;
@@ -110,18 +111,18 @@ class HTTPClient implements HttpClientInterface {
 			$attemptTimeout = $hasDeadline ? max(1, (int) ceil($deadline - $this->nowMs())) : 0;
 			$returnedResponse = $this->transfer($attemptTimeout);
 
-			if (!$retry || $attempt >= $this->retries || !$this->isRetryable()) {
+			if (!$retry || !$hasDeadline || $attempt >= $this->retries || !$this->isRetryable()) {
 				break;
 			}
 
 			$delay = min(self::RETRY_BASE_DELAY_MS << min($attempt, self::RETRY_MAX_SHIFT), self::RETRY_MAX_DELAY_MS);
-			if ($hasDeadline && $deadline - $this->nowMs() <= $delay) {
+			if ($deadline - $this->nowMs() <= $delay) {
 				break;
 			}
 
 			$this->sleepMs($delay);
 			// The sleep can overrun; don't start an attempt once the total budget is spent.
-			if ($hasDeadline && $this->nowMs() >= $deadline) {
+			if ($this->nowMs() >= $deadline) {
 				break;
 			}
 			++$attempt;

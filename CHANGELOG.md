@@ -1,114 +1,10 @@
 # Changelog
 
-## 2.0.0 (unreleased)
+## 1.1.0
 
-### BREAKING
-
-- **Traffic eligibility uses the traffic seed.** Eligibility for experiments with a traffic split below 100% is
-  now assigned with `trafficSeedHi`/`trafficSeedLo`, as in the other SDKs (old: the variant seed was reused).
-  This re-buckets eligibility, and therefore exposures and treatments, for every running experiment with partial
-  traffic. Restart or start a new iteration of affected experiments when upgrading.
-- **`audienceStrict: false` is honoured.** Only an experiment whose `audienceStrict` is true forces variant 0 on an
-  audience mismatch (old: the field being present, even as false, was enough). Users of non-strict experiments who
-  failed the audience are now assigned normally.
-- **Audience operators handle mismatched and null operands.** `in` keeps its `[haystack, needle]` order and the
-  strict array membership of v1.0.3 (`"25"` is not in `[25, 30]`); a number needle against a string haystack now
-  yields null (old: a PHP `TypeError`). Binary operators return null for null operands; deep collection
-  comparison ignores object key order and compares nested values. These corrections can change targeting for rules
-  that depended on the old PHP-only behavior.
-- **Custom fields use the collector format.** `Experiment::$customFieldValues` is `?array`, containing
-  `{name,type,value}` objects, rather than the former `?object`/keyed-map representation.
-- **Typed attributes and numeric comparison.** Attribute values keep their JSON type and are compared
-  numerically (e.g. `age >= 20` treats `age` as a number, and the published value is `21`, not `"21"`), matching
-  the other SDKs. Rules that relied on the old string comparison can change which units match.
-- **Audience is re-evaluated after `setAttribute`.** Setting an attribute after a treatment was computed now
-  re-evaluates the audience, as in JS, so the treatment (and the exposures sent) can change.
-- **Unit id `"0"`/`0` is now assigned.** The previous `?? null` truthiness treated `"0"` as missing; it is now a
-  valid unit id, so experiments keyed on it move from control to their assigned variant.
-- **Failed `close()` re-throws and leaves the context open.** When the final publish fails, `close()` now
-  re-throws the collector error and the context stays open (`isClosed()` is false) with its events still queued; a
-  later `close()` retries, and the `Close` event is emitted only once the close succeeds. `publish()`/`flush()`
-  keep the v1.0.3 behaviour of logging and returning without throwing.
-- **Events retained after a failed publish are bounded and `isFailed()` no longer flips on a publish failure.**
-  A failed `publish()`/`close()` keeps its exposures and goals queued for a later retry instead of discarding them
-  (v1.0.3 discarded every event after the first failure and marked the context failed). The retained queue is now
-  capped at `Context::$maxRetainedEvents` (default 10,000): when exceeded, the oldest events are dropped and an
-  `Error` event is logged, so a long-lived worker held through a collector outage cannot grow without limit.
-  Because a publish failure no longer marks the context failed, code that relied on `isFailed()` flipping after a
-  failed publish must change.
-- **Shared variable keys resolve across experiments, lowest id first.** A variable key defined by more than one
-  experiment is resolved by walking those experiments in ascending experiment-id order (JS
-  `_resolveVariableValue`): the first assigned-or-overridden experiment whose variant contains the key wins, and
-  each visited experiment with variables is exposed. `getVariableKeys()` keeps its single-name shape but now
-  reports the lowest-id experiment for a shared key (old: the last experiment loaded).
-- **`getVariableValue()` returns the default for unassigned units.** `getVariableValue()` and
-  `peekVariableValue()` now agree: both return the caller's default when the unit is neither assigned nor
-  overridden (old: `peekVariableValue()` returned the control variant's value).
-- **`match` treats slashes literally.** `match` no longer parses a `"/pattern/flags"` form; leading/trailing
-  slashes are stripped and the rest is matched literally, as in v1.0.3 and JS (`new RegExp("/^p/i")` is a
-  literal-slash pattern). PHP-only flag parsing that was briefly introduced is removed.
-- **Mutators throw after `close()`.** `setAttribute()`, `setAttributes()`, `setUnit()` and `setUnits()` now throw
-  `ABSmartly Context is closed` on a closed context, as in the JS SDK (old: they were accepted and returned the
-  context). Set attributes and units before closing.
-- **Audiences see the client's `application` and `environment`.** An experiment with Audience enforced
-  (`audienceStrict`) and an `application` or `environment` condition used to give every unit variant 0, because the
-  SDK never supplied those attributes; such units are now assigned normally. `app_version` is not supplied
-  automatically: set it with `setAttribute('app_version', ...)` to target versions.
-
-### Compatibility retained
-
-- Units are stored as strings: `setUnit()`/`setUnits()` accept numbers and store their string form, and
-  `getUnit()`/`getUnits()` return strings. `ContextConfig::setUnit(string, string)` and `getUnit(): ?string`
-  keep their signatures for subclasses.
-- `track()` accepts any object (stdClass, DTOs, `ArrayObject`, `JsonSerializable`) or an associative array;
-  lists and scalars raise `Goal '<name>' properties must be of type object.`
-- Error messages are unchanged: `ABSmartly Context is not yet ready`, `ABSmartly Context is closed`,
-  `Unit "<type>" UID is already set`, `Unit "<type>" UID must not be blank`.
-- The entry class is now `ABSmartly\SDK`. `ABSmartly\SDK\SDK` remains available as an alias.
-- ReactPHP is optional for synchronous use; install the suggested packages for async APIs.
-- `ContextEventHandler` remains the base contract for legacy handlers, getters, and setters;
-  `ContextPublisher` is an additive subclass.
-- `PublishEvent::hashUnit(string $unit)` retains its signature for existing subclass overrides.
-- Nonblank string unit IDs are not trimmed, avoiding reassignment of existing whitespace-bearing IDs.
-- Existing non-exposing reads (`peekVariableValue`, `getVariableKeys`, `customFieldValue`, `getExperiments`)
-  remain available after `close()`/`finalize()`.
-
-### Changed
-
-- The `timeout` option stays the connect timeout (`CURLOPT_CONNECTTIMEOUT_MS`) as in v1.0.3, bounding only
-  connection establishment, not the whole request. An optional total budget for the entire request (including
-  retries and back-off) is available opt-in via `HTTPClient::$totalTimeout`/`ReactHttpClient::$totalTimeout`
-  (0, off, by default). GET requests retry transport errors and HTTP 5xx/408/429 up to the configured count; PUT
-  and POST are sent exactly once.
-- Context reads (`getTreatment`, `peekTreatment`, `getVariableValue`, `peekVariableValue`, `getVariableKeys`,
-  `getExperiments`, `getCustomFieldKeys`, `customFieldValue`, `getCustomFieldValueType`) throw
-  `ABSmartly Context is not yet ready` on a pending context created with `createContextPending()`.
-- `createContextAsync()`/`createContextPending()` resolve a failed load with a context that is ready and failed,
-  has empty data, stores `readyError()` and logs an `Error` event.
-- **Published exposure schema: `ruleOverride` is always present.** Every exposure in the publish payload (and
-  `Exposure` serialized with `json_encode`) now carries `ruleOverride`, `false` unless an assignment rule decided
-  the variant, as the JavaScript SDK sends it. Consumers that validate the exported exposure schema strictly
-  must accept the new field. `Exposure::create()` keeps its v1.0.3 11-parameter signature, so existing subclass
-  overrides still load; set the public `$ruleOverride` property on the result for a rule-decided exposure.
-- **`X-Agent` drops the `v` prefix.** The header is `absmartly-php-sdk/2.0.0` (old: `absmartly-php-sdk/v1.0.3`),
-  the same `<name>/<version>` form as the other SDKs. The collector stores it as an opaque string.
-- `var_dump()` of a `ClientConfig` (its `__debugInfo()`) now also lists `applicationVersion`.
-
-### Fixed
-
-- A batch the collector has accepted is cleared from the queue before the `Publish` event is logged, so an event
-  logger that throws on `Publish` no longer causes those exposures and goals to be retained and sent again, and is
-  not reported as a publish failure (`close()` still completes).
-- `createContextAsync()`/`createContextPending()` resolve a context that is ready and failed when the loaded data
-  raises any `Throwable` (e.g. a `TypeError` from a mistyped field), not only an `Exception`.
-- `ReactHttpClient::$timeout` of 0 or less now means no per-attempt limit, as documented (it previously made every
-  request time out immediately).
-- A failed context with nothing queued no longer logs `Discarding 0 exposures and 0 goals` on every `publish()`.
-- `refresh()` on a context whose initial load failed is a no-op: it no longer fetches or applies data, stays
-  failed, keeps `readyError()`, and emits no `Refresh` or `Error` event, matching the JS SDK's `_refresh`
-  (`if (!this._failed)`). A failed context can no longer be recovered by `refresh()`.
-- `Context::close()` no longer closes the SDK's shared HTTP client, so closing one context no longer breaks its
-  sibling contexts. The SDK owner can still close the shared client with `SDK::close()`.
+This release retains the 1.0.3 entry class and legacy method signatures, including subclass overrides. It also
+changes some runtime behavior, including experiment bucketing, exposure payloads and error handling; review the
+changes below before upgrading. It is not a guarantee that every 1.0.3 workload behaves unchanged.
 
 ### Added
 
@@ -118,24 +14,112 @@
   unit with the experiment seed. A matching rule wins over the audience (including `audienceStrict`), traffic,
   full-on and custom assignments; an override still wins over rules. Rule conditions are re-evaluated when an
   attribute changes; a split rule matched without its unit gives the full-on variant until the unit is set, unless
-  it was already exposed. Rule-decided exposures carry `ruleOverride: true`; every exposure now includes the
-  field. Invalid rules are skipped (including a rule whose `type` is not exactly the string `assign` or `split`)
-  and an object sent in place of the rules JSON string is ignored. Rules JSON is decoded once per data load, and
-  experiments without usable rules or an audience do no attribute work.
+  it was already exposed. Invalid rules are skipped, and an object sent in place of the rules JSON string is
+  ignored. Rules JSON is decoded once per data load, and experiments without rules or an audience do no attribute
+  work.
 - **SemVer operators.** `semver_eq`, `semver_gt`, `semver_gte`, `semver_lt` and `semver_lte` compare versions in
-  audience and rule conditions, matching the JavaScript and Java SDKs (numbers convert like JavaScript's
-  `toFixed(15)`, so `1e21` is `"1e+21"`; identifiers compare by UTF-16 code unit).
+  audience and rule conditions, matching the JavaScript and Java SDKs.
+- **Client metadata.** `Client::SDK_VERSION`, `Client::SDK_NAME` and `Client::getAgent()`;
+  `ClientConfig::setApplicationVersion()` sets `X-Application-Version` (whole numbers only; other values are sent
+  as `0`, the previous fixed value).
+- **Async API (optional ReactPHP).** `ReactHttpClient`, `SDK::createContextAsync()`/`createContextPending()`,
+  `AsyncContextDataProvider`, `AsyncContextEventHandler` and the `ClientInterface`/`HttpClientInterface`
+  interfaces. ReactPHP stays optional: install the suggested packages to use them. Unlike `HTTPClient`,
+  `ReactHttpClient` retries a failed GET by default (`$retries`, non-blocking back-off); set `$retries = 0` to
+  disable it.
+- **Opt-in HTTP retries.** `HTTPClient::$totalTimeout` sets a total budget for a request; when it is set, GET is
+  retried up to `$retries` times on transport errors and HTTP 5xx/408/429. Without it a request is sent once, as
+  in 1.0.3. PUT and POST are never retried.
+- `SDK::createSimple()` (application before environment), `Config::setContextPublisher()` and
+  `ContextPublisher`, `Config::setContextEventLogger()` (an SDK-wide event logger), and `SDK::getClient()`.
+- Context: `getUnit()`/`getUnits()`, `customFieldValue()`/`getCustomFieldKeys()`/`getCustomFieldValueType()`,
+  `pending()`, lifecycle aliases `finalize()`/`isFinalized()`/`isFinalizing()`/`readyError()`, and the
+  `ContextEventLoggerEvent::Finalize` constant. `Context::$maxRetainedEvents` caps events kept for retry after
+  failed publishes (default 10,000).
+- `ABSmartly\SDK` is an alias of `ABSmartly\SDK\SDK`, the entry class name the 2.x line will use.
+- `setAttributeValue()`/`setAttributeValues()` and `trackWithProperties()` reject a non-string value or property
+  that cannot be JSON-encoded (`INF`, `NaN`, a resource, an array or object containing invalid UTF-8, or a
+  `JsonSerializable` whose `jsonSerialize()` throws, or a value nested more than 509 levels deep, which the stock
+  publisher can't encode within json_encode's default depth of 512) with
+  `InvalidArgumentException` at the time of the call. Strings, and the 1.0.3 `setAttribute()`/`setAttributes()`/
+  `track()` and `ContextConfig` paths, are accepted unchecked as before. The check doesn't hold a snapshot:
+  - A plain `stdClass` passed to `trackWithProperties()` is copied (one level), so later changes to its top-level
+    properties don't reach the goal. `track()` keeps the object itself, as in 1.0.3.
+  - Other objects are kept as given and encoded again at publish. An object changed afterwards so that it can't be
+    encoded fails that publish, and the batch stays queued for retry. `Context::$maxRetainedEvents` caps the exposures
+    and goals kept after a publish fails with an `Exception` (default 10,000; 0 or less means no cap). A PHP `Error`
+    thrown while encoding, such as a `TypeError` from `jsonSerialize()`, isn't caught: it escapes `publish()`, and
+    that attempt doesn't trim the queue, as with `track()` in 1.0.3.
+- `setUnits()` accepts int and float UIDs (stored as strings; `setUnit()` keeps its `string $uid` parameter, so
+  non-strict callers' numbers convert as before). `setAttributeValue()`/`setAttributeValues()` retain typed values;
+  `trackWithProperties()` accepts objects or associative arrays. Legacy `setAttribute()` and `track()` retain their
+  1.0.3 signatures.
+
+### Changed
+
+- **`ruleOverride` on every exposure.** Each exposure in the publish payload (and a serialized `Exposure`) now
+  carries `ruleOverride`, `false` unless an assignment rule decided the variant, as the JavaScript SDK sends it.
+  *Affects:* consumers that validate the exported exposure schema strictly, and custom `ContextEventHandler`s that
+  compare payloads byte for byte. `Exposure::create()` keeps its 1.0.3 signature.
+- **Versioned `X-Agent`.** The header is now `absmartly-php-sdk/1.1.0` (1.0.3 sent `absmartly-php-sdk/v1.0.3`),
+  the `<name>/<version>` form of the other SDKs. It is stored in the exported `agent` column. *Affects:* dashboards
+  or exports filtering on the old `v`-prefixed value.
 - **System attributes.** The client's `application` and `environment` names are available to audience and rule
-  conditions without being set; a user attribute of the same name wins. They are not added to the published
-  attributes.
-- **Client metadata.** `X-Agent` is built from the new `Client::SDK_VERSION` constant, also available as
-  `Client::getAgent()` (see Changed).
-  `ClientConfig::setApplicationVersion()` sets `X-Application-Version`, which carries whole numbers only (other
-  versions are sent as `0`, the previous fixed value).
-- **Packagist release.** `composer.json` passes `composer validate --strict` (description, homepage, support
-  links), CI validates it, and a tag-triggered Release workflow checks the tag against `Client::SDK_VERSION`,
-  runs the tests and creates the GitHub release.
-- `createSimple()` with application-before-environment ordering; the legacy factory keeps its ordering.
-- Lifecycle aliases (`finalize()`, `isFinalized()`, `isFinalizing()`, `readyError()`) and the
-  `ContextEventLoggerEvent::Finalize` constant for cross-SDK code, custom-field key/type APIs, and shared
-  `Utils` helpers.
+  conditions without being set (a user attribute of the same name wins); they are not published. *Affects:* audiences
+  with an `application`/`environment` condition, which used to see them as missing; `audienceStrict` experiments
+  with such a condition no longer force variant 0. `app_version` is never injected.
+- **Typed attributes are opt-in.** Values set through the new `setAttributeValue()` and `setAttributeValues()`
+  keep their JSON types for evaluation and publication. `setAttribute()`, `setAttributes()` and `ContextConfig`
+  attributes still convert scalar values to strings, as in 1.0.3 (or reject them under strict typing).
+- **Audience re-evaluation after `setAttribute()`.** As in JS, a treatment computed before an attribute changed is
+  re-evaluated, so the treatment and exposures can change. *Affects:* code setting audience attributes after
+  reading a treatment; strict audiences can move from variant 0 and send a second exposure.
+- **Shared variable keys.** A key defined by several experiments resolves in ascending experiment-id order (JS
+  `_resolveVariableValue`); `getVariableKeys()` keeps its shape and reports the lowest-id experiment. *Affects:*
+  experiments sharing variable keys (1.0.3 used the last one loaded).
+
+- **Traffic eligibility uses the traffic seed.** Eligibility for experiments with traffic below 100% is assigned
+  with `trafficSeedHi`/`trafficSeedLo`, as in every other SDK and the backend (1.0.3 reused the variant seed).
+  *Affects:* running experiments with partial traffic re-bucket eligibility (about a quarter of units move on a 50%
+  experiment); restart or start a new iteration of affected experiments when upgrading.
+- **`audienceStrict: false` is honoured.** Only a strict audience forces variant 0 on a mismatch (1.0.3 forced it
+  when the field was present at all). *Affects:* non-strict experiments, whose mismatching units are now assigned.
+- **Unit id `"0"` is assigned.** 1.0.3 treated it as missing and served control. *Affects:* units whose id is `"0"`.
+- **A failed `close()` throws and leaves the context open.** It re-throws the collector error with the events still
+  queued; a later `close()` retries, and `Close` is emitted once the close succeeds (1.0.3 logged the error, closed
+  and lost the events). `publish()` keeps the 1.0.3 behaviour of logging and returning. *Affects:* code calling
+  `close()` without a `try`/`catch` while the collector is unreachable; catch the exception or call `publish()`.
+- **Refresh failures retain existing data.** A failed refresh no longer empties the context. As in 1.0.3,
+  refresh still fetches after an initial load failure and applies recovered data, but the failed flag remains true;
+  a failed context drops queued events on flush. Create a new context for full recovery.
+- `var_dump()` of a `ClientConfig` (`__debugInfo()`) also lists `applicationVersion`.
+
+### Fixed
+
+- Audience operators: a null operand gives null (no match) instead of comparing as equal; `in` with a number needle
+  in a string haystack gives null instead of a PHP `TypeError`; deep equality ignores object key order and compares
+  nested values; `match` uses a delimiter the pattern does not contain, so a pattern with `/` no longer errors.
+  *Affects:* audiences that matched only because of these defects.
+- A failed publish no longer discards every queued event and marks the context failed: events stay queued for the
+  next `publish()`/`close()`, `publish()` still logs and returns, and `isFailed()` only reports a failed load.
+- `Context::close()` no longer closes the SDK's shared HTTP client, so closing one context no longer breaks
+  sibling contexts. `SDK::close()` still closes it.
+- `getVariableValue()` and `peekVariableValue()` agree: both return the default when the unit is neither
+  assigned nor overridden (1.0.3's peek returned the control variant's value).
+- An experiment missing a required field, with a field of the wrong type, or with malformed audience JSON no
+  longer fails the whole context (1.0.3 failed it for the last two): it is left out (an `Error` event is logged)
+  and the other experiments still load, on the first load and on `refresh()`.
+- The JSON decoder accepts payloads nested deeper than 16 levels (`Client::decode()`).
+- **Published events are no longer sent again on every later publish.** 1.0.3 kept every exposure and goal after
+  a successful `publish()`, so each later publish re-sent all earlier events (goals per PUT: `g1`, then `g1,g2`,
+  then `g1,g2,g3`); now a successful publish clears the events it sent. A publish that fails keeps its events for
+  the next attempt, so if the collector stored a batch but its response was lost, that batch can be sent again.
+  *Affects:* contexts that publish more than once, whose exported
+  exposure and goal counts were inflated by the duplicates.
+- **An override to variant 0 is exposed once.** 1.0.3 read an override of `0` as "no override", rebuilt the
+  assignment and queued a new exposure on every `getTreatment()`. *Affects:* contexts that override an experiment
+  to variant 0, whose exported exposure counts were inflated.
+- A batch the collector accepted is cleared before the `Publish` event is logged, so a throwing event logger can
+  no longer cause it to be sent again.
+- `curl_close()` is no longer called on PHP 8+ (deprecated in 8.5), and `HTTPClient` no longer triggers the
+  PHP 8.4 implicit-nullable deprecation.

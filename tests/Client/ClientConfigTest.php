@@ -69,10 +69,11 @@ class ClientConfigTest extends TestCase {
 		$clientConfig->setRetries(-1);
 	}
 
-	public function testDebugInfoDoesNotContainEventLogger(): void {
+	public function testDebugInfoKeepsTheReleasedKeys(): void {
 		$clientConfig = new ClientConfig('endpoint', 'key', 'app', 'env');
 		$debugInfo = $clientConfig->__debugInfo();
-		self::assertArrayNotHasKey('eventLogger', $debugInfo);
+		self::assertArrayHasKey('eventLogger', $debugInfo);
+		self::assertNull($debugInfo['eventLogger']);
 		self::assertArrayHasKey('apiKey', $debugInfo);
 		self::assertArrayHasKey('application', $debugInfo);
 		self::assertArrayHasKey('endpoint', $debugInfo);

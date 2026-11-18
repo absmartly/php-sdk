@@ -6,12 +6,13 @@ use ABSmartly\SDK\Assignment;
 use ABSmartly\SDK\AudienceMatcher;
 use ABSmartly\SDK\Exception\InvalidArgumentException;
 use ABSmartly\SDK\Exception\LogicException;
+use ABSmartly\SDK\Exception\RuntimeException;
 use ABSmartly\SDK\Experiment;
 use ABSmartly\SDK\ExperimentVariables;
 use ABSmartly\SDK\Exposure;
 use ABSmartly\SDK\GoalAchievement;
 use ABSmartly\SDK\PublishEvent;
-use ABSmartly\SDK;
+use ABSmartly\SDK\SDK;
 use ABSmartly\SDK\Utils;
 use ABSmartly\SDK\VariableParser;
 use ABSmartly\SDK\VariantAssigner;
@@ -30,11 +31,14 @@ use function hash;
 use function is_int;
 use function is_object;
 use function json_decode;
+use function json_encode;
 use function microtime;
 use function min;
 use function strpos;
 use function sprintf;
 use function trim;
+
+use const JSON_THROW_ON_ERROR;
 
 class Context {
 
@@ -123,16 +127,10 @@ class Context {
 	public function getCustomFieldKeys(): array {
 		$this->checkReady();
 		$keys = [];
-		if (!empty($this->data->experiments)) {
-			foreach ($this->data->experiments as $experiment) {
-				if (empty($experiment->customFieldValues)) {
-					continue;
-				}
-
-				foreach ($experiment->customFieldValues as $field) {
-					if (isset($field->name)) {
-						$keys[$field->name] = true;
-					}
+		foreach ($this->index as $experimentVariables) {
+			foreach ($experimentVariables->data->customFieldValues ?? [] as $field) {
+				if (isset($field->name)) {
+					$keys[$field->name] = true;
 				}
 			}
 		}
@@ -200,13 +198,7 @@ class Context {
 		}
 		catch (Exception $exception) {
 			$this->setDataFailed($exception);
-			error_log(sprintf(
-				'ABsmartly SDK CRITICAL: Context initialization failed: %s in %s:%d. Context is in failed state.',
-				$exception->getMessage(),
-				$exception->getFile(),
-				$exception->getLine()
-			));
-			$this->logError($exception, false);
+			$this->logError($exception);
 		}
 	}
 
@@ -230,27 +222,38 @@ class Context {
 
 		foreach ($data->experiments as $experiment) {
 			$experimentVariables = new ExperimentVariables();
-			$experimentVariables->data = new Experiment($experiment);
-			$experimentVariables->variables = [];
+			$variableKeys = [];
+			try {
+				$experimentVariables->data = new Experiment($experiment);
+				$experimentVariables->variables = [];
 
-			foreach ($experiment->variants as $variant) {
-				if (empty($variant->config)) {
-					$experimentVariables->variables[] = (object) [];
-					continue;
-				}
+				foreach ($experiment->variants as $variant) {
+					if (empty($variant->config)) {
+						$experimentVariables->variables[] = (object) [];
+						continue;
+					}
 
-				$parsed = $this->variableParser->parse($experiment->name, $variant->config);
-				if (!$parsed) {
-					$experimentVariables->variables[] = (object) [];
-					continue;
-				}
+					$parsed = $this->variableParser->parse($experiment->name, $variant->config);
+					if (!$parsed) {
+						$experimentVariables->variables[] = (object) [];
+						continue;
+					}
 
-				foreach (get_object_vars($parsed) as $key => $val) {
-					$this->addVariableExperiment($key, $experimentVariables);
+					foreach (get_object_vars($parsed) as $key => $val) {
+						$variableKeys[] = $key;
+					}
+					$experimentVariables->variables[] = $parsed;
 				}
-				$experimentVariables->variables[] = $parsed;
+			}
+			catch (RuntimeException | JsonException | \TypeError $exception) {
+				// Logged unchanged: v1.0.3 reported a malformed audience as this same JsonException.
+				$this->logError($exception);
+				continue;
 			}
 
+			foreach ($variableKeys as $key) {
+				$this->addVariableExperiment($key, $experimentVariables);
+			}
 			$this->index[$experiment->name] = $experimentVariables;
 			if ($experimentVariables->data->assignmentRules !== null) {
 				$this->ruleKeys[$experiment->name] = $experimentVariables->data->assignmentRules . ':' . $environment;
@@ -355,11 +358,8 @@ class Context {
 	public function getExperiments(): array {
 		$this->checkReady(false);
 		$return = [];
-
-		if (!empty($this->data->experiments)) {
-			foreach ($this->data->experiments as $experiment) {
-				$return[] = $experiment->name;
-			}
+		foreach ($this->index as $experimentVariables) {
+			$return[] = $experimentVariables->data->name;
 		}
 
 		return $return;
@@ -700,7 +700,7 @@ class Context {
 		foreach ($experiments as $experimentVariables) {
 			$assignment = $this->getAssignment($experimentVariables->data->name);
 
-			if ($assignment->variables !== null) {
+			if (isset($assignment->variables)) {
 				if ($exposeAssignments && empty($assignment->exposed)) {
 					$this->queueExposure($assignment);
 				}
@@ -728,8 +728,18 @@ class Context {
 		return $return;
 	}
 
-	public function setAttribute(string $name, $value): Context {
-		$this->checkNotClosed();
+	public function setAttribute(string $name, string $value): Context {
+		return $this->setAttributeValue($name, $value);
+	}
+
+	/** Sets an attribute without converting its value to a string. */
+	public function setAttributeValue(string $name, $value): Context {
+		// Every attribute is published, so a value the payload cannot hold (INF, NaN, a resource) would fail every
+		// later publish. Strings are accepted unchecked, as in v1.0.3, including invalid UTF-8.
+		if (!is_string($value)) {
+			self::assertPublishable(sprintf('Attribute "%s" value', $name), $value);
+		}
+
 		$this->attributes[] = (object) [
 			'name' => $name,
 			'value' => $value,
@@ -740,11 +750,36 @@ class Context {
 		return $this;
 	}
 
+	/**
+	 * @param mixed $value
+	 */
+	private static function assertPublishable(string $what, $value): void {
+		try {
+			// A publish adds three levels (event, list, record) above the value, within json_encode's default 512.
+			json_encode($value, JSON_THROW_ON_ERROR, 509);
+		}
+		catch (Throwable $exception) {
+			throw new InvalidArgumentException(sprintf('%s cannot be published: %s', $what, $exception->getMessage()), 0, $exception);
+		}
+	}
+
 	public function setAttributes(array $attributes): Context {
 		foreach ($attributes as $key => $value) {
 			$this->setAttribute($key, $value);
 		}
 
+		return $this;
+	}
+
+	/** Sets typed attributes, routing strings through the legacy extension hook. */
+	public function setAttributeValues(array $attributes): Context {
+		foreach ($attributes as $key => $value) {
+			if (is_string($value)) {
+				$this->setAttribute($key, $value);
+			} else {
+				$this->setAttributeValue($key, $value);
+			}
+		}
 		return $this;
 	}
 
@@ -844,20 +879,11 @@ class Context {
 	}
 
 	/**
-	 * Reports an error to the event logger. Without one it falls back to error_log(), unless the caller has
-	 * already written its own error_log() line ($fallbackToErrorLog false), so each error is logged once.
+	 * Reports an error to the event logger as an Error event. Without an event logger nothing is written, as in
+	 * v1.0.3.
 	 */
-	private function logError(Throwable $throwable, bool $fallbackToErrorLog = true): void {
+	private function logError(Throwable $throwable): void {
 		if (!isset($this->eventLogger)) {
-			if (!$fallbackToErrorLog) {
-				return;
-			}
-			error_log(sprintf(
-				'ABsmartly SDK Error: %s in %s:%d',
-				$throwable->getMessage(),
-				$throwable->getFile(),
-				$throwable->getLine()
-			));
 			return;
 		}
 
@@ -877,6 +903,14 @@ class Context {
 
 	public function setUnits(array $units): Context {
 		foreach ($units as $unitType => $uid) {
+			if (is_int($uid) || is_float($uid)) {
+				// Numbers are stored as their string form; other non-strings keep the v1.0.3 error.
+				$uid = (string) $uid;
+			}
+			if (!is_string($uid)) {
+				throw new InvalidArgumentException(
+					sprintf('Unit set value with key "%s" must be of type string, %s passed', $unitType, gettype($uid)));
+			}
 			$this->setUnit((string) $unitType, $uid);
 		}
 
@@ -936,13 +970,7 @@ class Context {
 		return $this->cassignments[$experimentName] ?? null;
 	}
 
-	/**
-	 * Numeric UIDs are accepted and stored as strings.
-	 *
-	 * @param string|int|float $uid
-	 */
-	public function setUnit(string $unitType, $uid): Context {
-		$this->checkNotClosed();
+	public function setUnit(string $unitType, string $uid): Context {
 		$uid = self::validateUnit($unitType, $uid);
 
 		if (array_key_exists($unitType, $this->units)) {
@@ -969,18 +997,7 @@ class Context {
 		}
 	}
 
-	/**
-	 * @param mixed $uid
-	 */
-	private static function validateUnit(string $unitType, $uid): string {
-		if (is_int($uid) || is_float($uid)) {
-			return (string) $uid;
-		}
-
-		if (!is_string($uid)) {
-			throw new InvalidArgumentException(sprintf('Unit "%s" must be a string or a number', $unitType));
-		}
-
+	private static function validateUnit(string $unitType, string $uid): string {
 		if (trim($uid) === '') {
 			throw new InvalidArgumentException(sprintf('Unit "%s" UID must not be blank', $unitType));
 		}
@@ -1013,18 +1030,7 @@ class Context {
 		}
 
 		if ($this->isFailed()) {
-			$errorMsg = sprintf(
-				'ABsmartly SDK Warning: Discarding %d exposures and %d goals due to failed context state',
-				count($this->exposures),
-				count($this->achievements)
-			);
-			error_log($errorMsg);
-			if (isset($this->eventLogger)) {
-				$this->eventLogger->handleEvent($this, new ContextEventLoggerEvent(
-					ContextEventLoggerEvent::Error,
-					new \RuntimeException($errorMsg)
-				));
-			}
+			// A failed load remains marked failed even if refresh later applies data; drop events as in v1.0.3.
 			$this->exposures = [];
 			$this->exposureAssignments = [];
 			$this->achievements = [];
@@ -1039,13 +1045,7 @@ class Context {
 			$this->eventHandler->publish($event);
 		}
 		catch (Exception $exception) {
-			error_log(sprintf(
-				'ABsmartly SDK Error: Failed to publish %d exposures and %d goals: %s. Events preserved for retry.',
-				count($this->exposures),
-				count($this->achievements),
-				$exception->getMessage()
-			));
-			$this->logError($exception, false);
+			$this->logError($exception);
 			$this->capRetainedEvents();
 
 			if ($rethrow) {
@@ -1066,13 +1066,7 @@ class Context {
 			$this->logEvent(ContextEventLoggerEvent::Publish, $event);
 		}
 		catch (Throwable $exception) {
-			// Not a publish failure: report it without re-entering the logger that just threw.
-			error_log(sprintf(
-				'ABsmartly SDK Error: Event logger failed handling Publish: %s in %s:%d',
-				$exception->getMessage(),
-				$exception->getFile(),
-				$exception->getLine()
-			));
+			// Not a publish failure, and re-entering the logger that just threw could loop: ignore it.
 		}
 	}
 
@@ -1126,8 +1120,7 @@ class Context {
 			$droppedExposures,
 			$droppedGoals
 		);
-		error_log($errorMsg);
-		$this->logError(new \RuntimeException($errorMsg), false);
+		$this->logError(new \RuntimeException($errorMsg));
 	}
 
 	private function buildPublishEvent(): PublishEvent {
@@ -1140,17 +1133,23 @@ class Context {
 		return $event;
 	}
 
-	/**
-	 * @param object|array|null $properties any object, or an associative array
-	 */
-	public function track(string $goalName, $properties = null): void {
+	public function track(string $goalName, ?object $properties = null): void {
 		$this->checkNotClosed();
-		$properties = $this->validateGoal($goalName, $properties);
 		$achievement = new GoalAchievement($goalName, static::getTime(), $properties);
 		$this->achievements[] = $achievement;
 		++$this->pendingCount;
 
 		$this->logEvent(ContextEventLoggerEvent::Goal, $achievement);
+	}
+
+	/** @param object|array|null $properties an object or associative array */
+	public function trackWithProperties(string $goalName, $properties = null): void {
+		$this->checkNotClosed();
+		$properties = $this->validateGoal($goalName, $properties);
+		if ($properties !== null) {
+			self::assertPublishable(sprintf("Goal '%s' properties", $goalName), $properties);
+		}
+		$this->track($goalName, $properties);
 	}
 
 	/**
@@ -1186,12 +1185,6 @@ class Context {
 	public function refresh(): void {
 		$this->checkNotClosed();
 
-		// A context whose initial load failed stays failed: refresh() is a no-op that neither fetches nor
-		// applies data and emits no refresh/error event, matching the JS SDK's `_refresh` (`if (!this._failed)`).
-		if ($this->isFailed()) {
-			return;
-		}
-
 		$oldData = $this->data;
 		$oldIndex = $this->index;
 		$oldIndexVariables = $this->indexVariables;
@@ -1200,7 +1193,6 @@ class Context {
 		try {
 			$data = $this->dataProvider->getContextData();
 			$this->setData($data);
-			$this->failed = false;
 			$this->logEvent(ContextEventLoggerEvent::Refresh, $data);
 		}
 		catch (Exception $exception) {
@@ -1209,13 +1201,7 @@ class Context {
 			$this->indexVariables = $oldIndexVariables;
 			$this->ruleKeys = $oldRuleKeys;
 			$this->parsedRules = $oldParsedRules;
-			error_log(sprintf(
-				'ABsmartly SDK Error: Failed to refresh context, keeping existing data: %s in %s:%d',
-				$exception->getMessage(),
-				$exception->getFile(),
-				$exception->getLine()
-			));
-			$this->logError($exception, false);
+			$this->logError($exception);
 		}
 	}
 
