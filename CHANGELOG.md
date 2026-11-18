@@ -117,6 +117,22 @@
 
 ### Added
 
+- **Switchback experiments** (R33, cluster-defined), as in java-sdk (java-sdk#15, shipping in 1.10.0) and the Collector. An experiment with
+  `randomizationType: "switchback"` is randomized over clusters and time: `Experiment` gains `$randomizationType`,
+  `$switchbackClusters` (unit type => attribute path, in the served order, which is kept), `$switchbackClusterValues`,
+  `$switchbackStartAt`, `$switchbackPeriodMs`, `$switchbackCarryoverDurationMs`, `$switchbackBurnInDurationMs`,
+  `$switchbackBurnOutDurationMs`, `$switchbackDesignType` and `$switchbackEstimand`, all optional and null by default.
+  The first context unit, in the declared order, whose attribute path gives a value serves the experiment, and that
+  raw value (a non-empty string as-is, an integer as its decimal text; floats such as `3.0`, booleans, objects, arrays,
+  `""` and null give none) is the cluster key of the platform's balanced-block draw for the period
+  `floor((now - switchbackStartAt) / switchbackPeriodMs)`. Units that disagree, a value outside
+  `switchbackClusterValues`, a missing value, a pre-anchor read or an unservable schedule give a control that records
+  no exposure; overrides, assignment rules, strict audiences, full-on, traffic and custom assignments apply as for a
+  unit experiment. Holdouts never apply to a switchback. Each period exposes once, stamped with the clock reading that
+  chose it, and the serving unit and cluster key are read once per period. Exposures and the publish payload carry no
+  new fields. Payloads without switchbacks take the same paths as before. See the README's *Switchback Experiments*.
+  Earlier releases served switchback experiments as sticky unit experiments (or not at all without a `unitType`), so
+  upgrade every SDK that serves one.
 - **Holdouts.** `ContextData::$holdouts` carries the collector's `holdouts` and `Experiment::$holdoutIds` (and
   `$holdoutType`) the ids that cover each experiment, as in the JavaScript and Java SDKs. A unit held out by any of
   an experiment's holdouts gets control (variant 0, not assigned) without an exposure of its own, ahead of the

@@ -314,6 +314,39 @@ $contextData = new ContextData($payload->experiments, $payload->holdouts ?? []);
 $context = $sdk->createContextWithData($contextConfig, $contextData);
 ```
 
+### Switchback Experiments
+
+A switchback experiment is randomized over clusters (for example, a store's region) and time: every unit in the same
+cluster sees the same variant within a period, and the variant changes on a fixed time grid. Switchbacks arrive with
+the context data (`randomizationType: "switchback"`); nothing needs configuring in the SDK except the units and the
+attributes that hold the cluster values.
+
+```php
+$contextConfig = new ContextConfig();
+$contextConfig->setUnit('store_id', 'store-42');
+$context = $sdk->createContext($contextConfig);
+
+// The experiment links store_id to the attribute path "geo/region".
+$context->setAttribute('geo', ['region' => 'lisbon']);
+
+$treatment = $context->getTreatment('exp_delivery_fee'); // this period's variant for the "lisbon" cluster
+```
+
+- `switchbackClusters` lists the linked unit types and, for each, the attribute path of its cluster value, in the
+  served order: the first unit in that order with a value serves the experiment. Paths use `/` (`geo/region`,
+  `items/0/city`); a quoted segment (`'a/b'`) is a literal key, and a path with a `.` is unreadable.
+- A cluster value is a non-empty string, used as-is, or an integer, used as its decimal text. Floats (including
+  `3.0`), booleans, arrays, objects, `""` and null give no value.
+- With no value, units that disagree, or a value outside `switchbackClusterValues`, the unit gets control (variant 0)
+  and no exposure is sent. Before `switchbackStartAt`, or with an unservable schedule, it gets control with no
+  exposure too. Without a unit of a linked type, the experiment does not apply.
+- Overrides, assignment rules, strict audiences, full-on, traffic and custom assignments apply as for a unit
+  experiment, and the exposure carries the same flags. Holdouts never apply to a switchback.
+- `getTreatment()` sends one exposure per period, stamped with the time that chose the period. The serving unit and
+  cluster key are read once per period, so a `setAttribute()` later in the period takes effect from the next period.
+  `peekTreatment()` and `peekVariableValue()` send nothing.
+- Attributes are published with their timestamps, as before: the collector resolves the cluster again from them.
+
 ### Semantic Version Conditions
 
 Audience and rule conditions can compare versions with `semver_eq`, `semver_gt`, `semver_gte`, `semver_lt` and
