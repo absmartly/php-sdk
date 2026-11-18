@@ -499,16 +499,19 @@ class V103CompatibilityTest extends TestCase {
 		$config->setContextEventHandler($handler = new ContextEventHandlerMock($client));
 		$context = (new SDK($config))->createContextWithData((new ContextConfig())->setUnit('session_id', 'abc'), new ContextData([]));
 
-		$copied = (object) ['amount' => 1];
+		$copied = (object) ['amount' => 1, 'item' => (object) ['sku' => 'a']];
 		$kept = (object) ['amount' => 1];
 		$context->trackWithProperties('copied', $copied);
 		$context->track('kept', $kept);
 		$copied->amount = 2;
+		$copied->item->sku = 'b';
 		$kept->amount = 2;
 		$context->publish();
 
 		$goals = array_column(json_decode(json_encode($handler->submitted[0]), true)['goals'], 'properties', 'name');
 		self::assertSame(1, $goals['copied']['amount']);
+		// The copy is one level deep: a nested object is shared, so its later change is published.
+		self::assertSame('b', $goals['copied']['item']['sku']);
 		self::assertSame(2, $goals['kept']['amount'], 'track() keeps the object, as in v1.0.3');
 	}
 }
