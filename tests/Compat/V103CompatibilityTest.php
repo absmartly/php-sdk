@@ -428,6 +428,9 @@ class V103CompatibilityTest extends TestCase {
 		catch (\JsonException $original) {
 			self::assertSame($original->getMessage(), $errors[0]->getData()->getMessage());
 			self::assertSame($original->getCode(), $errors[0]->getData()->getCode());
+			// The decoder's own exception, not a copy: nothing wraps it and it was raised where the audience is decoded.
+			self::assertNull($errors[0]->getData()->getPrevious());
+			self::assertStringEndsWith('Experiment.php', $errors[0]->getData()->getFile());
 		}
 	}
 
