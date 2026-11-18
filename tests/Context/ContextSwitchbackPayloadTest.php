@@ -250,6 +250,35 @@ class ContextSwitchbackPayloadTest extends TestCase {
 		self::assertSame(1, $reads);
 		self::assertSame([], self::privateValue($context, 'switchbackSources'));
 		self::assertSame([], self::privateValue($context, 'switchbackEpochs'));
+		// The guard that keeps unit reads off the switchback path stays off.
+		self::assertFalse(self::privateValue($context, 'hasSwitchbacks'));
+	}
+
+	/**
+	 * A switchback read takes one clock reading, cached slot or not. An exposing read also takes the enqueue reading
+	 * Exposure::ingestAssignment() always took; the exposure keeps the resolution's.
+	 */
+	public function testOneClockReadPerSwitchbackRead(): void {
+		$reads = 0;
+		$property = new \ReflectionProperty(\ABSmartly\SDK\Context\Context::class, 'clock');
+		if (PHP_VERSION_ID < 80100) {
+			$property->setAccessible(true);
+		}
+		$property->setValue(null, function () use (&$reads): int {
+			++$reads;
+			return self::$ANCHOR + 1;
+		});
+		$context = $this->createContext(self::dataOf(self::switchback(2)), null, []);
+		self::assertTrue(self::privateValue($context, 'hasSwitchbacks'));
+		$context->setAttribute(self::$CLUSTER_PATH, self::$CLUSTER_KEY);
+		foreach ([['peekTreatment', 1], ['getTreatment', 2], ['getTreatment', 1], ['peekTreatment', 1]] as [$method, $expected]) {
+			$reads = 0;
+			$context->$method('exp_sb');
+			self::assertSame($expected, $reads, $method);
+		}
+		$reads = 0;
+		$context->getVariableValue('sb.arm', -1);
+		self::assertSame(1, $reads);
 	}
 
 	private function publishedBody(ContextData $data): string {
