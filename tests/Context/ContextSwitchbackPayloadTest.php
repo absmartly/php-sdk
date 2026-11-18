@@ -287,6 +287,15 @@ class ContextSwitchbackPayloadTest extends TestCase {
 		self::assertArrayHasKey('exp_unit', self::privateValue($context, 'switchbackEpochs'));
 	}
 
+	/** Switchback sources are built at install, then reused by every cached read. */
+	public function testSwitchbackSourcesAreReusedAcrossReads(): void {
+		$context = $this->createContext(self::dataOf(self::switchback(2)));
+		$sources = self::privateValue($context, 'switchbackSources')['exp_sb'];
+		$context->getTreatment('exp_sb');
+		$context->getTreatment('exp_sb');
+		self::assertSame($sources, self::privateValue($context, 'switchbackSources')['exp_sb']);
+	}
+
 	/**
 	 * A switchback read takes one clock reading, cached slot or not. An exposing read also takes the enqueue reading
 	 * Exposure::ingestAssignment() always took; the exposure keeps the resolution's.

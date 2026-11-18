@@ -773,6 +773,33 @@ class ContextSwitchbackTest extends TestCase {
 		self::assertSame(['exp_first', 'exp_second'], array_column($this->publishExposures($context), 1));
 	}
 
+	/** A same-outcome rules refresh is validated once, then the cached switchback slot stops re-evaluating rules. */
+	public function testASameOutcomeRuleRefreshAdvancesTheRuleKey(): void {
+		$experiment = self::switchback(2);
+		$experiment->assignmentRules = self::ASSIGN_VARIANT_1;
+		$context = $this->createContext(self::dataOf($experiment));
+		self::assertSame(1, $context->getTreatment('exp_sb'));
+		$counts = self::countEvaluations($context);
+		$renamed = clone $experiment;
+		$renamed->assignmentRules = '{"rules":[{"name":"renamed","type":"assign","environments":[],"variant":1}]}';
+		$this->refreshTo($context, $renamed);
+		for ($i = 0; $i < 3; ++$i) {
+			self::assertSame(1, $context->getTreatment('exp_sb'));
+		}
+		self::assertSame(1, $counts->rules);
+		self::assertSame(1, $context->getPendingCount());
+	}
+
+	/** Peek reads serve a rule-won switchback's arm without queuing an exposure. */
+	public function testPeekReadsServeARuleWonSwitchbackWithoutExposure(): void {
+		$experiment = self::switchback(2);
+		$experiment->assignmentRules = self::ASSIGN_VARIANT_1;
+		$context = $this->createContext(self::dataOf($experiment));
+		self::assertSame(1, $context->peekTreatment('exp_sb'));
+		self::assertSame(1, $context->peekVariableValue('sb.arm', -1));
+		self::assertSame(0, $context->getPendingCount());
+	}
+
 	/** A switchback won by a rule or an override and read only through a variable key is exposed. */
 	public function testARuleOrOverrideWonSwitchbackIsExposedThroughAVariableKey(): void {
 		$rule = self::switchback(2);

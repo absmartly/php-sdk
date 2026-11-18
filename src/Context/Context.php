@@ -1352,20 +1352,19 @@ class Context {
 			$assignment = $this->getAssignment($experimentVariables->data->name);
 
 			if ($assignment->variables !== null) {
-				// property_exists (not isset) so a present key whose value is null is still returned,
-				// matching JS: a lower-id experiment that defines $key=null shadows a later competitor.
-				$provides = property_exists($assignment->variables, $key)
-					&& ($assignment->assigned || $assignment->overridden || $assignment->ruleOverride);
-
 				// A switchback is exposed when the key reaches it assigned, overridden or rule-assigned, as java-sdk does, even
 				// if its arm lacks the key (a control arm with no config must still be recorded); a strict mismatch records
 				// nothing. Unit experiments keep the JS behaviour of exposing every candidate.
 				if ($exposeAssignments && (!$assignment->exposed || $this->droppedHoldoutArms !== [])
-					&& ($assignment->switchback === null || $assignment->assigned || $assignment->overridden || $assignment->ruleOverride)) {
+					&& (!$this->hasSwitchbacks || $assignment->switchback === null
+						|| $assignment->assigned || $assignment->overridden || $assignment->ruleOverride)) {
 					$this->triggerExposures($assignment);
 				}
 
-				if ($provides) {
+				// property_exists (not isset) so a present key whose value is null is still returned,
+				// matching JS: a lower-id experiment that defines $key=null shadows a later competitor.
+				if (property_exists($assignment->variables, $key)
+					&& ($assignment->assigned || $assignment->overridden || $assignment->ruleOverride)) {
 					return $assignment->variables->{$key};
 				}
 
