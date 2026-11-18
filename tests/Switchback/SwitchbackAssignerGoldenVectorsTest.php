@@ -123,8 +123,15 @@ class SwitchbackAssignerGoldenVectorsTest extends TestCase {
 		foreach ([['store-32476', 0], ['store-52503', 1], ['store-121460', 0], ['store-125857', 0]] as [$uid, $expected]) {
 			self::assertSame($expected, SwitchbackAssigner::assignUnit($uid, [0.5, 0.5], 1, 2), $uid);
 		}
+		// A split summing below 1 gives the last arm to the probabilities past it, as VariantAssigner does; a probability
+		// equal to a cumulative bound belongs to the next arm.
+		// u-0's probability is past 0.6 (it lands in the third arm of [0.3, 0.3, 0.4]).
+		self::assertSame(2, SwitchbackAssigner::assignUnit('u-0', [0.3, 0.3, 0.4], 1, 2));
+		self::assertSame(1, SwitchbackAssigner::assignUnit('u-0', [0.3, 0.3], 1, 2));
+		self::assertSame(1, SwitchbackAssigner::assignUnit('u-0', [0.0, 0.0], 1, 2));
+		self::assertSame(1, SwitchbackAssigner::assignUnit('u-0', [0.0, 1.0], 1, 2));
 		if (PHP_VERSION_ID >= 80100) {
-			foreach ([[0.5, 0.5], [0.2, 0.3, 0.5], [1.0, 0.0], [0.0, 1.0]] as $split) {
+			foreach ([[0.5, 0.5], [0.2, 0.3, 0.5], [1.0, 0.0], [0.0, 1.0], [0.3, 0.3], [0.1, 0.1, 0.1]] as $split) {
 				for ($i = 0; $i < 300; ++$i) {
 					$uid = 'u-' . $i;
 					self::assertSame((new \ABSmartly\SDK\VariantAssigner($uid))->assign($split, -5, 7 + $i),

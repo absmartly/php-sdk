@@ -1358,10 +1358,11 @@ class Context {
 				$provides = property_exists($assignment->variables, $key)
 					&& ($assignment->assigned || $assignment->overridden || $assignment->ruleOverride);
 
-				// A switchback is exposed only when it provides the value (java-sdk's SWITCHBACK.md); unit experiments keep
-				// the JS behaviour of exposing every candidate.
+				// A switchback is exposed when the key reaches it assigned, overridden or rule-assigned, as java-sdk does, even
+				// if its arm lacks the key (a control arm with no config must still be recorded); a strict mismatch records
+				// nothing. Unit experiments keep the JS behaviour of exposing every candidate.
 				if ($exposeAssignments && (!$assignment->exposed || $this->droppedHoldoutArms !== [])
-					&& ($assignment->switchback === null || $provides)) {
+					&& ($assignment->switchback === null || $assignment->assigned || $assignment->overridden || $assignment->ruleOverride)) {
 					$this->triggerExposures($assignment);
 				}
 

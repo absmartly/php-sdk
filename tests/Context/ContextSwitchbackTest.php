@@ -603,7 +603,6 @@ class ContextSwitchbackTest extends TestCase {
 		self::assertSame(0, $context->getPendingCount());
 	}
 
-	/** A split rule randomizes over the serving unit, not over the payload's unitType. */
 	/** Traffic on the serving unit uses the platform murmur3 on every runtime (store-32476 differs on PHP 7.4/8.0). */
 	public function testTrafficOnTheServingUnitMatchesThePlatformOnEveryRuntime(): void {
 		$experiment = self::switchback(2);
@@ -618,8 +617,26 @@ class ContextSwitchbackTest extends TestCase {
 		$rule->seedLo = 2;
 		$context = $this->createContext(self::dataOf($rule), [self::$UNIT_TYPE => 'store-32476']);
 		self::assertSame(0, $context->getTreatment('exp_sb'));
+
+		// Unit experiments keep VariantAssigner, so the same unit is bucketed as before on each runtime: lastguest's
+		// draw on PHP 7.4/8.0, native murmur3 on 8.1+.
+		$legacy = PHP_VERSION_ID >= 80100 ? 0 : 1;
+		$unit = self::unitExperiment();
+		$unit->trafficSplit = [0.5, 0.5];
+		$unit->trafficSeedHi = 1;
+		$unit->trafficSeedLo = 2;
+		$context = $this->createContext(self::dataOf($unit), [self::$UNIT_TYPE => 'store-32476']);
+		$context->getTreatment('exp_unit');
+		self::assertSame($legacy === 1, $this->publishExposures($context)[0][6]);
+		$unitRule = self::unitExperiment();
+		$unitRule->assignmentRules = $rule->assignmentRules;
+		$unitRule->seedHi = 1;
+		$unitRule->seedLo = 2;
+		$context = $this->createContext(self::dataOf($unitRule), [self::$UNIT_TYPE => 'store-32476']);
+		self::assertSame($legacy, $context->getTreatment('exp_unit'));
 	}
 
+	/** A split rule randomizes over the serving unit, not over the payload's unitType. */
 	public function testSplitRuleRandomizesOverTheServingUnit(): void {
 		$experiment = self::switchback(2);
 		$experiment->unitType = 'user_id';
@@ -754,8 +771,11 @@ class ContextSwitchbackTest extends TestCase {
 		self::assertSame([self::exposure(1, 'exp_sb', self::$UNIT_TYPE, 1, self::$ANCHOR, false, true, true)], $this->publishExposures($overridden));
 	}
 
-	/** A switchback whose served arm lacks the key is not exposed; the experiment that supplies the value is. */
-	public function testASwitchbackWhoseArmLacksTheKeyIsNotExposed(): void {
+	/**
+	 * As in java-sdk, an assigned switchback the key reaches is exposed even when its served arm lacks the key (a control
+	 * arm with no config): otherwise its control periods would go unrecorded. The value falls through as before.
+	 */
+	public function testAnAssignedSwitchbackWhoseArmLacksTheKeyIsStillExposed(): void {
 		$sb = self::switchback(2);
 		$sb->variants[0]->config = '{"unrelated":0}';
 		$unit = self::unitExperiment(2, 2, 'exp_unit');
@@ -764,11 +784,17 @@ class ContextSwitchbackTest extends TestCase {
 		self::assertSame(0, self::$EXPECTED_2_ARMS[0]);
 		$alone = $this->createContext(self::dataOf($sb));
 		self::assertSame(-1, $alone->getVariableValue('sb.arm', -1));
-		self::assertSame(0, $alone->getPendingCount());
+		self::assertSame([self::sbExposure(0, self::$ANCHOR)], $this->publishExposures($alone));
 
+		$sb->variants[0]->config = null;
+		$nullControl = $this->createContext(self::dataOf($sb));
+		self::assertSame(-1, $nullControl->getVariableValue('sb.arm', -1));
+		self::assertSame(1, $nullControl->getPendingCount());
+
+		$sb->variants[0]->config = '{"unrelated":0}';
 		$context = $this->createContext(self::dataOf($sb, $unit));
 		self::assertSame(11, $context->getVariableValue('sb.arm', -1));
-		self::assertSame(['exp_unit'], array_column($this->publishExposures($context), 1));
+		self::assertSame(['exp_sb', 'exp_unit'], array_column($this->publishExposures($context), 1));
 	}
 
 	/** Alone on the key, a strict-mismatched switchback yields the default value. */

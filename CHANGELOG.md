@@ -135,7 +135,8 @@
   audiences, full-on, traffic and custom assignments apply as for a unit experiment, with the serving unit's traffic
   and split-rule draws hashed with the platform murmur3 on every runtime. Holdouts never apply to a switchback. The
   serving unit and cluster key are read once per period, and each period exposes once, stamped with the clock reading
-  of the exposing call. `getVariableValue()` exposes a switchback only when it provides the value, as in java-sdk.
+  of the exposing call. `getVariableValue()` exposes a switchback the key reaches when it is assigned, overridden or
+  rule-assigned, as in java-sdk; a strict mismatch records nothing.
   Known limit, shared with java-sdk: a cluster attribute changed between a period's first read and its exposure is
   served from the first cluster but attributed by the collector to the new one; keep cluster attributes stable within
   a period. Exposures and the publish payload carry no new fields. Payloads without switchbacks take the same paths as

@@ -351,8 +351,9 @@ $treatment = $context->getTreatment('exp_delivery_fee'); // this period's varian
   exposure's time. If a cluster attribute changes after a period's first read (a peek, or an earlier call) and before
   that period's exposure, the SDK serves the first cluster's variant while the collector attributes the exposure to the
   new cluster. Set cluster attributes before the first read and keep them stable within a period.
-- `getVariableValue()` exposes a switchback only when it provides the value; a strict audience mismatch it passes over
-  records nothing (unit experiments keep exposing every experiment the key walks past).
+- `getVariableValue()` exposes a switchback the key reaches when it is assigned, overridden or rule-assigned, as
+  java-sdk does, even if its arm lacks the key; a strict audience mismatch it passes over records nothing (unit
+  experiments keep exposing every experiment the key walks past).
 - Attributes are published with their timestamps, as before: the collector resolves the cluster again from them.
 
 ### Semantic Version Conditions
