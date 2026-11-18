@@ -154,7 +154,7 @@ class ContextAssignmentRulesTest extends TestCase {
 		$audience = ['audienceStrict' => true, 'audience' => '{"filter":[{"gte":[{"var":"age"},{"value":20}]}]}'];
 		$context = $this->createContext([self::assignRule(1, self::usCondition())], $audience);
 		$context->setAttribute('country', 'US');
-		$context->setAttribute('age', 15);
+		$context->setAttributeValue('age', 15);
 
 		self::assertSame(1, $context->getTreatment('exp_test_abc'));
 		self::assertFalse($this->publishedExposures($context)[0]->audienceMismatch);
@@ -163,7 +163,7 @@ class ContextAssignmentRulesTest extends TestCase {
 	public function testStrictAudienceAppliesWhenNoRuleMatches(): void {
 		$audience = ['audienceStrict' => true, 'audience' => '{"filter":[{"gte":[{"var":"age"},{"value":20}]}]}'];
 		$context = $this->createContext([self::assignRule(1, self::usCondition())], $audience);
-		$context->setAttribute('age', 15);
+		$context->setAttributeValue('age', 15);
 
 		self::assertSame(0, $context->getTreatment('exp_test_abc'));
 		$exposures = $this->publishedExposures($context);
@@ -233,7 +233,7 @@ class ContextAssignmentRulesTest extends TestCase {
 		$context->setAttribute('country', 'US');
 		self::assertSame(1, $context->getTreatment('exp_test_abc'));
 
-		$context->setAttribute('unrelated', true);
+		$context->setAttributeValue('unrelated', true);
 		self::assertSame(1, $context->getTreatment('exp_test_abc'));
 		self::assertCount(1, $this->publishedExposures($context));
 	}
@@ -284,7 +284,7 @@ class ContextAssignmentRulesTest extends TestCase {
 		self::assertSame(0, $context->getTreatment('exp_test_abc'));
 
 		$context->setUnit('session_id', self::SESSION_ID);
-		$context->setAttribute('unrelated', true);
+		$context->setAttributeValue('unrelated', true);
 		self::assertSame(0, $context->getTreatment('exp_test_abc'));
 
 		$variants = array_map(static fn($exposure) => $exposure->variant, $this->publishedExposures($context));
@@ -306,9 +306,9 @@ class ContextAssignmentRulesTest extends TestCase {
 		$context->publish();
 
 		$context->setUnit('session_id', self::SESSION_ID);
-		$context->setAttribute('unrelated', true);
+		$context->setAttributeValue('unrelated', true);
 		self::assertSame(0, $context->peekTreatment('exp_test_abc'));
-		$context->setAttribute('unrelated', false);
+		$context->setAttributeValue('unrelated', false);
 		self::assertSame(0, $context->peekTreatment('exp_test_abc'));
 		self::assertSame(0, $context->getTreatment('exp_test_abc'));
 	}
@@ -323,7 +323,7 @@ class ContextAssignmentRulesTest extends TestCase {
 		$treatments[] = $context->getTreatment('exp_test_abc');
 		$context->setUnit('session_id', self::SESSION_ID);
 		$treatments[] = $context->getTreatment('exp_test_abc');
-		$context->setAttribute('unrelated', true);
+		$context->setAttributeValue('unrelated', true);
 		$treatments[] = $context->getTreatment('exp_test_abc');
 
 		self::assertSame([0, 0, 0, 0], $treatments);

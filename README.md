@@ -8,12 +8,9 @@ The A/B Smartly PHP SDK is compatible with PHP versions 7.4 and later. For the b
 
 ### Upgrading from 1.0.x
 
-1.1.0 is a non-breaking release of 1.0.3: existing code compiles and runs unchanged. The entry class is still
-`ABSmartly\SDK\SDK` (also available as `ABSmartly\SDK`, the name the 2.x line uses), and method signatures, error
-messages, the HTTP connect timeout and the single-attempt GET of 1.0.3 are kept. Behaviour changes are limited to the
-agreed cross-SDK contract (assignment rules, SemVer operators, system attributes, the versioned `X-Agent`,
-`ruleOverride` on exposures, shared variable keys) and bug fixes; each one, and who it affects, is listed in
-[CHANGELOG.md](CHANGELOG.md).
+1.1.0 retains the 1.0.3 entry class and legacy method signatures, including subclass overrides. It also changes
+runtime behavior, including experiment bucketing, exposure payloads and error handling. Review
+[CHANGELOG.md](CHANGELOG.md) before upgrading; existing workloads may behave differently.
 
 ## Installation
 
@@ -181,7 +178,7 @@ To mitigate this, we can use the `Context->refresh()` method on the `Context`:
 $context->refresh();
 ```
 
-The `Context->refresh()` method pulls updated experiment data from the A/B Smartly collector and will trigger recently started experiments when `Context->getTreatment()` is called again.
+The `Context->refresh()` method pulls updated experiment data from the A/B Smartly collector and will trigger recently started experiments when `Context->getTreatment()` is called again. After an initial load failure it can fetch and apply data, but `isFailed()` remains true, as in 1.0.3, and a failed context drops queued events on flush. Create a new context for full recovery.
 
 ### Setting Extra Units
 
@@ -267,6 +264,10 @@ $context->setAttributes([
 ]);
 ```
 
+`setAttribute()` retains its string parameter, as in 1.0.3. To preserve numeric, boolean, object or other
+values for evaluation and publication, use `setAttributeValue('age', 25)` or `setAttributeValues([...])`.
+`ContextConfig` also accepts typed values.
+
 The `application` and `environment` names configured on the client are always available to audience
 filters as the `application` and `environment` attributes, without being set explicitly. A user
 attribute of the same name, set with `setAttribute()`, overrides the configured value for audience
@@ -344,6 +345,9 @@ $context->track('payment', (object) [
 ]);
 ```
 
+For an associative array of goal properties, use `trackWithProperties('payment', ['total_amount' => 1999.99])`.
+The original `track()` continues to accept an object or null.
+
 ### Publishing Pending Data
 
 Sometimes it is necessary to ensure all events have been published to the A/B Smartly collector before proceeding. You can explicitly call the `Context->publish()` method.
@@ -356,7 +360,7 @@ If the collector cannot be reached, `publish()` does not throw: the error is log
 
 ### Finalizing
 
-The `close()` method will ensure all events have been published to the A/B Smartly collector, like `Context->publish()`, and will also "seal" the context, throwing an error if any method that could generate an event is called.
+The `close()` method will ensure all events have been published to the A/B Smartly collector, like `Context->publish()`, and closes the context. Event-generating operations such as `track()` and `getTreatment()` then throw; attribute and unit setters remain usable as in 1.0.3.
 
 ```php
 $context->close();

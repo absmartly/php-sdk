@@ -2,10 +2,9 @@
 
 ## 1.1.0
 
-A non-breaking release of 1.0.3: code written against 1.0.3 compiles and runs unchanged (the entry class, method
-signatures customers call or override, exception types and messages, the HTTP connect timeout and the
-single-attempt GET are all kept). The behaviour changes below are the agreed cross-SDK contract, or fixes of
-1.0.3 bugs; each says who is affected. Changes that would break 1.0.3 code wait for 2.0.
+This release retains the 1.0.3 entry class and legacy method signatures, including subclass overrides. It also
+changes some runtime behavior, including experiment bucketing, exposure payloads and error handling; review the
+changes below before upgrading. It is not a guarantee that every 1.0.3 workload behaves unchanged.
 
 ### Added
 
@@ -39,8 +38,9 @@ single-attempt GET are all kept). The behaviour changes below are the agreed cro
   failed publishes (default 10,000).
 - `ABSmartly\SDK` is an alias of `ABSmartly\SDK\SDK`, the entry class name the 2.x line will use.
 - `setUnits()` accepts int and float UIDs (stored as strings; `setUnit()` keeps its `string $uid` parameter, so
-  non-strict callers' numbers convert as before), `setAttribute()` accepts non-string values, and `track()` accepts
-  any object or an associative array of properties.
+  non-strict callers' numbers convert as before). `setAttributeValue()`/`setAttributeValues()` retain typed values;
+  `trackWithProperties()` accepts objects or associative arrays. Legacy `setAttribute()` and `track()` retain their
+  1.0.3 signatures.
 
 ### Changed
 
@@ -55,9 +55,9 @@ single-attempt GET are all kept). The behaviour changes below are the agreed cro
   conditions without being set (a user attribute of the same name wins); they are not published. *Affects:* audiences
   with an `application`/`environment` condition, which used to see them as missing; `audienceStrict` experiments
   with such a condition no longer force variant 0. `app_version` is never injected.
-- **Typed attributes.** Attribute values keep their JSON type and compare numerically (`age >= 20` treats `age` as
-  a number). A string still compares as in 1.0.3. *Affects:* rules relying on 1.0.3's string comparison of numbers
-  passed as strings by non-strict callers; the published value of a number is now a number.
+- **Typed attributes.** Values set through `ContextConfig` or the new `setAttributeValue()` and
+  `setAttributeValues()` retain their JSON types for evaluation and publication. Legacy `setAttribute()` and
+  `setAttributes()` still convert scalar values to strings as in 1.0.3 (or reject them under strict typing).
 - **Audience re-evaluation after `setAttribute()`.** As in JS, a treatment computed before an attribute changed is
   re-evaluated, so the treatment and exposures can change. *Affects:* code setting audience attributes after
   reading a treatment; strict audiences can move from variant 0 and send a second exposure.
@@ -76,20 +76,9 @@ single-attempt GET are all kept). The behaviour changes below are the agreed cro
   queued; a later `close()` retries, and `Close` is emitted once the close succeeds (1.0.3 logged the error, closed
   and lost the events). `publish()` keeps the 1.0.3 behaviour of logging and returning. *Affects:* code calling
   `close()` without a `try`/`catch` while the collector is unreachable; catch the exception or call `publish()`.
-- **Mutators throw after `close()`.** `setAttribute()`, `setAttributes()`, `setUnit()` and `setUnits()` throw
-  `ABSmartly Context is closed`, as `track()` already did, as the README's "seal the context" says, and as JS does.
-  *Affects:* code that sets attributes or units on a closed context; set them before closing.
-- **`refresh()` on a context whose first load failed is a no-op** (JS `_refresh`): it stays failed and serves
-  control; create a new context to recover (1.0.3 re-fetched and recovered). A `refresh()` that fails now keeps the
-  existing data instead of emptying the context. *Affects:* code that relied on `refresh()` to recover a context
-  whose `createContext()` failed.
-- **Wider `Context` parameter types.** `setAttribute(string $name, $value)` and `track(string $goalName,
-  $properties = null)` accept typed attribute values and array properties (1.0.3: `string $value`, `?object
-  $properties`). Callers are unaffected, except that a non-strict caller's number is now kept and published as a
-  number (see Typed attributes). A class extending `Context` that redeclares these two methods with the 1.0.3 types
-  no longer loads on PHP 8. *Affects:* only such subclasses; `Context` has a private constructor and the SDK only
-  creates `Context` itself, so a subclass could be declared on 1.0.3 but never initialised or used to serve
-  treatments.
+- **Refresh failures retain existing data.** A failed refresh no longer empties the context. As in 1.0.3,
+  refresh still fetches after an initial load failure and applies recovered data, but the failed flag remains true;
+  a failed context drops queued events on flush. Create a new context for full recovery.
 - `var_dump()` of a `ClientConfig` (`__debugInfo()`) also lists `applicationVersion`.
 
 ### Fixed

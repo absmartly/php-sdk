@@ -170,7 +170,13 @@ class Context {
 		$this->setUnits($contextConfig->getUnits());
 		$this->setOverrides($contextConfig->getOverrides());
 		$this->setCustomAssignments($contextConfig->getCustomAssignments());
-		$this->setAttributes($contextConfig->getAttributes());
+		foreach ($contextConfig->getAttributes() as $name => $value) {
+			if (is_string($value)) {
+				$this->setAttributes([$name => $value]);
+			} else {
+				$this->setAttributeValue($name, $value);
+			}
+		}
 
 		if ($logger = $contextConfig->getEventLogger()) {
 			$this->setEventLogger($logger);
@@ -731,8 +737,12 @@ class Context {
 		return $return;
 	}
 
-	public function setAttribute(string $name, $value): Context {
-		$this->checkNotClosed();
+	public function setAttribute(string $name, string $value): Context {
+		return $this->setAttributeValue($name, $value);
+	}
+
+	/** Sets an attribute without converting its value to a string. */
+	public function setAttributeValue(string $name, $value): Context {
 		$this->attributes[] = (object) [
 			'name' => $name,
 			'value' => $value,
@@ -748,6 +758,18 @@ class Context {
 			$this->setAttribute($key, $value);
 		}
 
+		return $this;
+	}
+
+	/** Sets typed attributes, routing strings through the legacy extension hook. */
+	public function setAttributeValues(array $attributes): Context {
+		foreach ($attributes as $key => $value) {
+			if (is_string($value)) {
+				$this->setAttribute($key, $value);
+			} else {
+				$this->setAttributeValue($key, $value);
+			}
+		}
 		return $this;
 	}
 
@@ -939,7 +961,6 @@ class Context {
 	}
 
 	public function setUnit(string $unitType, string $uid): Context {
-		$this->checkNotClosed();
 		$uid = self::validateUnit($unitType, $uid);
 
 		if (array_key_exists($unitType, $this->units)) {
@@ -999,7 +1020,7 @@ class Context {
 		}
 
 		if ($this->isFailed()) {
-			// A context whose data never loaded has nothing to publish against; drop the events silently, as v1.0.3.
+			// A failed load remains marked failed even if refresh later applies data; drop events as in v1.0.3.
 			$this->exposures = [];
 			$this->exposureAssignments = [];
 			$this->achievements = [];
@@ -1102,17 +1123,19 @@ class Context {
 		return $event;
 	}
 
-	/**
-	 * @param object|array|null $properties any object, or an associative array
-	 */
-	public function track(string $goalName, $properties = null): void {
+	public function track(string $goalName, ?object $properties = null): void {
 		$this->checkNotClosed();
-		$properties = $this->validateGoal($goalName, $properties);
 		$achievement = new GoalAchievement($goalName, static::getTime(), $properties);
 		$this->achievements[] = $achievement;
 		++$this->pendingCount;
 
 		$this->logEvent(ContextEventLoggerEvent::Goal, $achievement);
+	}
+
+	/** @param object|array|null $properties an object or associative array */
+	public function trackWithProperties(string $goalName, $properties = null): void {
+		$this->checkNotClosed();
+		$this->track($goalName, $this->validateGoal($goalName, $properties));
 	}
 
 	/**
@@ -1148,12 +1171,6 @@ class Context {
 	public function refresh(): void {
 		$this->checkNotClosed();
 
-		// A context whose initial load failed stays failed: refresh() is a no-op that neither fetches nor
-		// applies data and emits no refresh/error event, matching the JS SDK's `_refresh` (`if (!this._failed)`).
-		if ($this->isFailed()) {
-			return;
-		}
-
 		$oldData = $this->data;
 		$oldIndex = $this->index;
 		$oldIndexVariables = $this->indexVariables;
@@ -1162,7 +1179,6 @@ class Context {
 		try {
 			$data = $this->dataProvider->getContextData();
 			$this->setData($data);
-			$this->failed = false;
 			$this->logEvent(ContextEventLoggerEvent::Refresh, $data);
 		}
 		catch (Exception $exception) {

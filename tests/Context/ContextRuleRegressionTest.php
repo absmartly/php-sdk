@@ -158,7 +158,7 @@ class ContextRuleRegressionTest extends TestCase {
 		$context->setAttribute('country', 'US');
 		$context->getTreatment('exp');
 		$context->getTreatment('exp');
-		$context->setAttribute('unrelated', 1);
+		$context->setAttributeValue('unrelated', 1);
 		$context->getTreatment('exp');
 		$context->setAttribute('country', 'GB');
 		$context->getTreatment('exp');
@@ -244,7 +244,7 @@ class ContextRuleRegressionTest extends TestCase {
 		self::assertSame(1, $context->getTreatment('exp'));
 		$context->refresh();
 		self::assertSame(1, $context->getTreatment('exp'));
-		$context->setAttribute('unrelated', true);
+		$context->setAttributeValue('unrelated', true);
 		self::assertSame(1, $context->getTreatment('exp'));
 		self::assertSame(1, $context->getPendingCount());
 	}

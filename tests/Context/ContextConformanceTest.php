@@ -50,6 +50,21 @@ class JsonGoal implements \JsonSerializable {
 	}
 }
 
+class LegacyContext extends Context {
+	public array $attributeCalls = [];
+	public array $trackCalls = [];
+
+	public function setAttribute(string $name, string $value): Context {
+		$this->attributeCalls[] = [$name, $value];
+		return parent::setAttribute($name, $value);
+	}
+
+	public function track(string $goalName, ?object $properties = null): void {
+		$this->trackCalls[] = [$goalName, $properties];
+		parent::track($goalName, $properties);
+	}
+}
+
 class LegacyContextConfig extends ContextConfig {
 	public function setUnit(string $unitType, string $uid): ContextConfig {
 		return parent::setUnit($unitType, $uid);
@@ -241,11 +256,35 @@ class ContextConformanceTest extends TestCase {
 		$this->context()->setUnits(['x' => ['uid']]);
 	}
 
+	public function testLegacyContextSignaturesAndScalarCoercion(): void {
+		self::assertTrue(class_exists(LegacyContext::class));
+		self::assertSame('string', (string) (new \ReflectionParameter([Context::class, 'setAttribute'], 'value'))->getType());
+		self::assertSame('?object', (string) (new \ReflectionParameter([Context::class, 'track'], 'properties'))->getType());
+		$context = $this->context();
+		$context->setAttribute('number', 123);
+		$context->setAttributes(['other' => 42]);
+		self::assertSame('123', $context->getAttribute('number'));
+		self::assertSame('42', $context->getAttribute('other'));
+		$context->setAttributeValue('number', 123);
+		self::assertSame(123, $context->getAttribute('number'));
+	}
+
+	public function testAdditiveMethodsHonorLegacyHooks(): void {
+		$context = (new \ReflectionClass(LegacyContext::class))->newInstanceWithoutConstructor();
+		$context->setAttributeValues(['name' => 'Alice', 'age' => 25]);
+		$context->trackWithProperties('purchase', ['amount' => 42]);
+		self::assertSame([['name', 'Alice']], $context->attributeCalls);
+		self::assertSame(25, $context->getAttribute('age'));
+		self::assertSame('purchase', $context->trackCalls[0][0]);
+		self::assertSame(42, $context->trackCalls[0][1]->amount);
+		self::assertSame(1, $context->getPendingCount());
+	}
+
 	public function testTrackRejectsNonObjectProperties(): void {
 		foreach ([125.0, 'text', true, [1, 2], []] as $bad) {
 			$context = $this->context();
 			try {
-				$context->track('goal', $bad);
+				$context->trackWithProperties('goal', $bad);
 				self::fail('expected an error for ' . json_encode($bad));
 			} catch (\InvalidArgumentException $e) {
 				self::assertSame("Goal 'goal' properties must be of type object.", $e->getMessage());
@@ -257,7 +296,7 @@ class ContextConformanceTest extends TestCase {
 	public function testTrackAcceptsObjectsAndAssociativeArrays(): void {
 		$context = $this->context();
 		$context->track('a', (object) ['x' => 1]);
-		$context->track('b', ['x' => 1]);
+		$context->trackWithProperties('b', ['x' => 1]);
 		$context->track('d');
 		self::assertSame(3, $context->getPendingCount());
 	}
