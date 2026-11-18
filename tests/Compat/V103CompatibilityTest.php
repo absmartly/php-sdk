@@ -198,4 +198,25 @@ class V103CompatibilityTest extends TestCase {
 		$published = array_column(json_decode(json_encode($handler->submitted[0]), true)['attributes'], 'value', 'name');
 		self::assertSame(['age' => '25', 'vip' => '1', 'name' => 'Alice'], $published);
 	}
+
+	public function testAnOverrideToVariant0IsExposedOnce(): void {
+		// v1.0.3 read an override of 0 as "no override", rebuilt the assignment and queued an exposure on every read.
+		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'key', 'app', 'env'));
+		$config = new Config($client);
+		$handler = new ContextEventHandlerMock($client);
+		$config->setContextEventHandler($handler);
+		$fixture = json_decode(file_get_contents(__DIR__ . '/../Fixtures/json/context.json'));
+		$context = (new SDK($config))->createContextWithData(
+			(new ContextConfig())->setUnit('session_id', 'abc'),
+			new ContextData($fixture->experiments)
+		);
+		$context->setOverride('exp_test_ab', 0);
+
+		foreach ([1, 2, 3] as $read) {
+			self::assertSame(0, $context->getTreatment('exp_test_ab'));
+		}
+		self::assertSame(1, $context->getPendingCount());
+		$context->publish();
+		self::assertCount(1, $handler->submitted[0]->exposures);
+	}
 }

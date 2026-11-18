@@ -100,6 +100,9 @@ changes below before upgrading. It is not a guarantee that every 1.0.3 workload 
   a successful `publish()`, so each later publish re-sent all earlier events (goals per PUT: `g1`, then `g1,g2`,
   then `g1,g2,g3`); now each event is sent once. *Affects:* contexts that publish more than once, whose exported
   exposure and goal counts were inflated by the duplicates.
+- **An override to variant 0 is exposed once.** 1.0.3 read an override of `0` as "no override", rebuilt the
+  assignment and queued a new exposure on every `getTreatment()`. *Affects:* contexts that override an experiment
+  to variant 0, whose exported exposure counts were inflated.
 - A batch the collector accepted is cleared before the `Publish` event is logged, so a throwing event logger can
   no longer cause it to be sent again.
 - `curl_close()` is no longer called on PHP 8+ (deprecated in 8.5), and `HTTPClient` no longer triggers the
