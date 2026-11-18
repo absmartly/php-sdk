@@ -925,7 +925,9 @@ class Context {
 	}
 
 	/**
-	 * Queues the experiment's own exposure, unless a holdout suppressed it, and then each of its holdouts' exposures.
+	 * Queues the experiment's own exposure, unless a holdout suppressed it or it is already exposed, and then each of
+	 * its holdouts' exposures not yet queued, so an exposed assignment re-queues only arms the retained-event cap
+	 * dropped. Callers skip exposed assignments while nothing is dropped, as in JS.
 	 */
 	private function triggerExposures(Assignment $assignment): void {
 		if ($assignment->holdoutAssignments === null) {
@@ -976,19 +978,6 @@ class Context {
 		return $error;
 	}
 
-	/**
-	 * Exposes $assignment on an exposing read. An exposed assignment with holdouts re-queues any of its arms whose
-	 * exposure the retained-event cap dropped. Callers skip exposed assignments while nothing is dropped, as in JS.
-	 */
-	private function exposeAssignment(Assignment $assignment): void {
-		if (!$assignment->exposed) {
-			$this->triggerExposures($assignment);
-		}
-		elseif ($assignment->holdoutAssignments !== null && ($error = $this->triggerHoldoutExposures($assignment)) !== null) {
-			throw $error;
-		}
-	}
-
 	public function getVariableValue(string $key, $defaultValue = null) {
 		$this->checkReady();
 		return $this->resolveVariableValue($key, $defaultValue, true);
@@ -1017,7 +1006,7 @@ class Context {
 
 			if ($assignment->variables !== null) {
 				if ($exposeAssignments && (!$assignment->exposed || $this->droppedHoldoutArms !== [])) {
-					$this->exposeAssignment($assignment);
+					$this->triggerExposures($assignment);
 				}
 
 				// property_exists (not isset) so a present key whose value is null is still returned,
@@ -1136,7 +1125,7 @@ class Context {
 		$this->checkReady();
 		$assignment = $this->getAssignment($experimentName);
 		if (!$assignment->exposed || $this->droppedHoldoutArms !== []) {
-			$this->exposeAssignment($assignment);
+			$this->triggerExposures($assignment);
 		}
 
 		return $assignment->variant;

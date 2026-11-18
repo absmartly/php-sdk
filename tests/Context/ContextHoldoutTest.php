@@ -691,7 +691,7 @@ class ContextHoldoutTest extends TestCase {
 		self::assertSame(1, $context->getPendingCount());
 	}
 
-	public function testExposureSettlementStopsAfterTheBoundedNumberOfRetirements(): void {
+	public function testRepeatedPeeksQueueNoExposure(): void {
 		$context = $this->createContext(self::data([], self::experiment(1, 'exp_bounded_retry', self::UNIT_TYPE, 1)));
 
 		self::assertSame(1, $context->peekTreatment('exp_bounded_retry'));
