@@ -291,8 +291,9 @@ class ContextSwitchbackPayloadTest extends TestCase {
 	public function testSwitchbackSourcesAreReusedAcrossReads(): void {
 		$context = $this->createContext(self::dataOf(self::switchback(2)));
 		$sources = self::privateValue($context, 'switchbackSources')['exp_sb'];
-		$context->getTreatment('exp_sb');
-		$context->getTreatment('exp_sb');
+		$sources->servable = false;
+		self::assertSame(0, $context->getTreatment('exp_sb'));
+		self::assertSame(0, $context->getPendingCount());
 		self::assertSame($sources, self::privateValue($context, 'switchbackSources')['exp_sb']);
 	}
 
