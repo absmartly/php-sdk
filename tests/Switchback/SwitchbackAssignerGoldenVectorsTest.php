@@ -129,6 +129,8 @@ class SwitchbackAssignerGoldenVectorsTest extends TestCase {
 		self::assertSame(2, SwitchbackAssigner::assignUnit('u-0', [0.3, 0.3, 0.4], 1, 2));
 		self::assertSame(1, SwitchbackAssigner::assignUnit('u-0', [0.3, 0.3], 1, 2));
 		self::assertSame(1, SwitchbackAssigner::assignUnit('u-0', [0.0, 0.0], 1, 2));
+		// u-0's probability is exactly the first bound here, so it belongs to the next arm.
+		self::assertSame(1, SwitchbackAssigner::assignUnit('u-0', [0.86284950418929796, 0.13715049581070204], 1, 2));
 		self::assertSame(1, SwitchbackAssigner::assignUnit('u-0', [0.0, 1.0], 1, 2));
 		if (PHP_VERSION_ID >= 80100) {
 			foreach ([[0.5, 0.5], [0.2, 0.3, 0.5], [1.0, 0.0], [0.0, 1.0], [0.3, 0.3], [0.1, 0.1, 0.1]] as $split) {
