@@ -284,6 +284,22 @@ class ContextSwitchbackTest extends TestCase {
 		], $this->publishExposures($context));
 	}
 
+	/** A slot resolved with no linked unit is never reused as the serving resolution once the unit is set. */
+	public function testAnAbsentResolutionIsNotReusedAfterSetUnit(): void {
+		$experiment = self::switchback(2);
+		$experiment->switchbackClusters = self::clusters('device_id', 'device_key', self::$UNIT_TYPE, self::$CLUSTER_PATH);
+		// No linked unit: absent, and the override is recorded under the first declared type.
+		$context = $this->createContext(self::dataOf($experiment), ['user_id' => 'u1'], []);
+		$context->setOverride('exp_sb', 1);
+		$this->now = self::$ANCHOR + 10;
+		self::assertSame(1, $context->getTreatment('exp_sb'));
+		$context->setUnit(self::$UNIT_TYPE, self::$UID);
+		$context->setAttribute(self::$CLUSTER_PATH, self::$CLUSTER_KEY);
+		$context->setOverride('exp_sb', 0);
+		self::assertSame(0, $context->getTreatment('exp_sb'));
+		self::assertSame(['device_id', self::$UNIT_TYPE], array_column($this->publishExposures($context), 2));
+	}
+
 	public function testFullOnServesTheFullOnVariantInEveryPeriod(): void {
 		$experiment = self::switchback(3);
 		$experiment->fullOnVariant = 2;
@@ -708,6 +724,20 @@ class ContextSwitchbackTest extends TestCase {
 		self::assertSame(['exp_first', 'exp_second'], array_column($this->publishExposures($context), 1));
 	}
 
+	/** A switchback won by a rule or an override and read only through a variable key is exposed. */
+	public function testARuleOrOverrideWonSwitchbackIsExposedThroughAVariableKey(): void {
+		$rule = self::switchback(2);
+		$rule->assignmentRules = self::ASSIGN_VARIANT_1;
+		$context = $this->createContext(self::dataOf($rule));
+		self::assertSame(1, $context->getVariableValue('sb.arm', -1));
+		self::assertSame([self::ruleExposure('exp_sb', 1, self::$ANCHOR)], $this->publishExposures($context));
+
+		$overridden = $this->createContext(self::dataOf(self::switchback(2)));
+		$overridden->setOverride('exp_sb', 1);
+		self::assertSame(1, $overridden->getVariableValue('sb.arm', -1));
+		self::assertSame([self::exposure(1, 'exp_sb', self::$UNIT_TYPE, 1, self::$ANCHOR, false, true, true)], $this->publishExposures($overridden));
+	}
+
 	/** Alone on the key, a strict-mismatched switchback yields the default value. */
 	public function testStrictMismatchedSwitchbackAloneOnAVariableKeyReturnsTheDefault(): void {
 		$sb = self::switchback(2);
@@ -955,26 +985,43 @@ class ContextSwitchbackTest extends TestCase {
 		self::assertSame([self::sbExposure(self::$EXPECTED_2_ARMS[0], self::$ANCHOR + self::$HOUR - 1)], $this->publishExposures($context));
 	}
 
-	/**
-	 * A peek caches the period's assignment without exposing; the later getTreatment exposes it stamped with the reading
-	 * at which the slot read its cluster (PHP divergence from java-sdk, which stamps the exposing call's reading). The
-	 * collector resolves the cluster from the published attributes at exposedAt, so this keeps it on the served cluster.
-	 */
-	public function testExposureAfterPeekIsStampedWhenTheClusterWasRead(): void {
+	/** A peek caches the period's assignment without exposing; the later getTreatment exposes at its own instant. */
+	public function testExposureAfterPeekUsesTheExposingCallsInstant(): void {
 		$context = $this->createContext(self::dataOf(self::switchback(2)));
 		$this->now = self::$ANCHOR + 10;
 		self::assertSame(self::$EXPECTED_2_ARMS[0], $context->peekTreatment('exp_sb'));
 		$this->now = self::$ANCHOR + 20 * 60000;
 		self::assertSame(self::$EXPECTED_2_ARMS[0], $context->getTreatment('exp_sb'));
-		self::assertSame([self::sbExposure(self::$EXPECTED_2_ARMS[0], self::$ANCHOR + 10)], $this->publishExposures($context));
+		self::assertSame([self::sbExposure(self::$EXPECTED_2_ARMS[0], self::$ANCHOR + 20 * 60000)], $this->publishExposures($context));
 	}
 
 	/**
-	 * Peek in period 0 with cluster store-42 (arm 0), change the cluster attribute to Faro (arm 1 in period 0), expose in
-	 * the same period: the read-once rule serves arm 0, and the published exposure, read the collector's way (the latest
-	 * attribute set at or before exposedAt), resolves to store-42, the cluster that was served.
+	 * Before the anchor there is no period to bound the stamp: a rule winner peeked and exposed later carries the
+	 * exposing call's reading, so it never precedes a goal tracked in between.
 	 */
-	public function testPublishedExposureResolvesToTheServedClusterAfterAnAttributeChange(): void {
+	public function testAnExposureNeverPrecedesAGoalTrackedBeforeIt(): void {
+		$experiment = self::switchback(2);
+		$experiment->assignmentRules = self::ASSIGN_VARIANT_1;
+		$this->now = self::$ANCHOR - 3 * 86400000;
+		$context = $this->createContext(self::dataOf($experiment));
+		self::assertSame(1, $context->peekTreatment('exp_sb'));
+		$this->now = self::$ANCHOR - 2 * 86400000;
+		$context->track('goal');
+		$this->now = self::$ANCHOR - 86400000;
+		self::assertSame(1, $context->getTreatment('exp_sb'));
+		$context->publish();
+		$event = $this->eventHandler->submitted[0];
+		self::assertSame(self::$ANCHOR - 86400000, $event->exposures[0]->exposedAt);
+		self::assertGreaterThan($event->goals[0]->achievedAt, $event->exposures[0]->exposedAt);
+	}
+
+	/**
+	 * Read once per period, as in java-sdk: a peek in period 0 with cluster store-42 (arm 0), the cluster attribute then
+	 * set to Faro (arm 1 in period 0), and an exposure later in the period serves arm 0, stamped with the exposing call's
+	 * reading. The collector, which resolves the cluster from the attributes at exposedAt, sees Faro: a known limit of
+	 * the shared Java/Collector contract (SWITCHBACK.md), pinned here so a change to it is deliberate.
+	 */
+	public function testAnAttributeChangeAfterAPeekKeepsTheServedArmAsInJava(): void {
 		$context = $this->createContext(self::dataOf(self::switchback(2)));
 		$this->now = self::$ANCHOR + 10;
 		self::assertSame(0, $context->peekTreatment('exp_sb'));
@@ -983,21 +1030,7 @@ class ContextSwitchbackTest extends TestCase {
 		self::assertSame(1, SwitchbackAssigner::assign('Faro', 0, self::seed(), 2));
 		$this->now = self::$ANCHOR + 30;
 		self::assertSame(0, $context->getTreatment('exp_sb'));
-
-		$context->publish();
-		$event = $this->eventHandler->submitted[0];
-		$exposedAt = $event->exposures[0]->exposedAt;
-		self::assertSame(0, $event->exposures[0]->variant);
-		$cluster = null;
-		$setAt = null;
-		foreach ($event->attributes as $attribute) {
-			if ($attribute->name === self::$CLUSTER_PATH && $attribute->setAt <= $exposedAt && ($setAt === null || $attribute->setAt >= $setAt)) {
-				$cluster = $attribute->value;
-				$setAt = $attribute->setAt;
-			}
-		}
-		self::assertSame(self::$CLUSTER_KEY, $cluster);
-		self::assertSame(SwitchbackAssigner::assign($cluster, 0, self::seed(), 2), $event->exposures[0]->variant);
+		self::assertSame([self::sbExposure(0, self::$ANCHOR + 30)], $this->publishExposures($context));
 	}
 
 	/** A nested SDK call (from a JsonSerializable cluster attribute) cannot move an outer exposure to another period. */
@@ -1512,8 +1545,7 @@ class ContextSwitchbackTest extends TestCase {
 		self::assertSame(2, $context->getPendingCount());
 		self::assertSame([
 			self::sbExposure(self::$EXPECTED_2_ARMS[1], self::$ANCHOR + self::$HOUR + 10),
-			// Re-queued with the reading at which period 0 read its cluster.
-			self::sbExposure(self::$EXPECTED_2_ARMS[0], self::$ANCHOR + 10),
+			self::sbExposure(self::$EXPECTED_2_ARMS[0], self::$ANCHOR + 20),
 		], $this->publishExposures($context));
 	}
 }

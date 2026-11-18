@@ -919,6 +919,7 @@ class Context {
 			$cached = null;
 		}
 		if ($cached !== null && $this->switchbackAssignmentCurrent($experimentName, $cached, $experiment)) {
+			$cached->switchback->readAt = $now;
 			return $cached;
 		}
 
@@ -929,15 +930,11 @@ class Context {
 		$assignment->switchback = $slot = new SwitchbackSlot($period);
 		$slot->custom = $this->cassignments[$experimentName] ?? null;
 
+		$slot->readAt = $now;
 		$cachedServing = $cached !== null ? $cached->switchback->serving : null;
-		if ($cachedServing !== null && $cachedServing->status !== SwitchbackServing::ABSENT) {
-			$serving = $cachedServing;
-			$slot->servedAt = $cached->switchback->servedAt;
-		}
-		else {
-			$serving = $this->resolveSwitchbackServing($data, $sources, $now);
-			$slot->servedAt = $now;
-		}
+		$serving = $cachedServing !== null && $cachedServing->status !== SwitchbackServing::ABSENT
+			? $cachedServing
+			: $this->resolveSwitchbackServing($data, $sources, $now);
 		$slot->serving = $serving;
 
 		if (isset($this->overrides[$experimentName])) {
@@ -1272,11 +1269,10 @@ class Context {
 	 */
 	private function triggerExposures(Assignment $assignment): void {
 		if ($assignment->switchback !== null) {
-			// Stamped with the reading at which the slot read its cluster: it lies in the slot's period, which analysis
-			// derives from exposedAt, and the collector, resolving the cluster from the attributes at exposedAt, finds the
-			// cluster that was served even if an attribute changed since.
+			// Stamped with the reading that resolved this call's period (java-sdk), since analysis derives the period from
+			// exposedAt. It is kept on the slot rather than the context, so a nested SDK call cannot change it.
 			if (!$assignment->switchback->silent) {
-				$this->queueExposure($assignment, $assignment->switchback->servedAt);
+				$this->queueExposure($assignment, $assignment->switchback->readAt);
 			}
 			return;
 		}

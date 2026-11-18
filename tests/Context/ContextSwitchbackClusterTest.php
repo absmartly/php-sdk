@@ -394,8 +394,7 @@ class ContextSwitchbackClusterTest extends TestCase {
 		$this->refreshTo($context, self::attributeSwitchback('city'));
 		self::assertSame(1, self::expected('Faro', 0));
 		self::assertSame(self::expected('Faro', 0), $context->getTreatment('exp_sb'));
-		// Both are stamped when the slot read Faro, so the collector resolves Faro for each.
-		self::assertSame([self::sbExposure(0, self::$ANCHOR + 10, false), self::sbExposure(self::expected('Faro', 0), self::$ANCHOR + 10)],
+		self::assertSame([self::sbExposure(0, self::$ANCHOR + 10, false), self::sbExposure(self::expected('Faro', 0), self::$ANCHOR + 20)],
 			$this->publishExposures($context));
 	}
 
@@ -415,7 +414,7 @@ class ContextSwitchbackClusterTest extends TestCase {
 		self::assertSame(self::expected('Lisboa', 0), $context->getTreatment('exp_sb'));
 
 		self::assertSame([self::sbExposure(self::expected('Lisboa', 0), self::$ANCHOR + 10),
-			self::sbExposure(self::expected('Lisboa', 0), self::$ANCHOR + 10, true, true)], $this->publishExposures($context));
+			self::sbExposure(self::expected('Lisboa', 0), self::$ANCHOR + 20, true, true)], $this->publishExposures($context));
 	}
 
 	/** A slot first resolved without a key carries that missing key into its replacement. */
