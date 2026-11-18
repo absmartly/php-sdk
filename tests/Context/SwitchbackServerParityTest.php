@@ -95,6 +95,13 @@ class SwitchbackServerParityTest extends TestCase {
 	public function testDisagreementIsIneligibleAndRecordsNothing(): void {
 		self::assertSilentControl($this->serve(self::sbExperiment(self::twoSources()), self::twoUnits(),
 			['store_city' => 'Lisboa', 'geo' => ['city' => 'Porto']]), 'disagreement');
+		// Ineligible, not absent: the experiment applies, so a variable read gets variant 0's value, not the default.
+		$experiment = self::sbExperiment(self::twoSources());
+		$experiment->variants[0]->config = '{"sb.arm":0}';
+		$context = $this->createContext(self::dataOf($experiment), self::twoUnits(), ['store_city' => 'Lisboa', 'geo' => ['city' => 'Porto']]);
+		self::assertSame(0, $context->getVariableValue('sb.arm', -1));
+		self::assertSame(['unitType' => self::STORE, 'assigned' => true, 'eligible' => false, 'silent' => true, 'applies' => true],
+			$this->resolution($context, 'exp_sb'));
 	}
 
 	public function testMissingValueIsSkippedAndTheNextValueServes(): void {

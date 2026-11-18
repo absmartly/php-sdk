@@ -617,6 +617,21 @@ class ContextSwitchbackTest extends TestCase {
 		$rule->seedLo = 2;
 		$context = $this->createContext(self::dataOf($rule), [self::$UNIT_TYPE => 'store-32476']);
 		self::assertSame(0, $context->getTreatment('exp_sb'));
+		// Rule-won: a skipped rule would publish the same arm without ruleOverride.
+		self::assertSame([self::ruleExposure('exp_sb', 0, self::$ANCHOR)], $this->publishExposures($context));
+
+		// A malformed traffic weight is rejected as before, never served as an eligible assignment.
+		$malformed = self::switchback(2);
+		$malformed->trafficSplit = ['not-a-number', 1];
+		$context = $this->createContext(self::dataOf($malformed), [self::$UNIT_TYPE => 'store-32476']);
+		try {
+			$context->getTreatment('exp_sb');
+			self::fail('expected InvalidArgumentException');
+		}
+		catch (\InvalidArgumentException $exception) {
+			self::assertStringContainsString('must be an array of float values', $exception->getMessage());
+		}
+		self::assertSame(0, $context->getPendingCount());
 
 		// Unit experiments keep VariantAssigner, so the same unit is bucketed as before on each runtime: lastguest's
 		// draw on PHP 7.4/8.0, native murmur3 on 8.1+.

@@ -9,9 +9,12 @@ use InvalidArgumentException;
 use function array_values;
 use function count;
 use function floor;
+use function gettype;
 use function hash;
 use function hexdec;
 use function intdiv;
+use function is_numeric;
+use function is_scalar;
 use function min;
 use function ord;
 use function pack;
@@ -93,6 +96,12 @@ final class SwitchbackAssigner {
 		$cumSum = 0.0;
 		$split = array_values($split);
 		foreach ($split as $i => $value) {
+			// Rejected as VariantAssigner::chooseVariant() rejects it, so a malformed weight never serves an assignment.
+			if (!is_numeric($value)) {
+				throw new InvalidArgumentException(sprintf(
+					'VariantAssigner::chooseVariant($split) must be an array of float values. Encountered: "%s" of type %s at key position %d',
+					is_scalar($value) ? (string) $value : gettype($value), gettype($value), $i));
+			}
 			$cumSum += (float) $value;
 			if ($probability < $cumSum) {
 				return $i;
