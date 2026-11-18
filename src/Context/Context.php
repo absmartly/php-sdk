@@ -757,7 +757,8 @@ class Context {
 		try {
 			json_encode($value, JSON_THROW_ON_ERROR);
 		}
-		catch (JsonException $exception) {
+		catch (Throwable $exception) {
+			// Includes a JsonSerializable whose jsonSerialize() throws.
 			throw new InvalidArgumentException(sprintf('%s cannot be published: %s', $what, $exception->getMessage()), 0, $exception);
 		}
 	}

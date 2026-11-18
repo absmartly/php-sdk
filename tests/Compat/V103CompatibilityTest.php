@@ -354,4 +354,28 @@ class V103CompatibilityTest extends TestCase {
 		// exp_test_abc serves variant 2 ("red") to this unit; the rejected experiment's value never appears.
 		self::assertSame('red', $context->peekVariableValue('button.color', 'none'));
 	}
+
+	public function testAThrowingJsonSerializableIsRejectedAsInvalidArgument(): void {
+		$config = new Config(new Client(new ClientConfig('https://demo.absmartly.io/v1', 'key', 'app', 'env'), new RecordingHTTPClient()));
+		$context = (new SDK($config))->createContextWithData((new ContextConfig())->setUnit('session_id', 'abc'), new ContextData([]));
+		$dto = new class implements \JsonSerializable {
+			public function jsonSerialize(): array {
+				throw new \DomainException('not serializable');
+			}
+		};
+
+		foreach ([
+			static fn() => $context->trackWithProperties('goal', $dto),
+			static fn() => $context->setAttributeValue('dto', $dto),
+		] as $call) {
+			try {
+				$call();
+				self::fail('expected an InvalidArgumentException');
+			}
+			catch (\ABSmartly\SDK\Exception\InvalidArgumentException $e) {
+				self::assertInstanceOf(\DomainException::class, $e->getPrevious());
+			}
+		}
+		self::assertSame(0, $context->getPendingCount());
+	}
 }
