@@ -293,7 +293,6 @@ class Context {
 				$holdouts = [];
 				foreach ($experimentVariables->data->holdoutIds as $holdoutId) {
 					if (isset($this->holdoutsById[$holdoutId])) {
-						// Keyed by id, so a duplicate id covers the experiment once, as JS's insertUniqueSorted does.
 						$holdouts[$holdoutId] = $this->holdoutsById[$holdoutId];
 					}
 				}
@@ -906,7 +905,6 @@ class Context {
 
 		$fresh = $this->experimentHoldouts[$experimentName] ?? null;
 		if ($fresh === $pinned) {
-			// The same holdout objects: nothing was refreshed since the assignment was resolved.
 			return true;
 		}
 		if ($fresh === null) {
@@ -964,7 +962,6 @@ class Context {
 	private function triggerHoldoutExposures(Assignment $assignment): ?Throwable {
 		$error = null;
 		foreach ($assignment->holdoutAssignments as $i => $holdoutAssignment) {
-			// queueExposure() skips an arm that is already exposed.
 			if ($holdoutAssignment !== null) {
 				$holdoutAssignment->name = $assignment->holdouts[$i]->name;
 				try {

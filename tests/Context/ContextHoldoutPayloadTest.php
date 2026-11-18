@@ -380,10 +380,12 @@ class ContextHoldoutPayloadTest extends TestCase {
 		$context = $this->createContext(new ContextData([$experiment], [self::holdout(11, 'holdout_a', 13, 111)]));
 
 		self::assertSame(0, $context->getTreatment('exp'));
+		$cached = self::invoke($context, 'getAssignment', 'exp');
 		$context->setAttribute('age', 5);
 		self::assertSame(0, $context->getTreatment('exp'));
 		$context->setAttribute('age', 50);
 		self::assertSame(0, $context->getTreatment('exp'));
+		self::assertSame($cached, self::invoke($context, 'getAssignment', 'exp'));
 		self::assertSame(1, $context->getPendingCount());
 	}
 
@@ -586,7 +588,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 		$context->refresh();
 		self::assertCount(1, self::droppedHoldoutArms($context));
 
-		// Coverage removed: the cached assignment still pins the arm until it is read again.
 		$provider->next = new ContextData([self::experiment(1, 'exp', [])], [$holdout]);
 		$context->refresh();
 		self::assertCount(1, self::droppedHoldoutArms($context));
@@ -888,14 +889,14 @@ class ContextHoldoutPayloadTest extends TestCase {
 		return preg_replace('/"(publishedAt|exposedAt|achievedAt|setAt)":[0-9.]+/', '"$1":0', json_encode($this->eventHandler->submitted));
 	}
 
-	// Without holdouts the published bytes are those of a payload that predates them, whether the holdouts field is
-	// absent, empty, or lists holdouts that cover nothing.
+	// Without holdout coverage the published bytes are those main published before holdouts existed:
+	// publish_without_holdouts.json was recorded from origin/main 80a5ec6 with this same sequence (timestamps zeroed).
+	// That holds whether the holdouts field is absent, empty, or lists holdouts that cover nothing.
 	public function testPublishIsByteIdenticalWithoutHoldoutCoverage(): void {
-		$experiments = self::fixture('context.json')->experiments;
-		$expected = $this->publishedBody(new ContextData(self::fixture('context.json')->experiments));
+		$expected = rtrim(file_get_contents(__DIR__ . '/../Fixtures/json/publish_without_holdouts.json'));
 
-		self::assertStringContainsString('"exposures":[{"id":1,"name":"exp_test_ab","unit":"session_id","variant":1,', $expected);
-		self::assertSame($expected, $this->publishedBody(new ContextData($experiments, [])));
+		self::assertSame($expected, $this->publishedBody(new ContextData(self::fixture('context.json')->experiments)));
+		self::assertSame($expected, $this->publishedBody(new ContextData(self::fixture('context.json')->experiments, [])));
 		self::assertSame($expected, $this->publishedBody(new ContextData(self::fixture('context.json')->experiments,
 			[self::holdout(11, 'holdout_a', 13, 111)])));
 
@@ -1068,7 +1069,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 		$payload->experiments[] = self::experiment(2, 'exp_sibling', [11]);
 		$context = $this->createContext(new ContextData($payload->experiments, $payload->holdouts));
 
-		// The sibling reuses the arm (iteration 1.0 is 1), so the holdout is exposed once.
 		self::assertSame(0, $context->getTreatment('exp'));
 		self::assertSame(0, $context->getTreatment('exp_sibling'));
 		self::assertSame([[11, 'holdout_a', 'session_id', 0]], $this->published($context));
