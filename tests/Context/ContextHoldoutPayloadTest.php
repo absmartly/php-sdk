@@ -846,6 +846,53 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertSame([11], $context->getContextData()->experiments[0]->holdoutIds);
 	}
 
+	// While another experiment's holdout arm is dropped, re-reading an exposed covered experiment re-queues nothing of
+	// its own: only the dropped arm comes back, on its own experiment's next read.
+	public function testExposedCoveredExperimentIsNotQueuedAgainWhileAnotherArmIsDropped(): void {
+		[$context] = $this->contextWithProvider(new ContextData(
+			[self::experiment(1, 'exp1', [11]), self::experiment(2, 'exp2', [12])],
+			[self::holdout(11, 'holdout_a', 13, 111), self::holdout(12, 'holdout_b', 1, 222)]));
+		self::assertSame(0, $context->getTreatment('exp1'));
+		self::assertSame(1, $context->getTreatment('exp2'));
+		$context->maxRetainedEvents = 3;
+		$this->failNextPublish($context);
+		self::assertSame(3, $context->getPendingCount());
+
+		self::assertSame(1, $context->getTreatment('exp2'));
+		self::assertSame(3, $context->getPendingCount());
+		self::assertSame([[2, 'exp2', 'session_id', 1], [12, 'holdout_b', 'session_id', 1]], $this->published($context));
+	}
+
+	// When the logger throws on both the experiment's exposure and a holdout's, the experiment's error is re-thrown,
+	// after both exposures were queued.
+	public function testOwnExposureErrorIsRethrownBeforeAHoldoutError(): void {
+		$logger = new class implements ContextEventLogger {
+			public function handleEvent(Context $context, ContextEventLoggerEvent $event): void {
+				if ($event->getEvent() === ContextEventLoggerEvent::Exposure) {
+					throw new \RuntimeException('exposure ' . $event->getData()->id);
+				}
+			}
+		};
+		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'test-api-key', 'website', 'production'));
+		$config = new Config($client);
+		$this->eventHandler = new ContextEventHandlerMock($client);
+		$config->setContextEventHandler($this->eventHandler);
+		$contextConfig = new ContextConfig();
+		$contextConfig->setUnits(['session_id' => self::UID]);
+		$contextConfig->setEventLogger($logger);
+		$context = (new SDK($config))->createContextWithData($contextConfig,
+			new ContextData([self::experiment(1, 'exp', [11])], [self::holdout(11, 'holdout_a', 1, 222)]));
+
+		try {
+			$context->getTreatment('exp');
+			self::fail('the logger error must reach the caller');
+		}
+		catch (\RuntimeException $exception) {
+			self::assertSame('exposure 1', $exception->getMessage());
+		}
+		self::assertSame(2, $context->getPendingCount());
+	}
+
 	private static function droppedHoldoutArms(Context $context): array {
 		$property = new \ReflectionProperty(Context::class, 'droppedHoldoutArms');
 		if (PHP_VERSION_ID < 80100) {
