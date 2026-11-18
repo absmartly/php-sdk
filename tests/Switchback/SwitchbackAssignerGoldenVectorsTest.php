@@ -1,0 +1,134 @@
+<?php
+
+namespace ABSmartly\SDK\Tests\Switchback;
+
+use ABSmartly\SDK\Switchback\SwitchbackAssigner;
+use PHPUnit\Framework\TestCase;
+
+/**
+ * Port of java-sdk SwitchbackAssignerGoldenVectorsTest. Fixture copied byte-for-byte from absmartly/abs 9bd2b5ca35
+ * lib/utils/src/test/resources/switchback/golden-vectors.json (git blob b314abeb9e97), the same copy java-sdk and
+ * cross-sdk-tests vendor.
+ */
+class SwitchbackAssignerGoldenVectorsTest extends TestCase {
+	private const FIXTURE = __DIR__ . '/../Fixtures/switchback/golden-vectors.json';
+
+	private static function loadVectors(): object {
+		return json_decode(file_get_contents(self::FIXTURE), false, 512, JSON_THROW_ON_ERROR);
+	}
+
+	/** The platform hashes a numeric cluster unit as Long.toString(n); strings pass through. */
+	private static function clusterUnit($value): string {
+		if (is_int($value)) {
+			return (string) $value;
+		}
+		self::assertIsString($value);
+		return $value;
+	}
+
+	/** 64-bit fields are decimal strings; a number would mean the fixture regressed to a lossy encoding. */
+	private static function exactLong($value): int {
+		self::assertIsString($value);
+		self::assertMatchesRegularExpression('/^-?[0-9]+$/', $value);
+		$parsed = (int) $value;
+		self::assertSame($value, (string) $parsed, 'outside the 64-bit range');
+		return $parsed;
+	}
+
+	public function testFixtureIsTheByteIdenticalPlatformBlob(): void {
+		$bytes = file_get_contents(self::FIXTURE);
+		self::assertSame('b314abeb9e97b35f911c7caacec90b8ff73b9d77', sha1('blob ' . strlen($bytes) . "\0" . $bytes));
+	}
+
+	public function testAssignSwitchbackMatchesEveryGoldenVector(): void {
+		$cases = self::loadVectors()->assignSwitchback;
+		self::assertCount(882, $cases);
+
+		$armCounts = [];
+		$boundaryCases = 0;
+		foreach ($cases as $c) {
+			$periodIndex = self::exactLong($c->periodIndex);
+			$seed = self::exactLong($c->seed);
+			$armCounts[$c->armCount] = true;
+			if (in_array($periodIndex, [PHP_INT_MIN, PHP_INT_MAX], true) || in_array($seed, [PHP_INT_MIN, PHP_INT_MAX], true)) {
+				++$boundaryCases;
+			}
+
+			self::assertSame($c->expectedVariant,
+				SwitchbackAssigner::assign(self::clusterUnit($c->clusterUnit), $periodIndex, $seed, $c->armCount),
+				json_encode($c));
+		}
+
+		self::assertArrayHasKey(2, $armCounts);
+		self::assertArrayHasKey(3, $armCounts);
+		self::assertArrayHasKey(10, $armCounts);
+		self::assertGreaterThan(0, $boundaryCases);
+	}
+
+	public function testFisherYatesPermutationMatchesEveryGoldenVector(): void {
+		$cases = self::loadVectors()->fisherYatesPermutation;
+		self::assertCount(504, $cases);
+
+		foreach ($cases as $c) {
+			$actual = SwitchbackAssigner::fisherYatesPermutation($c->armCount,
+				SwitchbackAssigner::baseHash(self::clusterUnit($c->clusterUnit), self::exactLong($c->cycleIndex), self::exactLong($c->seed)));
+			self::assertSame($c->expectedPermutation, $actual, json_encode($c));
+		}
+	}
+
+	public function testEveryCycleCoversEveryArmExactlyOnce(): void {
+		foreach ([2, 3, 10] as $armCount) {
+			for ($cycle = -3; $cycle < 20; ++$cycle) {
+				$seen = [];
+				for ($slot = 0; $slot < $armCount; ++$slot) {
+					$variant = SwitchbackAssigner::assign('store_42', $cycle * $armCount + $slot, 0x123456789abc, $armCount);
+					self::assertArrayNotHasKey($variant, $seen, 'arm repeated within a cycle');
+					$seen[$variant] = true;
+				}
+			}
+		}
+	}
+
+	public function testRejectsFewerThanTwoArms(): void {
+		foreach ([static function () {
+			SwitchbackAssigner::assign('u', 0, 0, 1);
+		}, static function () {
+			SwitchbackAssigner::fisherYatesPermutation(0, 0);
+		}] as $call) {
+			try {
+				$call();
+				self::fail('expected InvalidArgumentException');
+			}
+			catch (\InvalidArgumentException $exception) {
+				self::assertStringContainsString('armCount must be >= 2', $exception->getMessage());
+			}
+		}
+	}
+
+	public function testFloorDiv(): void {
+		self::assertSame(0, SwitchbackAssigner::floorDiv(0, 3));
+		self::assertSame(0, SwitchbackAssigner::floorDiv(2, 3));
+		self::assertSame(1, SwitchbackAssigner::floorDiv(3, 3));
+		self::assertSame(-1, SwitchbackAssigner::floorDiv(-1, 3));
+		self::assertSame(-1, SwitchbackAssigner::floorDiv(-3, 3));
+		self::assertSame(-2, SwitchbackAssigner::floorDiv(-4, 3));
+		// Math.floorDiv(Long.MIN_VALUE, 3L) and Math.floorDiv(Long.MAX_VALUE, 10L).
+		self::assertSame(-3074457345618258603, SwitchbackAssigner::floorDiv(PHP_INT_MIN, 3));
+		self::assertSame(922337203685477580, SwitchbackAssigner::floorDiv(PHP_INT_MAX, 10));
+		self::assertSame(-922337203685477581, SwitchbackAssigner::floorDiv(PHP_INT_MIN, 10));
+		self::assertSame(-2, SwitchbackAssigner::floorDiv(PHP_INT_MIN, PHP_INT_MAX));
+		self::assertSame(-1, SwitchbackAssigner::floorDiv(-1, PHP_INT_MAX));
+	}
+
+	/** The extreme periods select the slot by floorMod: PHP_INT_MIN mod 3 is 1, not the truncated -2. */
+	public function testExtremePeriodsUseTheFlooredSlot(): void {
+		$seed = 42;
+		$cycle = SwitchbackAssigner::floorDiv(PHP_INT_MIN, 3);
+		$permutation = SwitchbackAssigner::fisherYatesPermutation(3, SwitchbackAssigner::baseHash('market_1', $cycle, $seed));
+		self::assertSame($permutation[1], SwitchbackAssigner::assign('market_1', PHP_INT_MIN, $seed, 3));
+
+		$cycle = SwitchbackAssigner::floorDiv(PHP_INT_MAX, 10);
+		$permutation = SwitchbackAssigner::fisherYatesPermutation(10, SwitchbackAssigner::baseHash('market_1', $cycle, $seed));
+		self::assertSame($permutation[7], SwitchbackAssigner::assign('market_1', PHP_INT_MAX, $seed, 10));
+	}
+}

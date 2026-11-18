@@ -38,5 +38,10 @@ class Assignment {
 	public ?array $holdoutAssignments = null;
 	/** For a holdout's own arm: count($split) when the arm was drawn, so a same-iteration refresh can't re-mean it. */
 	public int $holdoutArmCount = 0;
+
+	/**
+	 * @internal Set only for a switchback experiment's assignment: the slot's grid, period and serving resolution.
+	 */
+	public ?Switchback\SwitchbackSlot $switchback = null;
 }
 

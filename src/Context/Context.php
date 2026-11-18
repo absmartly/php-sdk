@@ -12,10 +12,16 @@ use ABSmartly\SDK\Exposure;
 use ABSmartly\SDK\GoalAchievement;
 use ABSmartly\SDK\PublishEvent;
 use ABSmartly\SDK;
+use ABSmartly\SDK\Switchback\SwitchbackAssigner;
+use ABSmartly\SDK\Switchback\SwitchbackAttributePath;
+use ABSmartly\SDK\Switchback\SwitchbackServing;
+use ABSmartly\SDK\Switchback\SwitchbackSlot;
+use ABSmartly\SDK\Switchback\SwitchbackSources;
 use ABSmartly\SDK\Utils;
 use ABSmartly\SDK\VariableParser;
 use ABSmartly\SDK\VariantAssigner;
 
+use Closure;
 use Exception;
 use JsonException;
 use Throwable;
@@ -30,6 +36,7 @@ use function floor;
 use function get_object_vars;
 use function gettype;
 use function hash;
+use function in_array;
 use function is_array;
 use function is_float;
 use function is_int;
@@ -37,6 +44,7 @@ use function is_object;
 use function is_string;
 use function json_decode;
 use function ksort;
+use function sort;
 use function microtime;
 use function min;
 use function property_exists;
@@ -110,6 +118,21 @@ class Context {
 	 */
 	private array $holdoutAssignmentCache = [];
 	private ?Throwable $readyError = null;
+	/** @var array<string, SwitchbackSources> The installed switchback experiments, by name. Empty without switchbacks. */
+	private array $switchbackSources = [];
+	/**
+	 * @var array<string, array{generation: int, periods: int[]}> Each switchback experiment's cached slots: the
+	 * generation they were resolved under and their period indices (at most SWITCHBACK_RETAINED_PERIODS), besides the
+	 * bare-name slot shared by pre-start, unservable and legacy resolutions.
+	 */
+	private array $switchbackEpochs = [];
+	/** Source of SwitchbackSources::$generation. */
+	private int $switchbackGenerationCounter = 0;
+	/** @var Closure(): int|null Test seam for getTime(); null reads the system clock. */
+	private static ?Closure $clock = null;
+
+	private const SWITCHBACK_RETAINED_PERIODS = 2;
+	private const SWITCHBACK_KEY_SEPARATOR = "\x1f";
 
 	/**
 	 * Upper bound on the number of exposures and goals retained after a failed publish. When a long-lived worker
@@ -186,6 +209,9 @@ class Context {
 	}
 
 	public static function getTime(): int {
+		if (self::$clock !== null) {
+			return (self::$clock)();
+		}
 		return (int) (microtime(true) * 1000);
 	}
 
@@ -254,6 +280,8 @@ class Context {
 		$this->parsedRules = [];
 		$this->holdoutsById = [];
 		$this->experimentHoldouts = [];
+		$previousSwitchbacks = $this->switchbackSources;
+		$this->switchbackSources = [];
 		$environment = $this->sdk->getClient()->getEnvironment();
 
 		foreach ($data->holdouts as $holdout) {
@@ -289,7 +317,11 @@ class Context {
 			if ($experimentVariables->data->assignmentRules !== null) {
 				$this->ruleKeys[$experiment->name] = $experimentVariables->data->assignmentRules . ':' . $environment;
 			}
-			if (!empty($experimentVariables->data->holdoutIds) && $this->holdoutsById !== []) {
+			if ($experimentVariables->data->randomizationType === 'switchback') {
+				// Holdouts never apply to a switchback.
+				$this->installSwitchback($experiment->name, $experimentVariables->data, $previousSwitchbacks[$experiment->name] ?? null);
+			}
+			elseif (!empty($experimentVariables->data->holdoutIds) && $this->holdoutsById !== []) {
 				$holdouts = [];
 				foreach ($experimentVariables->data->holdoutIds as $holdoutId) {
 					if (isset($this->holdoutsById[$holdoutId])) {
@@ -318,6 +350,24 @@ class Context {
 			}
 			$this->droppedHoldoutArms = array_intersect_key($this->droppedHoldoutArms, $pinned);
 		}
+	}
+
+	/**
+	 * Indexes a switchback's cluster sources and gives it a generation: the previous one while its switchback identity
+	 * is unchanged, otherwise a fresh one, so the next resolution drops every slot of the old epoch. The identity is the
+	 * id, the iteration, the ordered cluster map, the allow-list, startAt, periodMs and the design, plus unitType when
+	 * either side takes the legacy path. Seed, split and the analysis-only fields are left out.
+	 */
+	private function installSwitchback(string $name, Experiment $experiment, ?SwitchbackSources $previous): void {
+		$sources = new SwitchbackSources($experiment);
+		$sources->generation = $previous !== null
+			&& $previous->id === $experiment->id
+			&& $previous->iteration === $experiment->iteration
+			&& $previous->config === $sources->config
+			&& (($previous->paths !== null && $sources->paths !== null) || $previous->unitType === $experiment->unitType)
+			? $previous->generation
+			: ++$this->switchbackGenerationCounter;
+		$this->switchbackSources[$name] = $sources;
 	}
 
 	/**
@@ -411,6 +461,7 @@ class Context {
 		$this->index = [];
 		$this->holdoutsById = [];
 		$this->experimentHoldouts = [];
+		$this->switchbackSources = [];
 		$this->data = new ContextData();
 		$this->failed = true;
 		$this->ready = true;
@@ -611,7 +662,7 @@ class Context {
 	 *
 	 * @return array{variant: int, isMissingUnit: bool}|null
 	 */
-	private function resolveRule(Experiment $experiment, bool $isUnitPinnedMissing): ?array {
+	private function resolveRule(Experiment $experiment, bool $isUnitPinnedMissing, ?string $unitType = null): ?array {
 		if ($experiment->assignmentRules === null) {
 			return null;
 		}
@@ -645,12 +696,14 @@ class Context {
 			return null;
 		}
 
-		$uid = $isUnitPinnedMissing ? null : ($this->units[$experiment->unitType] ?? null);
+		// A switchback's split rule randomizes over its serving unit.
+		$unitType = $unitType ?? $experiment->unitType;
+		$uid = $isUnitPinnedMissing ? null : ($this->units[$unitType] ?? null);
 		if ($uid === null) {
 			return ['variant' => $experiment->fullOnVariant, 'isMissingUnit' => true];
 		}
 
-		$assigner = $this->getVariantAssigner($experiment->unitType, $uid);
+		$assigner = $this->getVariantAssigner($unitType, $uid);
 		return [
 			'variant' => $assigner->assign($action['split'], $experiment->seedHi, $experiment->seedLo),
 			'isMissingUnit' => false,
@@ -676,8 +729,20 @@ class Context {
 		return false;
 	}
 
-	private function getAssignment(string $experimentName): Assignment {
+	/**
+	 * @param int|null $now the call's clock reading, which picks a switchback's period; read here when null
+	 */
+	private function getAssignment(string $experimentName, ?int $now = null): Assignment {
 		$experiment = $this->getExperiment($experimentName);
+
+		// Both checks short-circuit for data that never had a switchback, so unit reads stay as cheap as before.
+		if ($this->switchbackSources !== [] && isset($this->switchbackSources[$experimentName])) {
+			return $this->getSwitchbackAssignment($experimentName, $experiment, $this->switchbackSources[$experimentName], $now ?? self::getTime());
+		}
+		if ($this->switchbackEpochs !== [] && isset($this->switchbackEpochs[$experimentName])) {
+			// No longer a switchback (removed, or now a unit experiment): its slots are from another epoch.
+			$this->dropSwitchbackEpoch($experimentName);
+		}
 
 		if (isset($this->assignmentCache[$experimentName])) {
 			$assignment = $this->assignmentCache[$experimentName];
@@ -823,6 +888,275 @@ class Context {
 	}
 
 	/**
+	 * Port of java-sdk's switchback resolution (the Collector's R33 serving). The slot is the experiment's current
+	 * period, or one bare-name slot before the anchor, for an unservable schedule and on the legacy path. A slot is
+	 * reused while it is current; otherwise it is resolved again, keeping the serving unit and cluster key it read, so
+	 * they are read once per slot.
+	 */
+	private function getSwitchbackAssignment(string $experimentName, ExperimentVariables $experiment, SwitchbackSources $sources, int $now): Assignment {
+		$data = $experiment->data;
+		$period = null;
+		if ($sources->servable && $sources->paths !== null && $now >= $data->switchbackStartAt) {
+			$period = SwitchbackAssigner::floorDiv($now - $data->switchbackStartAt, $data->switchbackPeriodMs);
+		}
+		$cacheKey = $period === null ? $experimentName : $experimentName . self::SWITCHBACK_KEY_SEPARATOR . $period;
+
+		$epoch = $this->switchbackEpochs[$experimentName] ?? null;
+		if ($epoch !== null && $epoch['generation'] !== $sources->generation) {
+			$this->dropSwitchbackEpoch($experimentName);
+		}
+
+		$cached = $this->assignmentCache[$cacheKey] ?? null;
+		if ($cached !== null && $cached->switchback === null) {
+			// A unit experiment's assignment left on the bare-name slot by a refresh.
+			$cached = null;
+		}
+		if ($cached !== null && $this->switchbackAssignmentCurrent($experimentName, $cached, $experiment, $sources)) {
+			return $cached;
+		}
+
+		$assignment = new Assignment();
+		$assignment->name = $experimentName;
+		$assignment->eligible = true;
+		$assignment->id = $data->id;
+		$assignment->switchback = $slot = new SwitchbackSlot($sources->config, $period);
+		$slot->custom = $this->cassignments[$experimentName] ?? null;
+
+		$cachedServing = $cached !== null ? $cached->switchback->serving : null;
+		$serving = $cachedServing !== null && $cachedServing->status !== SwitchbackServing::ABSENT
+			? $cachedServing
+			: $this->resolveSwitchbackServing($data, $sources, $now);
+		$slot->serving = $serving;
+
+		if (isset($this->overrides[$experimentName])) {
+			// The override variant, even without a cluster; recorded under the serving unit, else the first linked type.
+			$assignment->unitType = $serving->unitType ?? ($sources->paths !== null ? $sources->types[0] : $data->unitType);
+			$assignment->overridden = true;
+			$assignment->variant = $this->overrides[$experimentName];
+		}
+		else {
+			$this->resolveSwitchbackVariant($assignment, $experiment, $sources, $period);
+		}
+
+		if ($assignment->variant >= 0 && $assignment->variant < count($data->variants)) {
+			$assignment->variables = $experiment->variables[$assignment->variant];
+		}
+
+		$assignment->attrsSeq = $this->attrsSeq;
+		$this->assignmentCache[$cacheKey] = $assignment;
+		$this->retainSwitchbackPeriod($experimentName, $sources->generation, $period);
+
+		return $assignment;
+	}
+
+	/**
+	 * The precedence for an eligible cluster, in the Collector's assignExperiment order: assignment rules (a split rule
+	 * randomizes over the serving unit), the audience, full-on, then, only when the schedule can be drawn now, traffic
+	 * (sticky on the serving unit's hash), custom assignment and the draw over the raw cluster key. No linked unit, an
+	 * ineligible cluster and a pre-start or unservable draw are silent controls that record nothing.
+	 */
+	private function resolveSwitchbackVariant(Assignment $assignment, ExperimentVariables $experiment, SwitchbackSources $sources, ?int $period): void {
+		$data = $experiment->data;
+		$slot = $assignment->switchback;
+		$serving = $slot->serving;
+		$assignment->ruleKey = $this->ruleKey($data);
+		$assignment->iteration = $data->iteration;
+		$assignment->trafficSplit = $data->trafficSplit;
+		$assignment->fullOnVariant = $data->fullOnVariant;
+		$assignment->variant = 0;
+
+		if ($serving->status === SwitchbackServing::ABSENT) {
+			// No linked unit: the experiment does not apply, like an unset unit type.
+			$assignment->unitType = $sources->paths !== null ? $sources->types[0] : $data->unitType;
+			$assignment->eligible = false;
+			$slot->silent = true;
+			return;
+		}
+
+		$unitType = $serving->unitType;
+		$assignment->unitType = $unitType;
+		$assignment->assigned = true;
+		if ($serving->status === SwitchbackServing::INELIGIBLE) {
+			$assignment->eligible = false;
+			$slot->silent = true;
+			return;
+		}
+
+		$rule = $this->resolveRule($data, false, $unitType);
+		$assignment->ruleVariant = $rule['variant'] ?? null;
+		if ($rule !== null) {
+			// Recorded like a unit experiment's rule win: ruleOverride set, not assigned.
+			$assignment->assigned = false;
+			$assignment->ruleOverride = true;
+			$assignment->variant = $rule['variant'];
+			return;
+		}
+
+		if (!empty($data->audience) && !empty((array) $data->audience)) {
+			$result = $this->audienceMatcher->evaluate($data->audience, $this->getEvaluationAttributes());
+			if (is_bool($result)) {
+				$assignment->audienceMismatch = !$result;
+			}
+		}
+		if (!empty($data->audienceStrict) && $assignment->audienceMismatch) {
+			// Recorded like a unit experiment's strict mismatch: control, audienceMismatch, not assigned.
+			$assignment->assigned = false;
+			return;
+		}
+		if (!empty($data->fullOnVariant)) {
+			$assignment->variant = $data->fullOnVariant;
+			$assignment->fullOn = true;
+			return;
+		}
+		if ($period === null) {
+			// Pre-start or an unservable schedule: no draw, so control and no exposure.
+			$assignment->eligible = false;
+			$slot->silent = true;
+			return;
+		}
+
+		$assigner = $this->getVariantAssigner($unitType, $this->units[$unitType]);
+		if ($assigner->assign($data->trafficSplit, $data->trafficSeedHi, $data->trafficSeedLo) !== 1) {
+			// A traffic miss on an eligible cluster is recorded, as for a unit experiment.
+			$assignment->eligible = false;
+			return;
+		}
+		if ($slot->custom !== null) {
+			$assignment->variant = $slot->custom;
+			$assignment->custom = true;
+			return;
+		}
+
+		$seed = ($data->seedHi << 32) | ($data->seedLo & 0xFFFFFFFF);
+		$assignment->variant = SwitchbackAssigner::assign($serving->clusterKey, $period, $seed, count($data->split));
+	}
+
+	/**
+	 * Whether a cached switchback slot still holds: the same override, or the same grid, run, custom assignment, rule
+	 * outcome and audience outcome. Seed and split edits keep it, as for unit experiments.
+	 */
+	private function switchbackAssignmentCurrent(string $experimentName, Assignment $assignment, ExperimentVariables $experiment, SwitchbackSources $sources): bool {
+		if ($assignment->switchback->config !== $sources->config) {
+			return false;
+		}
+		if (array_key_exists($experimentName, $this->overrides)) {
+			return $assignment->overridden && $assignment->variant === $this->overrides[$experimentName];
+		}
+		if ($assignment->overridden) {
+			return false;
+		}
+
+		$data = $experiment->data;
+		if ($assignment->iteration !== $data->iteration
+			|| $assignment->fullOnVariant !== $data->fullOnVariant
+			|| $assignment->trafficSplit !== $data->trafficSplit) {
+			return false;
+		}
+		// A rule-won slot never read the custom assignment.
+		if (!$assignment->ruleOverride && ($this->cassignments[$experimentName] ?? null) !== $assignment->switchback->custom) {
+			return false;
+		}
+
+		// A slot without an eligible cluster never consulted its rules or audience.
+		if ($assignment->switchback->serving->status !== SwitchbackServing::ELIGIBLE) {
+			return true;
+		}
+
+		$ruleKey = $this->ruleKey($data);
+		if ($this->attrsSeq > $assignment->attrsSeq || $ruleKey !== $assignment->ruleKey) {
+			if ($ruleKey !== $assignment->ruleKey || $data->assignmentRules !== null) {
+				$rule = $this->resolveRule($data, false, $assignment->unitType);
+				if (($rule['variant'] ?? null) !== $assignment->ruleVariant) {
+					return false;
+				}
+			}
+
+			if (!$assignment->ruleOverride && !empty($data->audience) && !empty((array) $data->audience)) {
+				$result = $this->audienceMatcher->evaluate($data->audience, $this->getEvaluationAttributes());
+				$newAudienceMismatch = $result !== null ? !$result : $assignment->audienceMismatch;
+				if ($newAudienceMismatch !== $assignment->audienceMismatch) {
+					return false;
+				}
+			}
+
+			$assignment->ruleKey = $ruleKey;
+			$assignment->attrsSeq = $this->attrsSeq;
+		}
+		return true;
+	}
+
+	/**
+	 * The Collector's ContextAPI.switchbackServing at $now. The cluster is read whether or not the schedule can be drawn
+	 * now, so rules, the audience and full-on still see the serving unit. A missing, empty or unreadable cluster map
+	 * takes the legacy path: an ineligible control under a unit of the declared unitType, if set.
+	 */
+	private function resolveSwitchbackServing(Experiment $experiment, SwitchbackSources $sources, int $now): SwitchbackServing {
+		if ($sources->paths === null) {
+			return SwitchbackServing::legacy($experiment->unitType, $this->units);
+		}
+		return SwitchbackServing::resolve($sources->types, $sources->paths, $experiment->switchbackClusterValues, $this->units,
+			function (SwitchbackAttributePath $path) use ($now) {
+				$attribute = $this->latestAttribute($path->rootKey(), $now);
+				return $attribute !== null ? $path->resolveAttribute($attribute->value) : null;
+			});
+	}
+
+	/**
+	 * The attribute the Collector records with an exposure at $now (ContextAPI.extractAttributes): among the attributes
+	 * set at or before $now whose trimmed name matches, the latest setAt wins and a tie goes to the one set last.
+	 * System attributes are never read.
+	 */
+	private function latestAttribute(string $name, int $now): ?object {
+		$selected = null;
+		foreach ($this->attributes as $attribute) {
+			if ($attribute->setAt <= $now && trim($attribute->name, "\x00..\x20") === $name
+				&& ($selected === null || $attribute->setAt >= $selected->setAt)) {
+				$selected = $attribute;
+			}
+		}
+		return $selected;
+	}
+
+	/**
+	 * Records a switchback resolution under the current epoch. At most SWITCHBACK_RETAINED_PERIODS period indices are
+	 * kept; the lowest index other than $period is evicted, so the slot just installed always survives. Exposure dedup
+	 * therefore holds only within the retained window: re-entering an evicted period resolves it once more.
+	 */
+	private function retainSwitchbackPeriod(string $experimentName, int $generation, ?int $period): void {
+		if (!isset($this->switchbackEpochs[$experimentName])) {
+			$this->switchbackEpochs[$experimentName] = ['generation' => $generation, 'periods' => []];
+		}
+		if ($period === null) {
+			return;
+		}
+
+		$periods = &$this->switchbackEpochs[$experimentName]['periods'];
+		if (!in_array($period, $periods, true)) {
+			$periods[] = $period;
+			sort($periods);
+		}
+		while (count($periods) > self::SWITCHBACK_RETAINED_PERIODS) {
+			$evict = $periods[0] === $period ? 1 : 0;
+			unset($this->assignmentCache[$experimentName . self::SWITCHBACK_KEY_SEPARATOR . $periods[$evict]]);
+			array_splice($periods, $evict, 1);
+		}
+	}
+
+	/** Drops every slot of the experiment's switchback epoch, the bare-name slot included. */
+	private function dropSwitchbackEpoch(string $experimentName): void {
+		foreach ($this->switchbackEpochs[$experimentName]['periods'] as $period) {
+			unset($this->assignmentCache[$experimentName . self::SWITCHBACK_KEY_SEPARATOR . $period]);
+		}
+		unset($this->assignmentCache[$experimentName], $this->switchbackEpochs[$experimentName]);
+	}
+
+	/** The assignmentCache key $assignment is cached under. */
+	private static function assignmentCacheKey(Assignment $assignment): string {
+		$period = $assignment->switchback !== null ? $assignment->switchback->period : null;
+		return $period === null ? $assignment->name : $assignment->name . self::SWITCHBACK_KEY_SEPARATOR . $period;
+	}
+
+	/**
 	 * Pins the arm of each of the experiment's holdouts on $assignment and flags it suppressed when any of them holds
 	 * the unit out. A holdout whose unit is missing gets a null arm, which never suppresses and is re-resolved once
 	 * the unit is set (invalidateAssignmentsMissingUnit).
@@ -929,7 +1263,18 @@ class Context {
 	 * its holdouts' exposures not yet queued, so an exposed assignment re-queues only arms the retained-event cap
 	 * dropped. Callers skip exposed assignments while nothing is dropped, as in JS.
 	 */
-	private function triggerExposures(Assignment $assignment): void {
+	private function triggerExposures(Assignment $assignment, ?int $now = null): void {
+		if ($assignment->switchback !== null) {
+			// Stamped with the clock reading that picked the period, since analysis derives the period from exposedAt.
+			if ($assignment->switchback->silent) {
+				$assignment->exposed = true;
+			}
+			else {
+				$this->queueExposure($assignment, $now);
+			}
+			return;
+		}
+
 		if ($assignment->holdoutAssignments === null) {
 			$this->queueExposure($assignment);
 			return;
@@ -1000,13 +1345,15 @@ class Context {
 		// A held-out unit reads the control value, not $default, when nothing else wins. The first suppressed
 		// experiment is kept even if it lacks the key, so a later suppressed one can't win (JS).
 		$suppressedFallback = null;
+		// One clock reading for every switchback on the key.
+		$now = $this->switchbackSources !== [] ? self::getTime() : null;
 
 		foreach ($experiments as $experimentVariables) {
-			$assignment = $this->getAssignment($experimentVariables->data->name);
+			$assignment = $this->getAssignment($experimentVariables->data->name, $now);
 
 			if ($assignment->variables !== null) {
 				if ($exposeAssignments && (!$assignment->exposed || $this->droppedHoldoutArms !== [])) {
-					$this->triggerExposures($assignment);
+					$this->triggerExposures($assignment, $now);
 				}
 
 				// property_exists (not isset) so a present key whose value is null is still returned,
@@ -1123,15 +1470,16 @@ class Context {
 
 	public function getTreatment(string $experimentName): int {
 		$this->checkReady();
-		$assignment = $this->getAssignment($experimentName);
+		$now = $this->switchbackSources !== [] ? self::getTime() : null;
+		$assignment = $this->getAssignment($experimentName, $now);
 		if (!$assignment->exposed || $this->droppedHoldoutArms !== []) {
-			$this->triggerExposures($assignment);
+			$this->triggerExposures($assignment, $now);
 		}
 
 		return $assignment->variant;
 	}
 
-	private function queueExposure(Assignment $assignment): void {
+	private function queueExposure(Assignment $assignment, ?int $exposedAt = null): void {
 		if (!empty($assignment->exposed)) {
 			return;
 		}
@@ -1144,6 +1492,9 @@ class Context {
 		$assignment->exposed = true;
 		$assignment->isUnitPinnedMissing = $assignment->isUnitPinnedMissing || $assignment->isRuleMissingUnit;
 		$exposure->ingestAssignment($assignment);
+		if ($exposedAt !== null) {
+			$exposure->exposedAt = $exposedAt;
+		}
 
 		$this->exposures[] = $exposure;
 		$this->exposureAssignments[] = $assignment;
@@ -1280,6 +1631,16 @@ class Context {
 	 */
 	private function invalidateAssignmentsMissingUnit(string $unitType): void {
 		foreach ($this->assignmentCache ?? [] as $experimentName => $assignment) {
+			if ($assignment->switchback !== null) {
+				// A switchback resolved before any linked unit was set is resolved again now that one may be. Only an
+				// override published anything, so only an exposed override is kept.
+				if ($assignment->switchback->serving->status === SwitchbackServing::ABSENT
+					&& (!$assignment->overridden || !$assignment->exposed)) {
+					unset($this->assignmentCache[$experimentName]);
+				}
+				continue;
+			}
+
 			if ($assignment->unitType !== $unitType) {
 				continue;
 			}
@@ -1426,7 +1787,7 @@ class Context {
 			// cached assignment's `exposed` flag, unless the cache has since been replaced with a newer
 			// assignment (which carries its own un-exposed state).
 			foreach ($droppedAssignments as $assignment) {
-				$cached = $this->assignmentCache[$assignment->name] ?? null;
+				$cached = $this->assignmentCache[self::assignmentCacheKey($assignment)] ?? null;
 				if ($cached === $assignment) {
 					$assignment->exposed = false;
 				}
@@ -1526,6 +1887,7 @@ class Context {
 		$oldParsedRules = $this->parsedRules;
 		$oldHoldoutsById = $this->holdoutsById;
 		$oldExperimentHoldouts = $this->experimentHoldouts;
+		$oldSwitchbackSources = $this->switchbackSources;
 		try {
 			$data = $this->dataProvider->getContextData();
 			$this->setData($data);
@@ -1538,6 +1900,7 @@ class Context {
 			$this->parsedRules = $oldParsedRules;
 			$this->holdoutsById = $oldHoldoutsById;
 			$this->experimentHoldouts = $oldExperimentHoldouts;
+			$this->switchbackSources = $oldSwitchbackSources;
 			error_log(sprintf(
 				'ABsmartly SDK Error: Failed to refresh context, keeping existing data: %s in %s:%d',
 				$exception->getMessage(),
