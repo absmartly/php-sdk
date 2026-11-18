@@ -312,7 +312,6 @@ class ContextSwitchbackClusterTest extends TestCase {
 		$tie->setAttribute(' city ', 'Lisboa');
 		self::assertSame(self::expectedSchedule('Lisboa'), $this->peekSchedule($tie));
 
-		// System attributes are never read.
 		$system = $this->attributeContext(self::attributeSwitchback('application'));
 		self::assertSame(0, $system->getTreatment('exp_sb'));
 		self::assertSame(0, $system->getPendingCount());

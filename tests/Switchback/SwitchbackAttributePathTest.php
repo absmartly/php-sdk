@@ -30,7 +30,6 @@ class SwitchbackAttributePathTest extends TestCase {
 			}
 			self::assertNotNull($path, json_encode($c));
 			self::assertEquals($c->value, $path->resolve($fixture->attributes), json_encode($c));
-			// The same through an attribute value set with setAttribute().
 			$root = $path->rootKey();
 			self::assertEquals($c->value, $path->resolveAttribute($fixture->attributes->{$root}), json_encode($c));
 		}

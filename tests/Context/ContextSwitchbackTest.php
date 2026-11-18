@@ -1385,7 +1385,6 @@ class ContextSwitchbackTest extends TestCase {
 		self::assertSame(1, $context->peekTreatment('exp_sb'));
 		self::assertSame(2, $counts->rules);
 
-		// An unrelated attribute re-validates once, then stays current.
 		$context->setAttribute('other', 1);
 		self::assertSame(1, $context->peekTreatment('exp_sb'));
 		self::assertSame(1, $context->peekTreatment('exp_sb'));
@@ -1591,7 +1590,6 @@ class ContextSwitchbackTest extends TestCase {
 		$context->getTreatment('exp_sb');
 		$this->now = self::$ANCHOR + self::$HOUR + 10;
 		$context->getTreatment('exp_sb');
-		// The publish fails and the cap drops period 0's exposure.
 		@$context->publish();
 		self::assertSame(1, $context->getPendingCount());
 

@@ -263,7 +263,7 @@ trait SwitchbackTestSupport {
 			'assigned' => $assignment->assigned,
 			'eligible' => $assignment->eligible,
 			'silent' => $slot !== null && $slot->silent,
-			'applies' => $slot !== null && $slot->serving !== null && $slot->serving->status !== \ABSmartly\SDK\Switchback\SwitchbackServing::ABSENT,
+			'applies' => $slot !== null && $slot->serving->status !== \ABSmartly\SDK\Switchback\SwitchbackServing::ABSENT,
 		];
 	}
 }

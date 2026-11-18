@@ -211,7 +211,6 @@ class SwitchbackServerParityTest extends TestCase {
 			$twin->trafficSeedLo = 4;
 
 			$this->now = self::$ANCHOR;
-			// Only the device unit has a value, so it serves.
 			$context = $this->createContext(self::dataOf($switchback, $twin), [self::STORE => 's1', self::DEVICE => 'device-' . $u],
 				['geo' => ['city' => 'Porto']]);
 			$context->getTreatment('exp_unit');
