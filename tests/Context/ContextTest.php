@@ -2860,6 +2860,34 @@ class ContextTest extends TestCase {
 		self::assertSame([ContextEventLoggerEvent::Publish, ContextEventLoggerEvent::Close], $events);
 	}
 
+	/**
+	 * @dataProvider retainedEventCaps
+	 */
+	public function testRetainedQueueCapDefaultAndNonPositiveValues(?int $cap, int $goals, int $retained): void {
+		$context = $this->createReadyContext();
+		if ($cap !== null) {
+			$context->maxRetainedEvents = $cap;
+		}
+		$this->eventHandler->prerun = static function() {
+			throw new \RuntimeException('Server unavailable');
+		};
+
+		for ($i = 0; $i < $goals; ++$i) {
+			$context->track('goal');
+		}
+		$context->publish();
+
+		self::assertSame($retained, $context->getPendingCount());
+	}
+
+	public static function retainedEventCaps(): array {
+		return [
+			'default is 10,000' => [null, 10001, 10000],
+			'0 means no cap' => [0, 5, 5],
+			'negative means no cap' => [-1, 5, 5],
+		];
+	}
+
 	public function testRetainedQueueIsCappedDroppingOldestAndLoggingError(): void {
 		$logger = new MockContextEventLoggerProxy();
 		$context = $this->createReadyContext('context.json', true, $logger);
