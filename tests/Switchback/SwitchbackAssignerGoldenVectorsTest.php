@@ -76,6 +76,27 @@ class SwitchbackAssignerGoldenVectorsTest extends TestCase {
 		}
 	}
 
+	/**
+	 * The platform vectors only use 2, 3 and 10 arms and ASCII keys, which cannot tell a normalizer of 1/0xffffffff
+	 * from 1/2^32. These come from java-sdk's own SwitchbackAssigner (tests/Fixtures/switchback-java), over UTF-8 keys,
+	 * extreme periods and seeds, and 4 to 100 arms.
+	 */
+	public function testMatchesJavaSdkAcrossArmCountsAndUtf8Keys(): void {
+		$vectors = json_decode(file_get_contents(__DIR__ . '/../Fixtures/switchback-java/java-sdk-assigner-vectors.json'), false, 512, JSON_THROW_ON_ERROR);
+		self::assertCount(3564, $vectors->assignSwitchback);
+		foreach ($vectors->assignSwitchback as $c) {
+			self::assertSame($c->expectedVariant,
+				SwitchbackAssigner::assign($c->clusterUnit, self::exactLong($c->periodIndex), self::exactLong($c->seed), $c->armCount),
+				json_encode($c, JSON_UNESCAPED_UNICODE));
+		}
+		self::assertCount(5, $vectors->fisherYatesPermutation);
+		foreach ($vectors->fisherYatesPermutation as $c) {
+			self::assertSame($c->expectedPermutation, SwitchbackAssigner::fisherYatesPermutation($c->armCount, $c->baseHash), json_encode($c));
+		}
+		// The one that pins the normalizer: 1/2^32 would swap positions 2 and 7 and 7 and 10.
+		self::assertSame([11, 15, 8, 13, 7, 0, 5, 10, 4, 3, 9, 12, 6, 1, 2, 14], SwitchbackAssigner::fisherYatesPermutation(16, 13189659));
+	}
+
 	public function testEveryCycleCoversEveryArmExactlyOnce(): void {
 		foreach ([2, 3, 10] as $armCount) {
 			for ($cycle = -3; $cycle < 20; ++$cycle) {

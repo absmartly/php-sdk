@@ -128,7 +128,10 @@ class Context {
 	private array $switchbackEpochs = [];
 	/** The clock reading of the latest switchback resolution, which its exposure is stamped with. */
 	private int $switchbackReadAt = 0;
-	/** Whether any installed data had a switchback: until then no read consults the switchback state. */
+	/**
+	 * Whether any installed data had a switchback: until then no read consults the switchback state. A performance guard
+	 * only (two isset() calls per cached unit read, ~4% with opcache): both branches it skips find nothing without it.
+	 */
 	private bool $hasSwitchbacks = false;
 	/** Source of SwitchbackSources::$generation. */
 	private int $switchbackGenerationCounter = 0;
