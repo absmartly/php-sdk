@@ -224,6 +224,7 @@ class V103CompatibilityTest extends TestCase {
 		$broken = clone $fixture->experiments[1];
 		$broken->name = 'exp_bad_audience';
 		$broken->audience = '{not json';
+
 		$withBroken = array_merge($fixture->experiments, [$broken]);
 
 		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'key', 'app', 'env'));
@@ -250,6 +251,7 @@ class V103CompatibilityTest extends TestCase {
 		self::assertFalse($context->isFailed());
 		self::assertSame(1, $context->getTreatment('exp_test_ab'));
 		self::assertNull($context->getExperiment('exp_bad_audience'));
+
 		self::assertNotContains('exp_bad_audience', $context->getExperiments());
 		self::assertInstanceOf(\JsonException::class, $logger->events[0]->getData());
 
@@ -288,5 +290,68 @@ class V103CompatibilityTest extends TestCase {
 
 	public static function unpublishableValues(): array {
 		return ['INF' => [INF], 'NaN' => [NAN], 'nested INF' => [['a' => -INF]]];
+	}
+
+	public function testInvalidUtf8StringAttributesAreAcceptedAsInV103(): void {
+		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'key', 'app', 'env'));
+		$config = new Config($client);
+		$config->setContextEventHandler(new ContextEventHandlerMock($client));
+		$contextConfig = (new ContextConfig())->setUnit('session_id', 'abc');
+		$contextConfig->setAttribute('ua', "Mozilla \xff");
+		$context = (new SDK($config))->createContextWithData($contextConfig, new ContextData([]));
+
+		$context->setAttribute('city', "caf\xe9");
+		$context->setAttributes(['region' => "\xc3"]);
+
+		self::assertSame("Mozilla \xff", $context->getAttribute('ua'));
+		self::assertSame("caf\xe9", $context->getAttribute('city'));
+	}
+
+	public function testUnpublishableGoalPropertiesAreRejectedAndPublishingKeepsWorking(): void {
+		$http = new RecordingHTTPClient();
+		$config = new Config(new Client(new ClientConfig('https://demo.absmartly.io/v1', 'key', 'app', 'env'), $http));
+		$context = (new SDK($config))->createContextWithData((new ContextConfig())->setUnit('session_id', 'abc'), new ContextData([]));
+
+		try {
+			$context->trackWithProperties('bad', ['amount' => INF]);
+			self::fail('expected an InvalidArgumentException');
+		}
+		catch (\ABSmartly\SDK\Exception\InvalidArgumentException $e) {
+			self::assertStringStartsWith("Goal 'bad' properties cannot be published", $e->getMessage());
+		}
+		self::assertSame(0, $context->getPendingCount());
+
+		$context->trackWithProperties('good', ['amount' => 5]);
+		$context->publish();
+		self::assertSame(0, $context->getPendingCount());
+		self::assertSame(['PUT'], array_column($http->requests, 0));
+	}
+
+	public function testARejectedExperimentLeavesNoVariableKeysBehind(): void {
+		$fixture = json_decode(file_get_contents(__DIR__ . '/../Fixtures/json/context.json'));
+		// The lowest id, sharing button.color with exp_test_abc: its first variant decodes, then the second fails.
+		$rejected = clone $fixture->experiments[1];
+		$rejected->id = 0;
+		$rejected->name = 'exp_rejected_late';
+		$rejected->variants = [
+			(object) ['name' => 'A', 'config' => '{"button.color":"from-rejected","rejected.only":1}'],
+			(object) ['name' => 'B', 'config' => ['not-a-string']],
+			(object) ['name' => 'C', 'config' => null],
+		];
+
+		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'key', 'app', 'env'));
+		$config = new Config($client);
+		$config->setContextEventHandler(new ContextEventHandlerMock($client));
+		$context = (new SDK($config))->createContextWithData(
+			(new ContextConfig())->setUnit('session_id', 'e791e240fcd3df7d238cfc285f475e8152fcc0ec'),
+			new ContextData(array_merge([$rejected], $fixture->experiments))
+		);
+
+		self::assertFalse($context->isFailed());
+		self::assertNull($context->getExperiment('exp_rejected_late'));
+		self::assertSame('exp_test_abc', $context->getVariableKeys()['button.color']);
+		self::assertArrayNotHasKey('rejected.only', $context->getVariableKeys());
+		// exp_test_abc serves variant 2 ("red") to this unit; the rejected experiment's value never appears.
+		self::assertSame('red', $context->peekVariableValue('button.color', 'none'));
 	}
 }

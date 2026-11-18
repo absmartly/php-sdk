@@ -99,6 +99,24 @@ class HTTPClientRetryTest extends TestCase {
 		self::assertSame([], $client->sleeps);
 	}
 
+	public function testNoRetryStartsWhenTheBackOffSleepOverrunsTheDeadline(): void {
+		$client = new class extends FakeClockHTTPClient {
+			protected function sleepMs(int $milliseconds): void {
+				// The sleep overruns: it returns after the deadline even though the budget covered the back-off.
+				$this->sleeps[] = $milliseconds;
+				$this->now += 1000;
+			}
+		};
+		$client->timeout = 3000;
+		$client->totalTimeout = 1000;
+		$client->retries = 5;
+		$client->script = [[100, true], [0, false]];
+		$client->run();
+
+		self::assertSame([1000], $client->attemptTimeouts);
+		self::assertSame([50], $client->sleeps);
+	}
+
 	public function testRetryLimitStillApplies(): void {
 		$client = $this->client(60000, 2, array_fill(0, 5, [0, true]));
 		$client->run();

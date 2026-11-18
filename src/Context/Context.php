@@ -734,14 +734,10 @@ class Context {
 
 	/** Sets an attribute without converting its value to a string. */
 	public function setAttributeValue(string $name, $value): Context {
-		try {
-			// Every attribute is published, so a value the collector payload cannot hold (INF, NaN, a resource)
-			// would fail every later publish.
-			json_encode($value, JSON_THROW_ON_ERROR);
-		}
-		catch (JsonException $exception) {
-			throw new InvalidArgumentException(
-				sprintf('Attribute "%s" value cannot be published: %s', $name, $exception->getMessage()), 0, $exception);
+		// Every attribute is published, so a value the payload cannot hold (INF, NaN, a resource) would fail every
+		// later publish. Strings are accepted unchecked, as in v1.0.3, including invalid UTF-8.
+		if (!is_string($value)) {
+			self::assertPublishable(sprintf('Attribute "%s" value', $name), $value);
 		}
 
 		$this->attributes[] = (object) [
@@ -752,6 +748,18 @@ class Context {
 		++$this->attrsSeq;
 
 		return $this;
+	}
+
+	/**
+	 * @param mixed $value
+	 */
+	private static function assertPublishable(string $what, $value): void {
+		try {
+			json_encode($value, JSON_THROW_ON_ERROR);
+		}
+		catch (JsonException $exception) {
+			throw new InvalidArgumentException(sprintf('%s cannot be published: %s', $what, $exception->getMessage()), 0, $exception);
+		}
 	}
 
 	public function setAttributes(array $attributes): Context {
@@ -1136,7 +1144,11 @@ class Context {
 	/** @param object|array|null $properties an object or associative array */
 	public function trackWithProperties(string $goalName, $properties = null): void {
 		$this->checkNotClosed();
-		$this->track($goalName, $this->validateGoal($goalName, $properties));
+		$properties = $this->validateGoal($goalName, $properties);
+		if ($properties !== null) {
+			self::assertPublishable(sprintf("Goal '%s' properties", $goalName), $properties);
+		}
+		$this->track($goalName, $properties);
 	}
 
 	/**
