@@ -101,6 +101,24 @@ class V103CompatibilityTest extends TestCase {
 		self::assertSame('', file_get_contents($this->errorLogFile));
 	}
 
+	public function testAFailingPublishOnAReadyContextWritesNothingToErrorLogWithoutAnEventLogger(): void {
+		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'key', 'app', 'env'));
+		$config = new Config($client);
+		$handler = new ContextEventHandlerMock($client);
+		$handler->prerun = static function() {
+			throw new \RuntimeException('publish failed');
+		};
+		$config->setContextEventHandler($handler);
+		$context = (new SDK($config))->createContextWithData((new ContextConfig())->setUnit('session_id', 'abc'), new ContextData([]));
+		self::assertFalse($context->isFailed());
+
+		$context->track('goal');
+		$context->publish();
+
+		self::assertSame(1, $context->getPendingCount(), 'the handler was called and failed, so the goal stays queued');
+		self::assertSame('', file_get_contents($this->errorLogFile));
+	}
+
 	public function testAssignmentVariablesKeepsItsV103Type(): void {
 		$type = (new \ReflectionProperty(\ABSmartly\SDK\Assignment::class, 'variables'))->getType();
 		self::assertSame('stdClass', $type->getName());
@@ -432,7 +450,6 @@ class V103CompatibilityTest extends TestCase {
 		catch (\JsonException $original) {
 			self::assertSame($original->getMessage(), $errors[0]->getData()->getMessage());
 			self::assertSame($original->getCode(), $errors[0]->getData()->getCode());
-			// Not wrapped in another exception, and raised where Experiment decodes the audience.
 			self::assertNull($errors[0]->getData()->getPrevious());
 			self::assertStringEndsWith('Experiment.php', $errors[0]->getData()->getFile());
 		}
@@ -465,19 +482,21 @@ class V103CompatibilityTest extends TestCase {
 		self::assertSame(0, $context->getPendingCount());
 		self::assertSame(['PUT'], array_column($http->requests, 0));
 
-		// The setter's limit is the stock publish encoder's: a real publish of 509 levels encodes, of 510 it fails.
-		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'key', 'app', 'env'), new RecordingHTTPClient());
-		foreach ([509 => true, 510 => false] as $depth => $encodes) {
+		// Through Client::publish() itself: the setter's limit matches what the stock publisher sends.
+		foreach ([509 => true, 510 => false] as $depth => $sent) {
+			$wire = new RecordingHTTPClient();
+			$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'key', 'app', 'env'), $wire);
 			$event = new \ABSmartly\SDK\PublishEvent();
 			$event->setAttributes([(object) ['name' => 'a', 'value' => $nested($depth), 'setAt' => 1]]);
 			try {
-				$client->encode($event);
-				self::assertTrue($encodes, "a $depth-level attribute must not encode");
+				$client->publish($event);
+				self::assertTrue($sent, "a $depth-level attribute must not be published");
 			}
 			catch (\JsonException $e) {
-				self::assertFalse($encodes, "a $depth-level attribute must encode");
+				self::assertFalse($sent, "a $depth-level attribute must be published");
 				self::assertSame(JSON_ERROR_DEPTH, $e->getCode());
 			}
+			self::assertCount($sent ? 1 : 0, $wire->requests);
 		}
 	}
 
@@ -510,7 +529,6 @@ class V103CompatibilityTest extends TestCase {
 
 		$goals = array_column(json_decode(json_encode($handler->submitted[0]), true)['goals'], 'properties', 'name');
 		self::assertSame(1, $goals['copied']['amount']);
-		// The copy is one level deep: a nested object is shared, so its later change is published.
 		self::assertSame('b', $goals['copied']['item']['sku']);
 		self::assertSame(2, $goals['kept']['amount'], 'track() keeps the object, as in v1.0.3');
 	}

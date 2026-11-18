@@ -39,13 +39,15 @@ changes below before upgrading. It is not a guarantee that every 1.0.3 workload 
 - `ABSmartly\SDK` is an alias of `ABSmartly\SDK\SDK`, the entry class name the 2.x line will use.
 - `setAttributeValue()`/`setAttributeValues()` and `trackWithProperties()` reject a non-string value or property
   that cannot be JSON-encoded (`INF`, `NaN`, a resource, an array or object containing invalid UTF-8, or a
-  `JsonSerializable` whose `jsonSerialize()` throws, or a value nested too deeply to publish) with
+  `JsonSerializable` whose `jsonSerialize()` throws, or a value nested more than 509 levels deep, which the stock
+  publisher can't encode within json_encode's default depth of 512) with
   `InvalidArgumentException` at the time of the call. Strings, and the 1.0.3 `setAttribute()`/`setAttributes()`/
   `track()` and `ContextConfig` paths, are accepted unchecked as before. The check doesn't hold a snapshot:
   - A plain `stdClass` passed to `trackWithProperties()` is copied (one level), so later changes to its top-level
     properties don't reach the goal. `track()` keeps the object itself, as in 1.0.3.
   - Other objects are kept as given and encoded again at publish. An object changed afterwards so that it can't be
-    encoded fails that publish, and the batch stays queued for retry, up to `Context::$maxRetainedEvents`.
+    encoded fails that publish, and the batch stays queued for retry. `Context::$maxRetainedEvents` caps the exposures
+    and goals kept after a failed publish (default 10,000; 0 or less means no cap).
 - `setUnits()` accepts int and float UIDs (stored as strings; `setUnit()` keeps its `string $uid` parameter, so
   non-strict callers' numbers convert as before). `setAttributeValue()`/`setAttributeValues()` retain typed values;
   `trackWithProperties()` accepts objects or associative arrays. Legacy `setAttribute()` and `track()` retain their
