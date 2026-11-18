@@ -116,13 +116,13 @@ class HTTPClient implements HttpClientInterface {
 			}
 
 			$delay = min(self::RETRY_BASE_DELAY_MS << min($attempt, self::RETRY_MAX_SHIFT), self::RETRY_MAX_DELAY_MS);
-			if ($hasDeadline && $deadline - $this->nowMs() <= $delay) {
+			if ($deadline - $this->nowMs() <= $delay) {
 				break;
 			}
 
 			$this->sleepMs($delay);
 			// The sleep can overrun; don't start an attempt once the total budget is spent.
-			if ($hasDeadline && $this->nowMs() >= $deadline) {
+			if ($this->nowMs() >= $deadline) {
 				break;
 			}
 			++$attempt;

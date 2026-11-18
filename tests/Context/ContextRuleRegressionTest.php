@@ -238,10 +238,22 @@ class ContextRuleRegressionTest extends TestCase {
 		$config->setContextEventHandler(new ContextEventHandlerMock($client));
 		$contextConfig = new ContextConfig();
 		$contextConfig->setUnits(['session_id' => 'e791e240fcd3df7d238cfc285f475e8152fcc0ec']);
+		// The broken experiment is reported as an Error after the valid one is installed; a logger that throws on that
+		// first report makes setData() fail partway through the refresh.
+		$throws = true;
+		$contextConfig->setEventLogger(new \ABSmartly\SDK\Context\ContextEventLoggerCallback(
+			static function (string $event) use (&$throws): void {
+				if ($throws && $event === \ABSmartly\SDK\Context\ContextEventLoggerEvent::Error) {
+					$throws = false;
+					throw new \RuntimeException('logger failed');
+				}
+			}
+		));
 		$context = (new SDK($config))->createContextWithData($contextConfig, new ContextData([$experiment]));
 
 		self::assertSame(1, $context->getTreatment('exp'));
 		$context->refresh();
+		self::assertFalse($throws, 'the refresh must have failed partway');
 		self::assertSame(1, $context->getTreatment('exp'));
 		$context->setAttributeValue('unrelated', true);
 		self::assertSame(1, $context->getTreatment('exp'));

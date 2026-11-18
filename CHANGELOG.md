@@ -37,6 +37,8 @@ changes below before upgrading. It is not a guarantee that every 1.0.3 workload 
   `ContextEventLoggerEvent::Finalize` constant. `Context::$maxRetainedEvents` caps events kept for retry after
   failed publishes (default 10,000).
 - `ABSmartly\SDK` is an alias of `ABSmartly\SDK\SDK`, the entry class name the 2.x line will use.
+- `setAttributeValue()`/`setAttributeValues()` reject a value that cannot be JSON-encoded (`INF`, `NaN`, a
+  resource) with `InvalidArgumentException`, so it can never block later publishes.
 - `setUnits()` accepts int and float UIDs (stored as strings; `setUnit()` keeps its `string $uid` parameter, so
   non-strict callers' numbers convert as before). `setAttributeValue()`/`setAttributeValues()` retain typed values;
   `trackWithProperties()` accepts objects or associative arrays. Legacy `setAttribute()` and `track()` retain their
@@ -93,12 +95,15 @@ changes below before upgrading. It is not a guarantee that every 1.0.3 workload 
   sibling contexts. `SDK::close()` still closes it.
 - `getVariableValue()` and `peekVariableValue()` agree: both return the default when the unit is neither
   assigned nor overridden (1.0.3's peek returned the control variant's value).
-- An experiment missing a required field no longer fails the whole context: it is left out (an `Error` event is
-  logged) and the other experiments still load.
+- An experiment missing a required field, with a field of the wrong type, or with malformed audience JSON no
+  longer fails the whole context (1.0.3 failed it for the last two): it is left out (an `Error` event is logged)
+  and the other experiments still load, on the first load and on `refresh()`.
 - The JSON decoder accepts payloads nested deeper than 16 levels (`Client::decode()`).
 - **Published events are no longer sent again on every later publish.** 1.0.3 kept every exposure and goal after
   a successful `publish()`, so each later publish re-sent all earlier events (goals per PUT: `g1`, then `g1,g2`,
-  then `g1,g2,g3`); now each event is sent once. *Affects:* contexts that publish more than once, whose exported
+  then `g1,g2,g3`); now a successful publish clears the events it sent. A publish that fails keeps its events for
+  the next attempt, so if the collector stored a batch but its response was lost, that batch can be sent again.
+  *Affects:* contexts that publish more than once, whose exported
   exposure and goal counts were inflated by the duplicates.
 - **An override to variant 0 is exposed once.** 1.0.3 read an override of `0` as "no override", rebuilt the
   assignment and queued a new exposure on every `getTreatment()`. *Affects:* contexts that override an experiment

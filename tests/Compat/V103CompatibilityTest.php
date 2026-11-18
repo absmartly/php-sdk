@@ -200,7 +200,6 @@ class V103CompatibilityTest extends TestCase {
 	}
 
 	public function testAnOverrideToVariant0IsExposedOnce(): void {
-		// v1.0.3 read an override of 0 as "no override", rebuilt the assignment and queued an exposure on every read.
 		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'key', 'app', 'env'));
 		$config = new Config($client);
 		$handler = new ContextEventHandlerMock($client);
@@ -218,5 +217,76 @@ class V103CompatibilityTest extends TestCase {
 		self::assertSame(1, $context->getPendingCount());
 		$context->publish();
 		self::assertCount(1, $handler->submitted[0]->exposures);
+	}
+
+	public function testMalformedAudienceJsonDegradesOnlyItsExperimentOnLoadAndRefresh(): void {
+		$fixture = json_decode(file_get_contents(__DIR__ . '/../Fixtures/json/context.json'));
+		$broken = clone $fixture->experiments[1];
+		$broken->name = 'exp_bad_audience';
+		$broken->audience = '{not json';
+		$withBroken = array_merge($fixture->experiments, [$broken]);
+
+		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'key', 'app', 'env'));
+		$config = new Config($client);
+		$config->setContextDataProvider(new class($client, $withBroken) extends ContextDataProvider {
+			private array $experiments;
+
+			public function __construct(Client $client, array $experiments) {
+				parent::__construct($client);
+				$this->experiments = $experiments;
+			}
+
+			public function getContextData(): ContextData {
+				return new ContextData($this->experiments);
+			}
+		});
+		$config->setContextEventHandler(new ContextEventHandlerMock($client));
+		$logger = new \ABSmartly\SDK\Tests\Mocks\MockContextEventLoggerProxy();
+		$contextConfig = (new ContextConfig())->setUnit('session_id', 'e791e240fcd3df7d238cfc285f475e8152fcc0ec');
+		$contextConfig->setEventLogger($logger);
+		$sdk = new SDK($config);
+
+		$context = $sdk->createContext($contextConfig);
+		self::assertFalse($context->isFailed());
+		self::assertSame(1, $context->getTreatment('exp_test_ab'));
+		self::assertNull($context->getExperiment('exp_bad_audience'));
+		self::assertNotContains('exp_bad_audience', $context->getExperiments());
+		self::assertInstanceOf(\JsonException::class, $logger->events[0]->getData());
+
+		$refreshed = $sdk->createContextWithData(
+			(new ContextConfig())->setUnit('session_id', 'e791e240fcd3df7d238cfc285f475e8152fcc0ec'),
+			new ContextData([])
+		);
+		$refreshed->refresh();
+		self::assertSame(1, $refreshed->getTreatment('exp_test_ab'), 'the valid experiments of the refresh are applied');
+		self::assertNull($refreshed->getExperiment('exp_bad_audience'));
+	}
+
+	/**
+	 * @dataProvider unpublishableValues
+	 */
+	public function testAnUnpublishableTypedAttributeIsRejectedAndPublishingKeepsWorking($value): void {
+		$http = new RecordingHTTPClient();
+		$config = new Config(new Client(new ClientConfig('https://demo.absmartly.io/v1', 'key', 'app', 'env'), $http));
+		$context = (new SDK($config))->createContextWithData((new ContextConfig())->setUnit('session_id', 'abc'), new ContextData([]));
+
+		try {
+			$context->setAttributeValue('score', $value);
+			self::fail('expected an InvalidArgumentException');
+		}
+		catch (\ABSmartly\SDK\Exception\InvalidArgumentException $e) {
+			self::assertStringStartsWith('Attribute "score" value cannot be published', $e->getMessage());
+		}
+		self::assertNull($context->getAttribute('score'));
+
+		$context->setAttributeValue('score', 7);
+		$context->track('goal');
+		$context->publish();
+		self::assertSame(0, $context->getPendingCount());
+		self::assertSame(['PUT'], array_column($http->requests, 0));
+	}
+
+	public static function unpublishableValues(): array {
+		return ['INF' => [INF], 'NaN' => [NAN], 'nested INF' => [['a' => -INF]]];
 	}
 }

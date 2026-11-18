@@ -266,7 +266,9 @@ $context->setAttributes([
 
 `setAttribute()` retains its string parameter, as in 1.0.3. To preserve numeric, boolean, object or other
 values for evaluation and publication, use `setAttributeValue('age', 25)` or `setAttributeValues([...])`.
-Attributes set on a `ContextConfig` are converted to strings, as in 1.0.3.
+Attributes set on a `ContextConfig` keep their value in the `ContextConfig` and are converted to strings when the
+context is created, as in 1.0.3: `25` becomes `'25'`, while a value that cannot be converted (an array or object)
+raises a `TypeError` from `createContext()`. Use `setAttributeValue()` on the context for such values.
 
 The `application` and `environment` names configured on the client are always available to audience
 filters as the `application` and `environment` attributes, without being set explicitly. A user
@@ -360,7 +362,7 @@ If the collector cannot be reached, `publish()` does not throw: the error is log
 
 ### Finalizing
 
-The `close()` method will ensure all events have been published to the A/B Smartly collector, like `Context->publish()`, and closes the context. Event-generating operations such as `track()` and `getTreatment()` then throw; attribute and unit setters remain usable as in 1.0.3.
+The `close()` method publishes any queued events to the A/B Smartly collector, like `Context->publish()`, and closes the context. As with `publish()`, a context whose initial load failed drops its queued events instead of sending them (see [Refreshing the Context](#refreshing-the-context-with-fresh-experiment-data)), so a successful `close()` does not mean every event was delivered. Event-generating operations such as `track()` and `getTreatment()` then throw; attribute and unit setters remain usable as in 1.0.3.
 
 ```php
 $context->close();

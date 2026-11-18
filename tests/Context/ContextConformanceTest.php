@@ -86,17 +86,18 @@ class ThrowingOnPublishLogger extends MockContextEventLoggerProxy {
 	}
 }
 
+class MistypedContextData extends ContextData {
+	public function __construct() {
+		// `experiments` is left uninitialized, so reading it raises an Error (a Throwable, not an Exception).
+	}
+}
+
 class MistypedDataAsyncProvider extends AsyncContextDataProvider {
 	public function __construct() {
 	}
 
 	public function getContextDataAsync(): PromiseInterface {
-		$experiment = (object) [
-			'id' => 1, 'name' => 'exp', 'unitType' => 'session_id', 'iteration' => 1, 'seedHi' => 0, 'seedLo' => 0,
-			'split' => [1], 'trafficSeedHi' => 0, 'trafficSeedLo' => 0, 'trafficSplit' => [0, 1], 'fullOnVariant' => 0,
-			'applications' => [], 'variants' => [(object) ['name' => 'A', 'config' => ['not-a-string']]],
-		];
-		return resolve(new ContextData([$experiment]));
+		return resolve(new MistypedContextData());
 	}
 }
 
@@ -488,7 +489,8 @@ class ContextConformanceTest extends TestCase {
 		self::assertSame($context, $settled);
 		self::assertTrue($context->isReady());
 		self::assertTrue($context->isFailed());
-		self::assertInstanceOf(\TypeError::class, $context->readyError());
+		self::assertInstanceOf(\Error::class, $context->readyError());
+		self::assertNotInstanceOf(\Exception::class, $context->readyError());
 		self::assertSame(ContextEventLoggerEvent::Error, $logger->events[0]->getEvent());
 	}
 }

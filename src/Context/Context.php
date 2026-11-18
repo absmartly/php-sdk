@@ -31,11 +31,14 @@ use function hash;
 use function is_int;
 use function is_object;
 use function json_decode;
+use function json_encode;
 use function microtime;
 use function min;
 use function strpos;
 use function sprintf;
 use function trim;
+
+use const JSON_THROW_ON_ERROR;
 
 class Context {
 
@@ -219,33 +222,38 @@ class Context {
 
 		foreach ($data->experiments as $experiment) {
 			$experimentVariables = new ExperimentVariables();
+			$variableKeys = [];
 			try {
 				$experimentVariables->data = new Experiment($experiment);
+				$experimentVariables->variables = [];
+
+				foreach ($experiment->variants as $variant) {
+					if (empty($variant->config)) {
+						$experimentVariables->variables[] = (object) [];
+						continue;
+					}
+
+					$parsed = $this->variableParser->parse($experiment->name, $variant->config);
+					if (!$parsed) {
+						$experimentVariables->variables[] = (object) [];
+						continue;
+					}
+
+					foreach (get_object_vars($parsed) as $key => $val) {
+						$variableKeys[] = $key;
+					}
+					$experimentVariables->variables[] = $parsed;
+				}
 			}
-			catch (RuntimeException | \TypeError $exception) {
+			catch (RuntimeException | JsonException | \TypeError $exception) {
 				$this->logError($exception);
 				continue;
 			}
-			$experimentVariables->variables = [];
 
-			foreach ($experiment->variants as $variant) {
-				if (empty($variant->config)) {
-					$experimentVariables->variables[] = (object) [];
-					continue;
-				}
-
-				$parsed = $this->variableParser->parse($experiment->name, $variant->config);
-				if (!$parsed) {
-					$experimentVariables->variables[] = (object) [];
-					continue;
-				}
-
-				foreach (get_object_vars($parsed) as $key => $val) {
-					$this->addVariableExperiment($key, $experimentVariables);
-				}
-				$experimentVariables->variables[] = $parsed;
+			// Indexed only once the whole experiment decoded, so a rejected one leaves no variable keys behind.
+			foreach ($variableKeys as $key) {
+				$this->addVariableExperiment($key, $experimentVariables);
 			}
-
 			$this->index[$experiment->name] = $experimentVariables;
 			if ($experimentVariables->data->assignmentRules !== null) {
 				$this->ruleKeys[$experiment->name] = $experimentVariables->data->assignmentRules . ':' . $environment;
@@ -726,6 +734,16 @@ class Context {
 
 	/** Sets an attribute without converting its value to a string. */
 	public function setAttributeValue(string $name, $value): Context {
+		try {
+			// Every attribute is published, so a value the collector payload cannot hold (INF, NaN, a resource)
+			// would fail every later publish.
+			json_encode($value, JSON_THROW_ON_ERROR);
+		}
+		catch (JsonException $exception) {
+			throw new InvalidArgumentException(
+				sprintf('Attribute "%s" value cannot be published: %s', $name, $exception->getMessage()), 0, $exception);
+		}
+
 		$this->attributes[] = (object) [
 			'name' => $name,
 			'value' => $value,
