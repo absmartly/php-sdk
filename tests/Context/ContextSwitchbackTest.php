@@ -620,7 +620,6 @@ class ContextSwitchbackTest extends TestCase {
 		// Rule-won: a skipped rule would publish the same arm without ruleOverride.
 		self::assertSame([self::ruleExposure('exp_sb', 0, self::$ANCHOR)], $this->publishExposures($context));
 
-		// A malformed traffic weight is rejected as before, never served as an eligible assignment.
 		foreach ([['not-a-number', 1], [null, 1], [false, true]] as $trafficSplit) {
 			$malformed = self::switchback(2);
 			$malformed->trafficSplit = $trafficSplit;
@@ -1205,7 +1204,6 @@ class ContextSwitchbackTest extends TestCase {
 		}
 		self::assertSame(4, $context->getPendingCount());
 
-		// Retained {0, 2}: period 2 is still deduplicated, period 1 was evicted.
 		$this->now = self::$ANCHOR + 2 * self::$HOUR;
 		$context->getTreatment('exp_sb');
 		self::assertSame(4, $context->getPendingCount());

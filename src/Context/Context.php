@@ -901,7 +901,6 @@ class Context {
 	 * they are read once per slot.
 	 */
 	private function getSwitchbackAssignment(string $experimentName, ExperimentVariables $experiment, SwitchbackSources $sources): Assignment {
-		// One reading per resolution, cached or not.
 		$now = self::getTime();
 		$data = $experiment->data;
 		$period = null;

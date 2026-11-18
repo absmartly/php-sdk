@@ -90,7 +90,6 @@ class SwitchbackAttributePathTest extends TestCase {
 		self::assertNull($path->resolveAttribute(['items' => ['0' => 'x', 'a' => ['city' => 'Lisbon']]]));
 
 		$city = SwitchbackAttributePath::parseSupported('geo/city');
-		// A float stays a float, so 3.0 never keys a cluster.
 		self::assertSame(3.0, $city->resolveAttribute(['city' => 3.0]));
 		self::assertNull(SwitchbackClusterKeys::normalize($city->resolveAttribute(['city' => 3.0])));
 		self::assertSame(3, $city->resolveAttribute(['city' => 3]));
