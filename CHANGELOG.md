@@ -99,6 +99,10 @@
 - A batch the collector has accepted is cleared from the queue before the `Publish` event is logged, so an event
   logger that throws on `Publish` no longer causes those exposures and goals to be retained and sent again, and is
   not reported as a publish failure (`close()` still completes).
+- A `Refresh` event logger that throws no longer rolls the refresh back: the new data stays installed (the error is
+  written to the error log), so assignments the handler read from it can't outlive it, as in JS, which swallows
+  logger errors. Old: the context went back to the previous data. A refresh that fails to load or install data
+  still keeps the previous data.
 - `createContextAsync()`/`createContextPending()` resolve a context that is ready and failed when the loaded data
   raises any `Throwable` (e.g. a `TypeError` from a mistyped field), not only an `Exception`.
 - `ReactHttpClient::$timeout` of 0 or less now means no per-attempt limit, as documented (it previously made every

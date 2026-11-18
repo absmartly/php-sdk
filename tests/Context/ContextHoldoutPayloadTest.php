@@ -8,6 +8,8 @@ use ABSmartly\SDK\Config;
 use ABSmartly\SDK\Context\Context;
 use ABSmartly\SDK\Context\ContextConfig;
 use ABSmartly\SDK\Context\ContextData;
+use ABSmartly\SDK\Context\ContextEventLogger;
+use ABSmartly\SDK\Context\ContextEventLoggerEvent;
 use ABSmartly\SDK\Experiment;
 use ABSmartly\SDK\Http\AsyncHttpClientInterface;
 use ABSmartly\SDK\Http\HttpClientInterface;
@@ -677,6 +679,71 @@ class ContextHoldoutPayloadTest extends TestCase {
 			$method->setAccessible(true);
 		}
 		return $method->invoke($context, $name);
+	}
+
+	// An override whose experiment changes unit type keeps the same holdout id and iteration, but its arm is drawn
+	// again for the new unit type, which publishes its own holdout exposure.
+	public function testOverrideRedrawsHoldoutArmsWhenTheUnitTypeChanges(): void {
+		$holdout = self::holdout(11, 'holdout_a', 13, 111);
+		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'test-api-key', 'website', 'production'));
+		$config = new Config($client);
+		$provider = new HoldoutDataProvider();
+		$config->setContextDataProvider($provider);
+		$this->eventHandler = new ContextEventHandlerMock($client);
+		$config->setContextEventHandler($this->eventHandler);
+		$contextConfig = new ContextConfig();
+		$contextConfig->setUnits(['session_id' => self::UID, 'user_id' => 'b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3']);
+		$contextConfig->setOverride('exp', 1);
+		$context = (new SDK($config))->createContextWithData($contextConfig, new ContextData([self::experiment(1, 'exp', [11])], [$holdout]));
+		self::assertSame(1, $context->getTreatment('exp'));
+
+		$provider->next = new ContextData([self::experiment(1, 'exp', [11], 'user_id')], [$holdout]);
+		$context->refresh();
+		self::assertSame(1, $context->getTreatment('exp'));
+
+		self::assertSame([
+			[1, 'exp', 'session_id', 1], [11, 'holdout_a', 'session_id', 0],
+			[1, 'exp', 'user_id', 1], [11, 'holdout_a', 'user_id', 1],
+		], $this->published($context));
+	}
+
+	// A Refresh handler that reads assignments and then throws leaves the refreshed data installed, so the arm it
+	// drew from that data stays consistent with what later reads use.
+	public function testThrowingRefreshLoggerKeepsTheRefreshedDataAndItsArms(): void {
+		$logger = new class implements ContextEventLogger {
+			public bool $armed = false;
+			public ?int $peeked = null;
+
+			public function handleEvent(Context $context, ContextEventLoggerEvent $event): void {
+				if ($this->armed && $event->getEvent() === ContextEventLoggerEvent::Refresh) {
+					$this->armed = false;
+					$this->peeked = $context->peekTreatment('exp');
+					throw new \RuntimeException('logger failed');
+				}
+			}
+		};
+		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'test-api-key', 'website', 'production'));
+		$config = new Config($client);
+		$provider = new HoldoutDataProvider();
+		$config->setContextDataProvider($provider);
+		$this->eventHandler = new ContextEventHandlerMock($client);
+		$config->setContextEventHandler($this->eventHandler);
+		$contextConfig = new ContextConfig();
+		$contextConfig->setUnits(['session_id' => self::UID]);
+		$contextConfig->setEventLogger($logger);
+		$context = (new SDK($config))->createContextWithData($contextConfig,
+			new ContextData([self::experiment(1, 'exp', [11])], [self::holdout(11, 'holdout_a', 1, 222)]));
+		self::assertSame(1, $context->peekTreatment('exp'));
+
+		// Same iteration, a seed that holds the unit out: only a fresh resolution against the new data sees it.
+		$logger->armed = true;
+		$provider->next = new ContextData([self::experiment(1, 'exp', [11]), self::experiment(2, 'exp_new', [11])],
+			[self::holdout(11, 'holdout_a', 13, 111)]);
+		$context->refresh();
+
+		self::assertSame(1, $logger->peeked);
+		self::assertSame(13, $context->getContextData()->holdouts[0]->seedHi);
+		self::assertSame(1, $context->getTreatment('exp_new'));
 	}
 
 	private static function droppedHoldoutArms(Context $context): array {

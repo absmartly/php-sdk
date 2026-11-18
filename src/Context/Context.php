@@ -685,7 +685,10 @@ class Context {
 			if (array_key_exists($experimentName, $this->overrides)) {
 				$override = $this->overrides[$experimentName];
 				if ($assignment->overridden && $assignment->variant === $override
-					&& ($experiment === null || !$this->hasHoldouts || $this->holdoutSetMatches($experimentName, $assignment))) {
+					&& ($experiment === null || !$this->hasHoldouts
+						// A unit type change re-draws the holdout arms, as experimentMatches() rebuilds the normal path.
+						|| ($assignment->unitType === $experiment->data->unitType
+							&& $this->holdoutSetMatches($experimentName, $assignment)))) {
 					// override up-to-date
 					return $assignment;
 				}
@@ -1539,8 +1542,6 @@ class Context {
 		try {
 			$data = $this->dataProvider->getContextData();
 			$this->setData($data);
-			$this->failed = false;
-			$this->logEvent(ContextEventLoggerEvent::Refresh, $data);
 		}
 		catch (Exception $exception) {
 			$this->data = $oldData;
@@ -1557,6 +1558,23 @@ class Context {
 				$exception->getLine()
 			));
 			$this->logError($exception, false);
+			return;
+		}
+
+		$this->failed = false;
+
+		// The data is installed, so a throwing logger no longer rolls it back: assignments a Refresh handler built from
+		// it must stay consistent with the data in use (the JS SDK swallows logger errors the same way).
+		try {
+			$this->logEvent(ContextEventLoggerEvent::Refresh, $data);
+		}
+		catch (Exception $exception) {
+			error_log(sprintf(
+				'ABsmartly SDK Error: Event logger failed handling Refresh: %s in %s:%d',
+				$exception->getMessage(),
+				$exception->getFile(),
+				$exception->getLine()
+			));
 		}
 	}
 
