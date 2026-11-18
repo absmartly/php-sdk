@@ -43,7 +43,7 @@ trait SwitchbackTestSupport {
 	protected static array $UID_HASH_3_ARMS = [1, 2, 0, 2, 1, 0, 2, 0, 1, 1, 2, 0];
 	protected static array $UID_3_ARMS = [2, 0, 1, 0, 1, 2, 1, 2, 0, 0, 1, 2];
 
-	protected int $now = 0;
+	public int $now = 0;
 	/** When set, the next clock read returns this value once, then reads fall back to $now. */
 	protected ?int $nextRead = null;
 	protected ContextEventHandlerMock $eventHandler;

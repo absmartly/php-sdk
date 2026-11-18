@@ -67,7 +67,6 @@ class ContextSwitchbackPayloadTest extends TestCase {
 		self::assertSame(0, $experiment->switchbackBurnOutDurationMs);
 		self::assertSame('balanced_block', $experiment->switchbackDesignType);
 		self::assertSame('global_average_treatment_effect', $experiment->switchbackEstimand);
-		// The Phase 1E fields and unknown fields are not read.
 		self::assertFalse(property_exists($experiment, 'switchbackClusterUnitType'));
 		self::assertFalse(property_exists($experiment, 'switchbackClusterCount'));
 		self::assertFalse(property_exists($experiment, 'switchbackFutureField'));
@@ -250,7 +249,6 @@ class ContextSwitchbackPayloadTest extends TestCase {
 		self::assertSame(1, $reads);
 		self::assertSame([], self::privateValue($context, 'switchbackSources'));
 		self::assertSame([], self::privateValue($context, 'switchbackEpochs'));
-		// The guard that keeps unit reads off the switchback path stays off.
 		self::assertFalse(self::privateValue($context, 'hasSwitchbacks'));
 	}
 

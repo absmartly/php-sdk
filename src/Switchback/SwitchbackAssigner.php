@@ -4,15 +4,17 @@ declare(strict_types=1);
 namespace ABSmartly\SDK\Switchback;
 
 use InvalidArgumentException;
-use lastguest\Murmur;
 
 use function floor;
 use function hash;
 use function hexdec;
 use function intdiv;
 use function min;
+use function ord;
 use function pack;
 use function sprintf;
+use function strlen;
+use function unpack;
 
 use const PHP_VERSION_ID;
 
@@ -86,7 +88,8 @@ final class SwitchbackAssigner {
 	}
 
 	/**
-	 * The unsigned murmur3_32 (seed 0) of $bytes, as VariantAssigner computes it.
+	 * The unsigned murmur3_32 (seed 0) of $bytes. PHP 8.1+ has it natively; older runtimes use murmur3_32() below, not
+	 * lastguest/murmurhash, whose 64-bit arithmetic leaves the hash unmasked and diverges for keys longer than 4 bytes.
 	 * @codeCoverageIgnore Because this snippet is version-dependent.
 	 */
 	private static function digest(string $bytes): int {
@@ -94,7 +97,50 @@ final class SwitchbackAssigner {
 			return hexdec(hash('murmur3a', $bytes));
 		}
 
-		return Murmur::hash3_int($bytes);
+		return self::murmur3_32($bytes);
+	}
+
+	/**
+	 * Unsigned murmur3_32 with seed 0 in plain 64-bit integer arithmetic, masked to 32 bits after every step.
+	 */
+	public static function murmur3_32(string $bytes): int {
+		$length = strlen($bytes);
+		$h = 0;
+		$blocks = $length - ($length & 3);
+		for ($i = 0; $i < $blocks; $i += 4) {
+			$h ^= self::mixK(unpack('V', $bytes, $i)[1]);
+			$h = (($h << 13) | ($h >> 19)) & 0xFFFFFFFF;
+			$h = (self::mul32($h, 5) + 0xE6546B64) & 0xFFFFFFFF;
+		}
+		$k = 0;
+		switch ($length & 3) {
+			case 3:
+				$k ^= ord($bytes[$blocks + 2]) << 16;
+			// no break
+			case 2:
+				$k ^= ord($bytes[$blocks + 1]) << 8;
+			// no break
+			case 1:
+				$k ^= ord($bytes[$blocks]);
+				$h ^= self::mixK($k);
+		}
+		$h ^= $length;
+		$h ^= $h >> 16;
+		$h = self::mul32($h, 0x85EBCA6B);
+		$h ^= $h >> 13;
+		$h = self::mul32($h, 0xC2B2AE35);
+		return $h ^ ($h >> 16);
+	}
+
+	private static function mixK(int $k): int {
+		$k = self::mul32($k, 0xCC9E2D51);
+		$k = (($k << 15) | ($k >> 17)) & 0xFFFFFFFF;
+		return self::mul32($k, 0x1B873593);
+	}
+
+	/** ($a * $b) mod 2^32 for 32-bit unsigned operands, split so the product never leaves the 64-bit int range. */
+	private static function mul32(int $a, int $b): int {
+		return ((($a & 0xFFFF) * $b) + (((($a >> 16) * $b) & 0xFFFF) << 16)) & 0xFFFFFFFF;
 	}
 
 	private static function requireValidArmCount(int $armCount): void {

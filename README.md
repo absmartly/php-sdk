@@ -344,9 +344,12 @@ $treatment = $context->getTreatment('exp_delivery_fee'); // this period's varian
   exposure too. Without a unit of a linked type, the experiment does not apply.
 - Overrides, assignment rules, strict audiences, full-on, traffic and custom assignments apply as for a unit
   experiment, and the exposure carries the same flags. Holdouts never apply to a switchback.
-- `getTreatment()` sends one exposure per period, stamped with the time that chose the period. The serving unit and
-  cluster key are read once per period, so a `setAttribute()` later in the period takes effect from the next period.
-  `peekTreatment()` and `peekVariableValue()` send nothing.
+- `getTreatment()` sends one exposure per period. The serving unit and cluster key are read once per period, so a
+  `setAttribute()` later in the period takes effect from the next period. The exposure is stamped with the time the
+  cluster was read, so the collector, which resolves the cluster from the published attributes at that time, finds the
+  cluster that chose the variant. `peekTreatment()` and `peekVariableValue()` send nothing.
+- `getVariableValue()` exposes a switchback only when it provides the value; a strict audience mismatch it passes over
+  records nothing (unit experiments keep exposing every experiment the key walks past).
 - Attributes are published with their timestamps, as before: the collector resolves the cluster again from them.
 
 ### Semantic Version Conditions

@@ -180,8 +180,19 @@ class SwitchbackServerParityTest extends TestCase {
 		}
 	}
 
+	/** Absent, not an ineligible control: the experiment does not apply, so a variable read gets the caller's default. */
 	public function testNoLinkedUnitIsAbsent(): void {
 		self::assertSilentControl($this->serve(self::sbExperiment(self::twoSources()), [self::USER => 'u1'], ['store_city' => 'Lisboa']), 'no linked unit');
+
+		$experiment = self::sbExperiment(self::twoSources());
+		$experiment->variants[0]->config = '{"sb.arm":0}';
+		$context = $this->createContext(self::dataOf($experiment), [self::USER => 'u1'], ['store_city' => 'Lisboa']);
+		self::assertSame(-1, $context->getVariableValue('sb.arm', -1));
+		self::assertFalse($this->resolution($context, 'exp_sb')['applies']);
+		// An ineligible cluster (a linked unit with no value), by contrast, serves variant 0's value.
+		$ineligible = $this->createContext(self::dataOf($experiment), [self::STORE => 's1'], []);
+		self::assertSame(0, $ineligible->getVariableValue('sb.arm', -1));
+		self::assertTrue($this->resolution($ineligible, 'exp_sb')['applies']);
 	}
 
 	/** Traffic eligibility is sticky on the serving unit's hash, equal to a unit experiment's on that unit type. */

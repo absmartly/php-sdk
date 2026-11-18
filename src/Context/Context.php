@@ -126,8 +126,6 @@ class Context {
 	 * bare-name slot shared by pre-start, unservable and legacy resolutions.
 	 */
 	private array $switchbackEpochs = [];
-	/** The clock reading of the latest switchback resolution, which its exposure is stamped with. */
-	private int $switchbackReadAt = 0;
 	/**
 	 * Whether any installed data had a switchback: until then no read consults the switchback state. A performance guard
 	 * only (two isset() calls per cached unit read, ~4% with opcache): both branches it skips find nothing without it.
@@ -901,9 +899,8 @@ class Context {
 	 * they are read once per slot.
 	 */
 	private function getSwitchbackAssignment(string $experimentName, ExperimentVariables $experiment, SwitchbackSources $sources): Assignment {
-		// One reading per resolution, cached or not. Every caller exposes right after resolving, so the exposure is stamped
-		// with the reading that picked its period (SWITCHBACK.md: each exposing call uses its own reading).
-		$this->switchbackReadAt = $now = self::getTime();
+		// One reading per resolution, cached or not.
+		$now = self::getTime();
 		$data = $experiment->data;
 		$period = null;
 		if ($sources->servable && $sources->paths !== null && $now >= $data->switchbackStartAt) {
@@ -933,9 +930,14 @@ class Context {
 		$slot->custom = $this->cassignments[$experimentName] ?? null;
 
 		$cachedServing = $cached !== null ? $cached->switchback->serving : null;
-		$serving = $cachedServing !== null && $cachedServing->status !== SwitchbackServing::ABSENT
-			? $cachedServing
-			: $this->resolveSwitchbackServing($data, $sources, $now);
+		if ($cachedServing !== null && $cachedServing->status !== SwitchbackServing::ABSENT) {
+			$serving = $cachedServing;
+			$slot->servedAt = $cached->switchback->servedAt;
+		}
+		else {
+			$serving = $this->resolveSwitchbackServing($data, $sources, $now);
+			$slot->servedAt = $now;
+		}
 		$slot->serving = $serving;
 
 		if (isset($this->overrides[$experimentName])) {
@@ -976,7 +978,6 @@ class Context {
 		$assignment->variant = 0;
 
 		if ($serving->status === SwitchbackServing::ABSENT) {
-			// No linked unit: the experiment does not apply, like an unset unit type.
 			$assignment->unitType = $sources->paths !== null ? $sources->types[0] : $data->unitType;
 			$assignment->eligible = false;
 			$slot->silent = true;
@@ -995,7 +996,6 @@ class Context {
 		$rule = $this->resolveRule($data, false, $unitType);
 		$assignment->ruleVariant = $rule['variant'] ?? null;
 		if ($rule !== null) {
-			// Recorded like a unit experiment's rule win: ruleOverride set, not assigned.
 			$assignment->assigned = false;
 			$assignment->ruleOverride = true;
 			$assignment->variant = $rule['variant'];
@@ -1009,7 +1009,6 @@ class Context {
 			}
 		}
 		if (!empty($data->audienceStrict) && $assignment->audienceMismatch) {
-			// Recorded like a unit experiment's strict mismatch: control, audienceMismatch, not assigned.
 			$assignment->assigned = false;
 			return;
 		}
@@ -1273,9 +1272,11 @@ class Context {
 	 */
 	private function triggerExposures(Assignment $assignment): void {
 		if ($assignment->switchback !== null) {
-			// Stamped with the clock reading that picked the period, since analysis derives the period from exposedAt.
+			// Stamped with the reading at which the slot read its cluster: it lies in the slot's period, which analysis
+			// derives from exposedAt, and the collector, resolving the cluster from the attributes at exposedAt, finds the
+			// cluster that was served even if an attribute changed since.
 			if (!$assignment->switchback->silent) {
-				$this->queueExposure($assignment, $this->switchbackReadAt);
+				$this->queueExposure($assignment, $assignment->switchback->servedAt);
 			}
 			return;
 		}
@@ -1355,7 +1356,10 @@ class Context {
 			$assignment = $this->getAssignment($experimentVariables->data->name);
 
 			if ($assignment->variables !== null) {
-				if ($exposeAssignments && (!$assignment->exposed || $this->droppedHoldoutArms !== [])) {
+				// A switchback is exposed only when it provides the value (java-sdk's SWITCHBACK.md), so a strict mismatch the
+				// key walks past records nothing; unit experiments keep the JS behaviour of exposing every candidate.
+				if ($exposeAssignments && (!$assignment->exposed || $this->droppedHoldoutArms !== [])
+					&& ($assignment->switchback === null || $assignment->assigned || $assignment->overridden || $assignment->ruleOverride)) {
 					$this->triggerExposures($assignment);
 				}
 

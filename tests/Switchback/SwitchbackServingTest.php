@@ -24,12 +24,10 @@ class SwitchbackServingTest extends TestCase {
 			self::assertSame('porto', $serving->clusterKey);
 		}
 
-		// Units without a value are skipped; the next source serves.
 		$values = ['device' => 'lisbon'];
 		$serving = SwitchbackServing::resolve($types, $paths, null, ['device_id' => 'd', 'store_id' => 's'], $read);
 		self::assertSame([SwitchbackServing::ELIGIBLE, 'device_id', 'lisbon'], [$serving->status, $serving->unitType, $serving->clusterKey]);
 
-		// Disagreement: ineligible, under the first linked unit.
 		$values = ['store' => 'porto', 'device' => 'lisbon'];
 		$serving = SwitchbackServing::resolve($types, $paths, null, ['device_id' => 'd', 'store_id' => 's'], $read);
 		self::assertSame([SwitchbackServing::INELIGIBLE, 'store_id', null], [$serving->status, $serving->unitType, $serving->clusterKey]);

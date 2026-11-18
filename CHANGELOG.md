@@ -133,8 +133,10 @@
   `floor((now - switchbackStartAt) / switchbackPeriodMs)`. Units that disagree, a value outside
   `switchbackClusterValues`, a missing value, a pre-anchor read or an unservable schedule give a control that records
   no exposure; overrides, assignment rules, strict audiences, full-on, traffic and custom assignments apply as for a
-  unit experiment. Holdouts never apply to a switchback. Each period exposes once, stamped with the clock reading that
-  chose it, and the serving unit and cluster key are read once per period. Exposures and the publish payload carry no
+  unit experiment. Holdouts never apply to a switchback. The serving unit and cluster key are read once per period, and
+  each period exposes once, stamped with the clock reading at which the cluster was read (java-sdk stamps the exposing
+  call's reading; this keeps the collector's re-resolution of the cluster at `exposedAt` on the cluster that was
+  served). `getVariableValue()` exposes a switchback only when it provides the value, as in java-sdk. Exposures and the publish payload carry no
   new fields. Payloads without switchbacks take the same paths as before. See the README's *Switchback Experiments*.
   Set cluster attributes as strings or integers: a float attribute is published as JSON (`3.0` as `3`), so the
   collector, which resolves the cluster again from the published attributes, could key it where the SDK did not.

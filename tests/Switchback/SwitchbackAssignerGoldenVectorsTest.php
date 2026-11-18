@@ -97,6 +97,24 @@ class SwitchbackAssignerGoldenVectorsTest extends TestCase {
 		self::assertSame([11, 15, 8, 13, 7, 0, 5, 10, 4, 3, 9, 12, 6, 1, 2, 14], SwitchbackAssigner::fisherYatesPermutation(16, 13189659));
 	}
 
+	/**
+	 * The pre-8.1 fallback is this class's own murmur3_32, not lastguest/murmurhash, which gives e424440a for the first
+	 * key below (about 1 input in 75,000 differs) on PHP 7.4/8.0. Native murmur3a values; runs on every CI runtime.
+	 */
+	public function testPurePhpMurmur3MatchesNativeMurmur3(): void {
+		foreach ([["store-294007\x1f0", 0x47866670], ["store-240098\x1f0", 0xd9e9cd1b], ["store-412903\x1f0", 0xf525e2d2],
+			["store-444285\x1f0", 0x6254a4d1], ['', 0x00000000], ['a', 0x3c2569b2]] as [$bytes, $expected]) {
+			self::assertSame($expected, SwitchbackAssigner::murmur3_32($bytes), bin2hex($bytes));
+		}
+		self::assertSame(1, SwitchbackAssigner::assign('store-294007', 0, (3603515 << 32) | 233373850, 2));
+		if (PHP_VERSION_ID >= 80100) {
+			for ($i = 0; $i < 2000; ++$i) {
+				$bytes = $i === 0 ? '' : random_bytes($i % 41 + 1);
+				self::assertSame(hexdec(hash('murmur3a', $bytes)), SwitchbackAssigner::murmur3_32($bytes), bin2hex($bytes));
+			}
+		}
+	}
+
 	public function testEveryCycleCoversEveryArmExactlyOnce(): void {
 		foreach ([2, 3, 10] as $armCount) {
 			for ($cycle = -3; $cycle < 20; ++$cycle) {
@@ -106,6 +124,8 @@ class SwitchbackAssignerGoldenVectorsTest extends TestCase {
 					self::assertArrayNotHasKey($variant, $seen, 'arm repeated within a cycle');
 					$seen[$variant] = true;
 				}
+				ksort($seen);
+				self::assertSame(range(0, $armCount - 1), array_keys($seen), 'a cycle is not the arm set');
 			}
 		}
 	}
