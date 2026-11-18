@@ -423,7 +423,6 @@ class V103CompatibilityTest extends TestCase {
 
 		self::assertNotNull($context->getExperiment('exp_test_abc'));
 		self::assertSame(1, $context->getTreatment('exp_test_ab'));
-		// Variant 1 of exp_test_abc now has no variables: overridden onto it, button.color falls back to the default.
 		$context->setOverride('exp_test_abc', 1);
 		self::assertSame('missing', $context->peekVariableValue('button.color', 'missing'));
 		self::assertSame('missing', $context->getVariableValue('button.color', 'missing'));
@@ -482,7 +481,6 @@ class V103CompatibilityTest extends TestCase {
 		self::assertSame(0, $context->getPendingCount());
 		self::assertSame(['PUT'], array_column($http->requests, 0));
 
-		// Through Client::publish() itself: the setter's limit matches what the stock publisher sends.
 		foreach ([509 => true, 510 => false] as $depth => $sent) {
 			$wire = new RecordingHTTPClient();
 			$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'key', 'app', 'env'), $wire);

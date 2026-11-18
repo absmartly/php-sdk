@@ -47,7 +47,9 @@ changes below before upgrading. It is not a guarantee that every 1.0.3 workload 
     properties don't reach the goal. `track()` keeps the object itself, as in 1.0.3.
   - Other objects are kept as given and encoded again at publish. An object changed afterwards so that it can't be
     encoded fails that publish, and the batch stays queued for retry. `Context::$maxRetainedEvents` caps the exposures
-    and goals kept after a failed publish (default 10,000; 0 or less means no cap).
+    and goals kept after a publish fails with an `Exception` (default 10,000; 0 or less means no cap). A PHP `Error`
+    thrown while encoding, such as a `TypeError` from `jsonSerialize()`, isn't caught: it escapes `publish()`, and
+    that attempt doesn't trim the queue, as with `track()` in 1.0.3.
 - `setUnits()` accepts int and float UIDs (stored as strings; `setUnit()` keeps its `string $uid` parameter, so
   non-strict callers' numbers convert as before). `setAttributeValue()`/`setAttributeValues()` retain typed values;
   `trackWithProperties()` accepts objects or associative arrays. Legacy `setAttribute()` and `track()` retain their

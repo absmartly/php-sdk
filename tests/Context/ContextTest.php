@@ -2880,6 +2880,28 @@ class ContextTest extends TestCase {
 		self::assertSame($retained, $context->getPendingCount());
 	}
 
+	public function testAQueueExactlyAtTheCapIsKeptWithoutADropEvent(): void {
+		$logger = new MockContextEventLoggerProxy();
+		$context = $this->createReadyContext('context.json', true, $logger);
+		$context->maxRetainedEvents = 3;
+		$this->eventHandler->prerun = static function() {
+			throw new \RuntimeException('Server unavailable');
+		};
+		$context->track('goal1');
+		$context->track('goal2');
+		$context->track('goal3');
+		$logger->clear();
+
+		$context->publish();
+
+		self::assertSame(3, $context->getPendingCount());
+		self::assertCount(0, array_filter(
+			$logger->events,
+			fn($e) => $e->getEvent() === ContextEventLoggerEvent::Error
+				&& strpos($e->getData()->getMessage(), 'Retained event queue exceeded') !== false
+		));
+	}
+
 	public static function retainedEventCaps(): array {
 		return [
 			'default is 10,000' => [null, 10001, 10000],
