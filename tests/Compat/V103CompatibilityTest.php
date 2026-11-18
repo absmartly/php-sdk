@@ -355,12 +355,21 @@ class V103CompatibilityTest extends TestCase {
 		self::assertSame('red', $context->peekVariableValue('button.color', 'none'));
 	}
 
-	public function testAThrowingJsonSerializableIsRejectedAsInvalidArgument(): void {
+	/**
+	 * @dataProvider serializationFailures
+	 */
+	public function testAThrowingJsonSerializableIsRejectedAsInvalidArgument(\Throwable $failure): void {
 		$config = new Config(new Client(new ClientConfig('https://demo.absmartly.io/v1', 'key', 'app', 'env'), new RecordingHTTPClient()));
 		$context = (new SDK($config))->createContextWithData((new ContextConfig())->setUnit('session_id', 'abc'), new ContextData([]));
-		$dto = new class implements \JsonSerializable {
+		$dto = new class($failure) implements \JsonSerializable {
+			private \Throwable $failure;
+
+			public function __construct(\Throwable $failure) {
+				$this->failure = $failure;
+			}
+
 			public function jsonSerialize(): array {
-				throw new \DomainException('not serializable');
+				throw $this->failure;
 			}
 		};
 
@@ -373,9 +382,16 @@ class V103CompatibilityTest extends TestCase {
 				self::fail('expected an InvalidArgumentException');
 			}
 			catch (\ABSmartly\SDK\Exception\InvalidArgumentException $e) {
-				self::assertInstanceOf(\DomainException::class, $e->getPrevious());
+				self::assertSame($failure, $e->getPrevious());
 			}
 		}
 		self::assertSame(0, $context->getPendingCount());
+	}
+
+	public static function serializationFailures(): array {
+		return [
+			'an Exception' => [new \DomainException('not serializable')],
+			'an Error' => [new \TypeError('not serializable')],
+		];
 	}
 }
