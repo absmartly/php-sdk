@@ -621,17 +621,19 @@ class ContextSwitchbackTest extends TestCase {
 		self::assertSame([self::ruleExposure('exp_sb', 0, self::$ANCHOR)], $this->publishExposures($context));
 
 		// A malformed traffic weight is rejected as before, never served as an eligible assignment.
-		$malformed = self::switchback(2);
-		$malformed->trafficSplit = ['not-a-number', 1];
-		$context = $this->createContext(self::dataOf($malformed), [self::$UNIT_TYPE => 'store-32476']);
-		try {
-			$context->getTreatment('exp_sb');
-			self::fail('expected InvalidArgumentException');
+		foreach ([['not-a-number', 1], [null, 1], [false, true]] as $trafficSplit) {
+			$malformed = self::switchback(2);
+			$malformed->trafficSplit = $trafficSplit;
+			$context = $this->createContext(self::dataOf($malformed), [self::$UNIT_TYPE => 'store-32476']);
+			try {
+				$context->getTreatment('exp_sb');
+				self::fail('expected InvalidArgumentException for ' . json_encode($trafficSplit));
+			}
+			catch (\InvalidArgumentException $exception) {
+				self::assertStringContainsString('must be an array of float values', $exception->getMessage());
+			}
+			self::assertSame(0, $context->getPendingCount());
 		}
-		catch (\InvalidArgumentException $exception) {
-			self::assertStringContainsString('must be an array of float values', $exception->getMessage());
-		}
-		self::assertSame(0, $context->getPendingCount());
 
 		// Unit experiments keep VariantAssigner, so the same unit is bucketed as before on each runtime: lastguest's
 		// draw on PHP 7.4/8.0, native murmur3 on 8.1+.
