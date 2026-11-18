@@ -336,7 +336,9 @@ $treatment = $context->getTreatment('exp_delivery_fee'); // this period's varian
   served order: the first unit in that order with a value serves the experiment. Paths use `/` (`geo/region`,
   `items/0/city`); a quoted segment (`'a/b'`) is a literal key, and a path with a `.` is unreadable.
 - A cluster value is a non-empty string, used as-is, or an integer, used as its decimal text. Floats (including
-  `3.0`), booleans, arrays, objects, `""` and null give no value.
+  `3.0`), booleans, arrays, objects, `""` and null give no value. Set cluster attributes as strings or integers: a
+  float is published as JSON (`3.0` as `3`), which the collector, resolving the cluster from the published
+  attributes, could read as a value.
 - With no value, units that disagree, or a value outside `switchbackClusterValues`, the unit gets control (variant 0)
   and no exposure is sent. Before `switchbackStartAt`, or with an unservable schedule, it gets control with no
   exposure too. Without a unit of a linked type, the experiment does not apply.

@@ -841,6 +841,21 @@ class ContextSwitchbackTest extends TestCase {
 		self::assertSame([48, 49], self::privateValue($context, 'switchbackEpochs')['exp_sb']['periods']);
 	}
 
+	/** Periods are retained by index, not by recency or insertion: the lowest index other than the new one goes. */
+	public function testRetentionIsByPeriodIndexNotInsertionOrder(): void {
+		$context = $this->createContext(self::dataOf(self::switchback(2)));
+		foreach ([5, 3, 4] as $period) {
+			$this->now = self::$ANCHOR + $period * self::$HOUR;
+			$context->getTreatment('exp_sb');
+		}
+		self::assertSame([4, 5], self::privateValue($context, 'switchbackEpochs')['exp_sb']['periods']);
+		self::assertSame(3, $context->getPendingCount());
+		// Period 5 was installed first but has the highest index, so it is still deduplicated.
+		$this->now = self::$ANCHOR + 5 * self::$HOUR;
+		$context->getTreatment('exp_sb');
+		self::assertSame(3, $context->getPendingCount());
+	}
+
 	/** unitType on a switchback payload is never used for assignment: the cluster map decides. */
 	public function testUnitTypeIsNotUsedForSwitchbackAssignment(): void {
 		$experiment = self::switchback(2);
@@ -1158,6 +1173,16 @@ class ContextSwitchbackTest extends TestCase {
 		$this->refreshTo($context, self::switchback(2));
 		$context->getTreatment('exp_sb');
 		self::assertSame(4, $context->getPendingCount());
+	}
+
+	/** A failed first load leaves no switchback behind: the failed context serves control and the default value. */
+	public function testAFailedLoadAfterASwitchbackLeavesNoSwitchbackState(): void {
+		$context = @$this->createContext(new ContextData([self::switchback(2), (object) ['id' => 9, 'name' => 'broken']]));
+		self::assertTrue($context->isFailed());
+		self::assertSame([], self::privateValue($context, 'switchbackSources'));
+		self::assertSame(0, $context->getTreatment('exp_sb'));
+		self::assertSame(-1, $context->getVariableValue('sb.arm', -1));
+		self::assertSame(0, $context->peekTreatment('exp_sb'));
 	}
 
 	/** A failed refresh keeps the switchback definitions and their epoch. */

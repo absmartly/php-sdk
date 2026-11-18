@@ -75,6 +75,10 @@
 
 ### Changed
 
+- **Switchback experiments are served as switchbacks.** An experiment with `randomizationType: "switchback"` is now
+  assigned by cluster and period (see Added). v1.0.3 served it as a sticky unit experiment on its `unitType` (or not at
+  all without one), so units of a running switchback can change variant and publish one exposure per period, under the
+  unit that serves the cluster, after the upgrade. Upgrade every SDK that serves a switchback experiment.
 - The `timeout` option stays the connect timeout (`CURLOPT_CONNECTTIMEOUT_MS`) as in v1.0.3, bounding only
   connection establishment, not the whole request. An optional total budget for the entire request (including
   retries and back-off) is available opt-in via `HTTPClient::$totalTimeout`/`ReactHttpClient::$totalTimeout`
@@ -117,7 +121,8 @@
 
 ### Added
 
-- **Switchback experiments** (R33, cluster-defined), as in java-sdk (java-sdk#15, shipping in 1.10.0) and the Collector. An experiment with
+- **Switchback experiments** (R33, cluster-defined), as in java-sdk (java-sdk#15, on java-sdk main and in its first
+  release after 1.9.0) and the Collector. An experiment with
   `randomizationType: "switchback"` is randomized over clusters and time: `Experiment` gains `$randomizationType`,
   `$switchbackClusters` (unit type => attribute path, in the served order, which is kept), `$switchbackClusterValues`,
   `$switchbackStartAt`, `$switchbackPeriodMs`, `$switchbackCarryoverDurationMs`, `$switchbackBurnInDurationMs`,
@@ -131,8 +136,8 @@
   unit experiment. Holdouts never apply to a switchback. Each period exposes once, stamped with the clock reading that
   chose it, and the serving unit and cluster key are read once per period. Exposures and the publish payload carry no
   new fields. Payloads without switchbacks take the same paths as before. See the README's *Switchback Experiments*.
-  Earlier releases served switchback experiments as sticky unit experiments (or not at all without a `unitType`), so
-  upgrade every SDK that serves one.
+  Set cluster attributes as strings or integers: a float attribute is published as JSON (`3.0` as `3`), so the
+  collector, which resolves the cluster again from the published attributes, could key it where the SDK did not.
 - **Holdouts.** `ContextData::$holdouts` carries the collector's `holdouts` and `Experiment::$holdoutIds` (and
   `$holdoutType`) the ids that cover each experiment, as in the JavaScript and Java SDKs. A unit held out by any of
   an experiment's holdouts gets control (variant 0, not assigned) without an exposure of its own, ahead of the
