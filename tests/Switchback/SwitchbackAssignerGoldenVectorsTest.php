@@ -115,6 +115,25 @@ class SwitchbackAssignerGoldenVectorsTest extends TestCase {
 		}
 	}
 
+	/**
+	 * The serving unit's traffic and split-rule draw uses the platform murmur3 on every runtime: lastguest/murmurhash
+	 * puts these units in the other bucket on PHP 7.4/8.0. On 8.1+ it equals VariantAssigner, which is native there.
+	 */
+	public function testServingUnitDrawMatchesThePlatformOnEveryRuntime(): void {
+		foreach ([['store-32476', 0], ['store-52503', 1], ['store-121460', 0], ['store-125857', 0]] as [$uid, $expected]) {
+			self::assertSame($expected, SwitchbackAssigner::assignUnit($uid, [0.5, 0.5], 1, 2), $uid);
+		}
+		if (PHP_VERSION_ID >= 80100) {
+			foreach ([[0.5, 0.5], [0.2, 0.3, 0.5], [1.0, 0.0], [0.0, 1.0]] as $split) {
+				for ($i = 0; $i < 300; ++$i) {
+					$uid = 'u-' . $i;
+					self::assertSame((new \ABSmartly\SDK\VariantAssigner($uid))->assign($split, -5, 7 + $i),
+						SwitchbackAssigner::assignUnit($uid, $split, -5, 7 + $i), $uid);
+				}
+			}
+		}
+	}
+
 	public function testEveryCycleCoversEveryArmExactlyOnce(): void {
 		foreach ([2, 3, 10] as $armCount) {
 			for ($cycle = -3; $cycle < 20; ++$cycle) {

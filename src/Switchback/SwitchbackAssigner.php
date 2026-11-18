@@ -3,8 +3,11 @@ declare(strict_types=1);
 
 namespace ABSmartly\SDK\Switchback;
 
+use ABSmartly\SDK\Utils;
 use InvalidArgumentException;
 
+use function array_values;
+use function count;
 use function floor;
 use function hash;
 use function hexdec;
@@ -76,6 +79,26 @@ final class SwitchbackAssigner {
 		}
 
 		return $permutation;
+	}
+
+	/**
+	 * VariantAssigner::assign() for a switchback's serving unit (traffic and split rules), with this class's murmur3 so
+	 * it agrees with the platform on PHP 7.4/8.0 too. Unit experiments keep VariantAssigner unchanged.
+	 *
+	 * @param float[] $split
+	 */
+	public static function assignUnit(string $uid, array $split, int $seedHi, int $seedLo): int {
+		$unitHash = self::digest(Utils::hashUnit($uid));
+		$probability = self::digest(pack('V3', $seedLo & 0xFFFFFFFF, $seedHi & 0xFFFFFFFF, $unitHash)) * self::NORMALIZER;
+		$cumSum = 0.0;
+		$split = array_values($split);
+		foreach ($split as $i => $value) {
+			$cumSum += (float) $value;
+			if ($probability < $cumSum) {
+				return $i;
+			}
+		}
+		return count($split) - 1;
 	}
 
 	/**

@@ -346,8 +346,11 @@ $treatment = $context->getTreatment('exp_delivery_fee'); // this period's varian
   experiment, and the exposure carries the same flags. Holdouts never apply to a switchback.
 - `getTreatment()` sends one exposure per period, stamped with the time that chose the period. The serving unit and
   cluster key are read once per period, so a `setAttribute()` later in the period takes effect from the next period.
-  Set cluster attributes before the first read of a period: the collector resolves the cluster from the published
-  attributes at the exposure's time. `peekTreatment()` and `peekVariableValue()` send nothing.
+  `peekTreatment()` and `peekVariableValue()` send nothing.
+- **Known limit, shared with java-sdk:** the collector resolves the cluster again from the published attributes at the
+  exposure's time. If a cluster attribute changes after a period's first read (a peek, or an earlier call) and before
+  that period's exposure, the SDK serves the first cluster's variant while the collector attributes the exposure to the
+  new cluster. Set cluster attributes before the first read and keep them stable within a period.
 - `getVariableValue()` exposes a switchback only when it provides the value; a strict audience mismatch it passes over
   records nothing (unit experiments keep exposing every experiment the key walks past).
 - Attributes are published with their timestamps, as before: the collector resolves the cluster again from them.

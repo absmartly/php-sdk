@@ -604,6 +604,22 @@ class ContextSwitchbackTest extends TestCase {
 	}
 
 	/** A split rule randomizes over the serving unit, not over the payload's unitType. */
+	/** Traffic on the serving unit uses the platform murmur3 on every runtime (store-32476 differs on PHP 7.4/8.0). */
+	public function testTrafficOnTheServingUnitMatchesThePlatformOnEveryRuntime(): void {
+		$experiment = self::switchback(2);
+		$experiment->trafficSplit = [0.5, 0.5];
+		$context = $this->createContext(self::dataOf($experiment), [self::$UNIT_TYPE => 'store-32476']);
+		self::assertSame(0, $context->getTreatment('exp_sb'));
+		self::assertSame([self::sbExposure(0, self::$ANCHOR, true, false)], $this->publishExposures($context));
+
+		$rule = self::switchback(2);
+		$rule->assignmentRules = '{"rules":[{"type":"split","environments":[],"percentages":"50/50"}]}';
+		$rule->seedHi = 1;
+		$rule->seedLo = 2;
+		$context = $this->createContext(self::dataOf($rule), [self::$UNIT_TYPE => 'store-32476']);
+		self::assertSame(0, $context->getTreatment('exp_sb'));
+	}
+
 	public function testSplitRuleRandomizesOverTheServingUnit(): void {
 		$experiment = self::switchback(2);
 		$experiment->unitType = 'user_id';
@@ -736,6 +752,23 @@ class ContextSwitchbackTest extends TestCase {
 		$overridden->setOverride('exp_sb', 1);
 		self::assertSame(1, $overridden->getVariableValue('sb.arm', -1));
 		self::assertSame([self::exposure(1, 'exp_sb', self::$UNIT_TYPE, 1, self::$ANCHOR, false, true, true)], $this->publishExposures($overridden));
+	}
+
+	/** A switchback whose served arm lacks the key is not exposed; the experiment that supplies the value is. */
+	public function testASwitchbackWhoseArmLacksTheKeyIsNotExposed(): void {
+		$sb = self::switchback(2);
+		$sb->variants[0]->config = '{"unrelated":0}';
+		$unit = self::unitExperiment(2, 2, 'exp_unit');
+		$unit->variants = [(object) ['name' => 'A', 'config' => '{"sb.arm":10}'], (object) ['name' => 'B', 'config' => '{"sb.arm":11}']];
+		$unit->fullOnVariant = 1;
+		self::assertSame(0, self::$EXPECTED_2_ARMS[0]);
+		$alone = $this->createContext(self::dataOf($sb));
+		self::assertSame(-1, $alone->getVariableValue('sb.arm', -1));
+		self::assertSame(0, $alone->getPendingCount());
+
+		$context = $this->createContext(self::dataOf($sb, $unit));
+		self::assertSame(11, $context->getVariableValue('sb.arm', -1));
+		self::assertSame(['exp_unit'], array_column($this->publishExposures($context), 1));
 	}
 
 	/** Alone on the key, a strict-mismatched switchback yields the default value. */

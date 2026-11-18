@@ -709,9 +709,11 @@ class Context {
 			return ['variant' => $experiment->fullOnVariant, 'isMissingUnit' => true];
 		}
 
-		$assigner = $this->getVariantAssigner($unitType, $uid);
+		$variant = $experiment->randomizationType === 'switchback'
+			? SwitchbackAssigner::assignUnit($uid, $action['split'], $experiment->seedHi, $experiment->seedLo)
+			: $this->getVariantAssigner($unitType, $uid)->assign($action['split'], $experiment->seedHi, $experiment->seedLo);
 		return [
-			'variant' => $assigner->assign($action['split'], $experiment->seedHi, $experiment->seedLo),
+			'variant' => $variant,
 			'isMissingUnit' => false,
 		];
 	}
@@ -1021,8 +1023,7 @@ class Context {
 			return;
 		}
 
-		$assigner = $this->getVariantAssigner($unitType, $this->units[$unitType]);
-		if ($assigner->assign($data->trafficSplit, $data->trafficSeedHi, $data->trafficSeedLo) !== 1) {
+		if (SwitchbackAssigner::assignUnit($this->units[$unitType], $data->trafficSplit, $data->trafficSeedHi, $data->trafficSeedLo) !== 1) {
 			// A traffic miss on an eligible cluster is recorded, as for a unit experiment.
 			$assignment->eligible = false;
 			return;
@@ -1352,17 +1353,19 @@ class Context {
 			$assignment = $this->getAssignment($experimentVariables->data->name);
 
 			if ($assignment->variables !== null) {
-				// A switchback is exposed only when it provides the value (java-sdk's SWITCHBACK.md), so a strict mismatch the
-				// key walks past records nothing; unit experiments keep the JS behaviour of exposing every candidate.
+				// property_exists (not isset) so a present key whose value is null is still returned,
+				// matching JS: a lower-id experiment that defines $key=null shadows a later competitor.
+				$provides = property_exists($assignment->variables, $key)
+					&& ($assignment->assigned || $assignment->overridden || $assignment->ruleOverride);
+
+				// A switchback is exposed only when it provides the value (java-sdk's SWITCHBACK.md); unit experiments keep
+				// the JS behaviour of exposing every candidate.
 				if ($exposeAssignments && (!$assignment->exposed || $this->droppedHoldoutArms !== [])
-					&& ($assignment->switchback === null || $assignment->assigned || $assignment->overridden || $assignment->ruleOverride)) {
+					&& ($assignment->switchback === null || $provides)) {
 					$this->triggerExposures($assignment);
 				}
 
-				// property_exists (not isset) so a present key whose value is null is still returned,
-				// matching JS: a lower-id experiment that defines $key=null shadows a later competitor.
-				if (property_exists($assignment->variables, $key)
-					&& ($assignment->assigned || $assignment->overridden || $assignment->ruleOverride)) {
+				if ($provides) {
 					return $assignment->variables->{$key};
 				}
 
