@@ -2527,6 +2527,27 @@ class ContextTest extends TestCase {
 		self::assertNotNull($experiment->data->customFieldValues);
 	}
 
+	public function testEnumerationsExcludeRejectedExperiments(): void {
+		$existing = $this->createReadyContext('context_custom_fields.json');
+		$valid = clone $existing->getContextData()->experiments[0];
+		$valid->customFieldValues = [(object) ['name' => 'valid_field', 'type' => 'string', 'value' => 'yes']];
+		$rejected = clone $valid;
+		unset($rejected->name);
+		$rejected->customFieldValues = [(object) ['name' => 'rejected_field', 'type' => 'string', 'value' => 'no']];
+		$client = new Client(new ClientConfig('https://example.com', '', '', ''));
+		$config = new Config($client);
+		$logger = new MockContextEventLoggerProxy();
+		$contextConfig = new ContextConfig();
+		$contextConfig->setEventLogger($logger);
+		$context = (new SDK($config))->createContextWithData($contextConfig, new ContextData([$rejected, $valid]));
+
+		self::assertFalse($context->isFailed());
+		self::assertSame([$valid->name], $context->getExperiments());
+		self::assertSame(['valid_field'], $context->getCustomFieldKeys());
+		self::assertSame('yes', $context->customFieldValue($valid->name, 'valid_field'));
+		self::assertSame(ContextEventLoggerEvent::Error, $logger->events[0]->getEvent());
+	}
+
 	public function testCustomFieldValueReturnsStringField(): void {
 		$context = $this->createReadyContext('context_custom_fields.json');
 

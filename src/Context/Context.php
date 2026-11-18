@@ -124,16 +124,10 @@ class Context {
 	public function getCustomFieldKeys(): array {
 		$this->checkReady();
 		$keys = [];
-		if (!empty($this->data->experiments)) {
-			foreach ($this->data->experiments as $experiment) {
-				if (empty($experiment->customFieldValues)) {
-					continue;
-				}
-
-				foreach ($experiment->customFieldValues as $field) {
-					if (isset($field->name)) {
-						$keys[$field->name] = true;
-					}
+		foreach ($this->index as $experimentVariables) {
+			foreach ($experimentVariables->data->customFieldValues ?? [] as $field) {
+				if (isset($field->name)) {
+					$keys[$field->name] = true;
 				}
 			}
 		}
@@ -364,11 +358,8 @@ class Context {
 	public function getExperiments(): array {
 		$this->checkReady(false);
 		$return = [];
-
-		if (!empty($this->data->experiments)) {
-			foreach ($this->data->experiments as $experiment) {
-				$return[] = $experiment->name;
-			}
+		foreach ($this->index as $experimentVariables) {
+			$return[] = $experimentVariables->data->name;
 		}
 
 		return $return;
