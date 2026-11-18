@@ -259,7 +259,9 @@ class ContextConformanceTest extends TestCase {
 	public function testLegacyContextSignaturesAndScalarCoercion(): void {
 		self::assertTrue(class_exists(LegacyContext::class));
 		self::assertSame('string', (string) (new \ReflectionParameter([Context::class, 'setAttribute'], 'value'))->getType());
-		self::assertSame('?object', (string) (new \ReflectionParameter([Context::class, 'track'], 'properties'))->getType());
+		$trackType = (new \ReflectionParameter([Context::class, 'track'], 'properties'))->getType();
+		self::assertSame('object', $trackType->getName());
+		self::assertTrue($trackType->allowsNull());
 		$context = $this->context();
 		$context->setAttribute('number', 123);
 		$context->setAttributes(['other' => 42]);
