@@ -253,7 +253,7 @@ class V103CompatibilityTest extends TestCase {
 		self::assertNull($context->getExperiment('exp_bad_audience'));
 
 		self::assertNotContains('exp_bad_audience', $context->getExperiments());
-		self::assertInstanceOf(\JsonException::class, $logger->events[0]->getData()->getPrevious());
+		self::assertInstanceOf(\JsonException::class, $logger->events[0]->getData());
 
 		$refreshed = $sdk->createContextWithData(
 			(new ContextConfig())->setUnit('session_id', 'e791e240fcd3df7d238cfc285f475e8152fcc0ec'),
@@ -411,21 +411,17 @@ class V103CompatibilityTest extends TestCase {
 		return ['[]' => [[]], '0' => [0], 'false' => [false], '""' => [''], '"0"' => ['0'], 'null' => [null]];
 	}
 
-	public function testASkippedExperimentIsNamedInItsErrorEvent(): void {
+	public function testASkippedExperimentReportsTheOriginalExceptionAsInV103(): void {
 		$fixture = json_decode(file_get_contents(__DIR__ . '/../Fixtures/json/context.json'));
 		$fixture->experiments[1]->audience = '{not json';
-		$nameless = clone $fixture->experiments[2];
-		unset($nameless->name);
-		$nameless->id = 99;
-		$fixture->experiments[] = $nameless;
 		$logger = new \ABSmartly\SDK\Tests\Mocks\MockContextEventLoggerProxy();
 		$this->contextWith($fixture->experiments, $logger);
 
 		$errors = array_values(array_filter($logger->events, static fn($e) => $e->getEvent() === ContextEventLoggerEvent::Error));
-		self::assertCount(2, $errors);
-		self::assertStringStartsWith('Skipped experiment "exp_test_abc": ', $errors[0]->getData()->getMessage());
-		self::assertInstanceOf(\JsonException::class, $errors[0]->getData()->getPrevious());
-		self::assertStringStartsWith('Skipped experiment with id 99: Missing required field "name"', $errors[1]->getData()->getMessage());
+		self::assertCount(1, $errors);
+		// The same type and message v1.0.3 passed, so a logger matching on them keeps working.
+		self::assertInstanceOf(\JsonException::class, $errors[0]->getData());
+		self::assertSame('Syntax error', $errors[0]->getData()->getMessage());
 	}
 
 	public function testTheDepthCheckMatchesWhatAPublishCanEncode(): void {

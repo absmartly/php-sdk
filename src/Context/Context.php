@@ -246,11 +246,8 @@ class Context {
 				}
 			}
 			catch (RuntimeException | JsonException | \TypeError $exception) {
-				$this->logError(new RuntimeException(
-					sprintf('Skipped experiment %s: %s', self::describeExperiment($experiment), $exception->getMessage()),
-					0,
-					$exception
-				));
+				// Logged unchanged: v1.0.3 reported a malformed audience as this same JsonException.
+				$this->logError($exception);
 				continue;
 			}
 
@@ -262,18 +259,6 @@ class Context {
 				$this->ruleKeys[$experiment->name] = $experimentVariables->data->assignmentRules . ':' . $environment;
 			}
 		}
-	}
-
-	/**
-	 * @param mixed $experiment
-	 */
-	private static function describeExperiment($experiment): string {
-		$name = is_object($experiment) ? ($experiment->name ?? null) : null;
-		if (is_string($name)) {
-			return sprintf('"%s"', $name);
-		}
-		$id = is_object($experiment) ? ($experiment->id ?? null) : null;
-		return is_int($id) ? sprintf('with id %d', $id) : 'without a name or id';
 	}
 
 	/**
@@ -770,9 +755,8 @@ class Context {
 	 */
 	private static function assertPublishable(string $what, $value): void {
 		try {
-			// Encoded inside the three levels a publish adds (event, list, record), so json_encode's depth limit
-			// applies as it will in Client::encode().
-			json_encode((object) ['list' => [(object) ['value' => $value]]], JSON_THROW_ON_ERROR);
+			// A publish adds three levels (event, list, record) above the value, within json_encode's default 512.
+			json_encode($value, JSON_THROW_ON_ERROR, 509);
 		}
 		catch (Throwable $exception) {
 			throw new InvalidArgumentException(sprintf('%s cannot be published: %s', $what, $exception->getMessage()), 0, $exception);
