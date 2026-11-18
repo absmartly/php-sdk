@@ -39,8 +39,10 @@ changes below before upgrading. It is not a guarantee that every 1.0.3 workload 
 - `ABSmartly\SDK` is an alias of `ABSmartly\SDK\SDK`, the entry class name the 2.x line will use.
 - `setAttributeValue()`/`setAttributeValues()` and `trackWithProperties()` reject a non-string value or property
   that cannot be JSON-encoded (`INF`, `NaN`, a resource, an array or object containing invalid UTF-8, or a
-  `JsonSerializable` whose `jsonSerialize()` throws) with `InvalidArgumentException`, so it can never block
-  later publishes. Strings, and the 1.0.3 `setAttribute()`/`setAttributes()`/`track()` and `ContextConfig` paths,
+  `JsonSerializable` whose `jsonSerialize()` throws, or a value nested too deeply to publish) with
+  `InvalidArgumentException` at the time of the call. Objects are kept as given and encoded again at publish, as
+  `track()` always did, so an object changed afterwards so that it can't be encoded still fails that publish, and
+  its batch stays queued. Strings, and the 1.0.3 `setAttribute()`/`setAttributes()`/`track()` and `ContextConfig` paths,
   are accepted unchecked as before.
 - `setUnits()` accepts int and float UIDs (stored as strings; `setUnit()` keeps its `string $uid` parameter, so
   non-strict callers' numbers convert as before). `setAttributeValue()`/`setAttributeValues()` retain typed values;

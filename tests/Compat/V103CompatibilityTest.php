@@ -253,7 +253,7 @@ class V103CompatibilityTest extends TestCase {
 		self::assertNull($context->getExperiment('exp_bad_audience'));
 
 		self::assertNotContains('exp_bad_audience', $context->getExperiments());
-		self::assertInstanceOf(\JsonException::class, $logger->events[0]->getData());
+		self::assertInstanceOf(\JsonException::class, $logger->events[0]->getData()->getPrevious());
 
 		$refreshed = $sdk->createContextWithData(
 			(new ContextConfig())->setUnit('session_id', 'e791e240fcd3df7d238cfc285f475e8152fcc0ec'),
@@ -393,5 +393,77 @@ class V103CompatibilityTest extends TestCase {
 			'an Exception' => [new \DomainException('not serializable')],
 			'an Error' => [new \TypeError('not serializable')],
 		];
+	}
+
+	/**
+	 * @dataProvider emptyVariantConfigs
+	 */
+	public function testAnEmptyVariantConfigMeansNoVariablesAsInV103($config): void {
+		$fixture = json_decode(file_get_contents(__DIR__ . '/../Fixtures/json/context.json'));
+		$fixture->experiments[1]->variants[1]->config = $config;
+		$context = $this->contextWith($fixture->experiments);
+
+		self::assertNotNull($context->getExperiment('exp_test_abc'));
+		self::assertSame(1, $context->getTreatment('exp_test_ab'));
+	}
+
+	public static function emptyVariantConfigs(): array {
+		return ['[]' => [[]], '0' => [0], 'false' => [false], '""' => [''], '"0"' => ['0'], 'null' => [null]];
+	}
+
+	public function testASkippedExperimentIsNamedInItsErrorEvent(): void {
+		$fixture = json_decode(file_get_contents(__DIR__ . '/../Fixtures/json/context.json'));
+		$fixture->experiments[1]->audience = '{not json';
+		$nameless = clone $fixture->experiments[2];
+		unset($nameless->name);
+		$nameless->id = 99;
+		$fixture->experiments[] = $nameless;
+		$logger = new \ABSmartly\SDK\Tests\Mocks\MockContextEventLoggerProxy();
+		$this->contextWith($fixture->experiments, $logger);
+
+		$errors = array_values(array_filter($logger->events, static fn($e) => $e->getEvent() === ContextEventLoggerEvent::Error));
+		self::assertCount(2, $errors);
+		self::assertStringStartsWith('Skipped experiment "exp_test_abc": ', $errors[0]->getData()->getMessage());
+		self::assertInstanceOf(\JsonException::class, $errors[0]->getData()->getPrevious());
+		self::assertStringStartsWith('Skipped experiment with id 99: Missing required field "name"', $errors[1]->getData()->getMessage());
+	}
+
+	public function testTheDepthCheckMatchesWhatAPublishCanEncode(): void {
+		$http = new RecordingHTTPClient();
+		$config = new Config(new Client(new ClientConfig('https://demo.absmartly.io/v1', 'key', 'app', 'env'), $http));
+		$context = (new SDK($config))->createContextWithData((new ContextConfig())->setUnit('session_id', 'abc'), new ContextData([]));
+		$nested = static function (int $depth) {
+			$value = 1;
+			for ($i = 0; $i < $depth; ++$i) {
+				$value = [$value];
+			}
+			return $value;
+		};
+
+		// json_encode's default depth is 512 and a publish wraps each attribute in three levels (event, list, record).
+		$context->setAttributeValue('deepest', $nested(509));
+		try {
+			$context->setAttributeValue('too_deep', $nested(510));
+			self::fail('expected an InvalidArgumentException');
+		}
+		catch (\ABSmartly\SDK\Exception\InvalidArgumentException $e) {
+			self::assertStringStartsWith('Attribute "too_deep" value cannot be published', $e->getMessage());
+		}
+
+		$context->track('goal');
+		$context->publish();
+		self::assertSame(0, $context->getPendingCount());
+		self::assertSame(['PUT'], array_column($http->requests, 0));
+	}
+
+	private function contextWith(array $experiments, ?\ABSmartly\SDK\Context\ContextEventLogger $logger = null): \ABSmartly\SDK\Context\Context {
+		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'key', 'app', 'env'));
+		$config = new Config($client);
+		$config->setContextEventHandler(new ContextEventHandlerMock($client));
+		$contextConfig = (new ContextConfig())->setUnit('session_id', 'e791e240fcd3df7d238cfc285f475e8152fcc0ec');
+		if ($logger !== null) {
+			$contextConfig->setEventLogger($logger);
+		}
+		return (new SDK($config))->createContextWithData($contextConfig, new ContextData($experiments));
 	}
 }
