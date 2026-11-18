@@ -40,10 +40,12 @@ changes below before upgrading. It is not a guarantee that every 1.0.3 workload 
 - `setAttributeValue()`/`setAttributeValues()` and `trackWithProperties()` reject a non-string value or property
   that cannot be JSON-encoded (`INF`, `NaN`, a resource, an array or object containing invalid UTF-8, or a
   `JsonSerializable` whose `jsonSerialize()` throws, or a value nested too deeply to publish) with
-  `InvalidArgumentException` at the time of the call. Objects are kept as given and encoded again at publish, as
-  `track()` always did, so an object changed afterwards so that it can't be encoded still fails that publish, and
-  its batch stays queued. Strings, and the 1.0.3 `setAttribute()`/`setAttributes()`/`track()` and `ContextConfig` paths,
-  are accepted unchecked as before.
+  `InvalidArgumentException` at the time of the call. Strings, and the 1.0.3 `setAttribute()`/`setAttributes()`/
+  `track()` and `ContextConfig` paths, are accepted unchecked as before. The check doesn't hold a snapshot:
+  - A plain `stdClass` passed to `trackWithProperties()` is copied (one level), so later changes to its top-level
+    properties don't reach the goal. `track()` keeps the object itself, as in 1.0.3.
+  - Other objects are kept as given and encoded again at publish. An object changed afterwards so that it can't be
+    encoded fails that publish, and the batch stays queued for retry, up to `Context::$maxRetainedEvents`.
 - `setUnits()` accepts int and float UIDs (stored as strings; `setUnit()` keeps its `string $uid` parameter, so
   non-strict callers' numbers convert as before). `setAttributeValue()`/`setAttributeValues()` retain typed values;
   `trackWithProperties()` accepts objects or associative arrays. Legacy `setAttribute()` and `track()` retain their

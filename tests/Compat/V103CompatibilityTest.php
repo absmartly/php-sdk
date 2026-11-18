@@ -405,6 +405,10 @@ class V103CompatibilityTest extends TestCase {
 
 		self::assertNotNull($context->getExperiment('exp_test_abc'));
 		self::assertSame(1, $context->getTreatment('exp_test_ab'));
+		// Variant 1 of exp_test_abc now has no variables: overridden onto it, button.color falls back to the default.
+		$context->setOverride('exp_test_abc', 1);
+		self::assertSame('missing', $context->peekVariableValue('button.color', 'missing'));
+		self::assertSame('missing', $context->getVariableValue('button.color', 'missing'));
 	}
 
 	public static function emptyVariantConfigs(): array {
@@ -428,7 +432,7 @@ class V103CompatibilityTest extends TestCase {
 		catch (\JsonException $original) {
 			self::assertSame($original->getMessage(), $errors[0]->getData()->getMessage());
 			self::assertSame($original->getCode(), $errors[0]->getData()->getCode());
-			// The decoder's own exception, not a copy: nothing wraps it and it was raised where the audience is decoded.
+			// Not wrapped in another exception, and raised where Experiment decodes the audience.
 			self::assertNull($errors[0]->getData()->getPrevious());
 			self::assertStringEndsWith('Experiment.php', $errors[0]->getData()->getFile());
 		}
@@ -460,6 +464,21 @@ class V103CompatibilityTest extends TestCase {
 		$context->publish();
 		self::assertSame(0, $context->getPendingCount());
 		self::assertSame(['PUT'], array_column($http->requests, 0));
+
+		// The setter's limit is the stock publish encoder's: a real publish of 509 levels encodes, of 510 it fails.
+		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'key', 'app', 'env'), new RecordingHTTPClient());
+		foreach ([509 => true, 510 => false] as $depth => $encodes) {
+			$event = new \ABSmartly\SDK\PublishEvent();
+			$event->setAttributes([(object) ['name' => 'a', 'value' => $nested($depth), 'setAt' => 1]]);
+			try {
+				$client->encode($event);
+				self::assertTrue($encodes, "a $depth-level attribute must not encode");
+			}
+			catch (\JsonException $e) {
+				self::assertFalse($encodes, "a $depth-level attribute must encode");
+				self::assertSame(JSON_ERROR_DEPTH, $e->getCode());
+			}
+		}
 	}
 
 	private function contextWith(array $experiments, ?\ABSmartly\SDK\Context\ContextEventLogger $logger = null): \ABSmartly\SDK\Context\Context {
@@ -471,5 +490,25 @@ class V103CompatibilityTest extends TestCase {
 			$contextConfig->setEventLogger($logger);
 		}
 		return (new SDK($config))->createContextWithData($contextConfig, new ContextData($experiments));
+	}
+
+	public function testGoalPropertiesAreCopiedOnlyByTrackWithProperties(): void {
+		$handler = null;
+		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'key', 'app', 'env'));
+		$config = new Config($client);
+		$config->setContextEventHandler($handler = new ContextEventHandlerMock($client));
+		$context = (new SDK($config))->createContextWithData((new ContextConfig())->setUnit('session_id', 'abc'), new ContextData([]));
+
+		$copied = (object) ['amount' => 1];
+		$kept = (object) ['amount' => 1];
+		$context->trackWithProperties('copied', $copied);
+		$context->track('kept', $kept);
+		$copied->amount = 2;
+		$kept->amount = 2;
+		$context->publish();
+
+		$goals = array_column(json_decode(json_encode($handler->submitted[0]), true)['goals'], 'properties', 'name');
+		self::assertSame(1, $goals['copied']['amount']);
+		self::assertSame(2, $goals['kept']['amount'], 'track() keeps the object, as in v1.0.3');
 	}
 }
