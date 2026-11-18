@@ -740,7 +740,7 @@ class Context {
 
 		// Short-circuits for data that never had a switchback, so unit reads stay as cheap as before.
 		if ($this->hasSwitchbacks) {
-			if (isset($this->switchbackSources[$experimentName])) {
+			if ($experiment !== null && isset($this->switchbackSources[$experimentName])) {
 				return $this->getSwitchbackAssignment($experimentName, $experiment, $this->switchbackSources[$experimentName]);
 			}
 			if (isset($this->switchbackEpochs[$experimentName])) {

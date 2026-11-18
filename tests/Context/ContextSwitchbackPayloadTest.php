@@ -252,6 +252,31 @@ class ContextSwitchbackPayloadTest extends TestCase {
 		self::assertFalse(self::privateValue($context, 'hasSwitchbacks'));
 	}
 
+	/** A malformed numeric experiment name (keyed differently by PHP arrays) serves control rather than throwing. */
+	public function testANonStringSwitchbackNameServesControl(): void {
+		$experiment = self::switchback(2);
+		$experiment->name = 1.5;
+		$context = $this->createContext(self::dataOf($experiment, self::unitExperiment()));
+		self::assertSame(0, $context->getTreatment('1.5'));
+		self::assertSame(-1, $context->getVariableValue('missing', -1));
+		self::assertFalse($context->isFailed());
+	}
+
+	/** Without switchbacks a cached unit read never reaches the switchback branch, even with stale switchback state. */
+	public function testUnitReadsSkipTheSwitchbackBranchWithoutSwitchbacks(): void {
+		$context = $this->createContext(self::dataOf(self::unitExperiment()));
+		$context->getTreatment('exp_unit');
+		// Planted state the guard must keep unread: reaching it would drop the unit assignment and re-expose it.
+		$property = new \ReflectionProperty(\ABSmartly\SDK\Context\Context::class, 'switchbackEpochs');
+		if (PHP_VERSION_ID < 80100) {
+			$property->setAccessible(true);
+		}
+		$property->setValue($context, ['exp_unit' => ['generation' => 1, 'periods' => []]]);
+		$context->getTreatment('exp_unit');
+		self::assertSame(1, $context->getPendingCount());
+		self::assertArrayHasKey('exp_unit', self::privateValue($context, 'switchbackEpochs'));
+	}
+
 	/**
 	 * A switchback read takes one clock reading, cached slot or not. An exposing read also takes the enqueue reading
 	 * Exposure::ingestAssignment() always took; the exposure keeps the resolution's.
