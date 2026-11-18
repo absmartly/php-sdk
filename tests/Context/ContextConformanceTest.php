@@ -76,11 +76,11 @@ class MistypedDataAsyncProvider extends AsyncContextDataProvider {
 	}
 
 	public function getContextDataAsync(): PromiseInterface {
-		// An experiment whose `variants` is not an array makes setData() raise a TypeError, not an Exception.
+		// A variant whose `config` is an array makes setData() raise a TypeError, not an Exception.
 		$experiment = (object) [
 			'id' => 1, 'name' => 'exp', 'unitType' => 'session_id', 'iteration' => 1, 'seedHi' => 0, 'seedLo' => 0,
 			'split' => [1], 'trafficSeedHi' => 0, 'trafficSeedLo' => 0, 'trafficSplit' => [0, 1], 'fullOnVariant' => 0,
-			'applications' => [], 'variants' => 'not-an-array',
+			'applications' => [], 'variants' => [(object) ['name' => 'A', 'config' => ['not-a-string']]],
 		];
 		return resolve(new ContextData([$experiment]));
 	}

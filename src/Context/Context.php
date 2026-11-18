@@ -228,8 +228,9 @@ class Context {
 			try {
 				$experimentVariables->data = new Experiment($experiment);
 			}
-			catch (RuntimeException $exception) {
-				// An experiment missing a required field degrades only itself: it is left out, the others still load.
+			catch (RuntimeException | \TypeError $exception) {
+				// An experiment missing a required field, or sending one with the wrong type (such as a null name),
+				// degrades only itself: it is left out, the others still load.
 				$this->logError($exception);
 				continue;
 			}
@@ -1034,13 +1035,7 @@ class Context {
 			$this->logEvent(ContextEventLoggerEvent::Publish, $event);
 		}
 		catch (Throwable $exception) {
-			// Not a publish failure: report it without re-entering the logger that just threw.
-			error_log(sprintf(
-				'ABsmartly SDK Error: Event logger failed handling Publish: %s in %s:%d',
-				$exception->getMessage(),
-				$exception->getFile(),
-				$exception->getLine()
-			));
+			// Not a publish failure, and re-entering the logger that just threw could loop: ignore it.
 		}
 	}
 

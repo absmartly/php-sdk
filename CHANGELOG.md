@@ -85,9 +85,11 @@ single-attempt GET are all kept). The behaviour changes below are the agreed cro
   whose `createContext()` failed.
 - **Wider `Context` parameter types.** `setAttribute(string $name, $value)` and `track(string $goalName,
   $properties = null)` accept typed attribute values and array properties (1.0.3: `string $value`, `?object
-  $properties`). Callers are unaffected. A class extending `Context` that redeclares these two methods with the
-  1.0.3 types no longer loads on PHP 8; `Context` has a private constructor and is only created by the SDK, so such a
-  subclass could not be used with 1.0.3 either.
+  $properties`). Callers are unaffected, except that a non-strict caller's number is now kept and published as a
+  number (see Typed attributes). A class extending `Context` that redeclares these two methods with the 1.0.3 types
+  no longer loads on PHP 8. *Affects:* only such subclasses; `Context` has a private constructor and the SDK only
+  creates `Context` itself, so a subclass could be declared on 1.0.3 but never initialised or used to serve
+  treatments.
 - `var_dump()` of a `ClientConfig` (`__debugInfo()`) also lists `applicationVersion`.
 
 ### Fixed

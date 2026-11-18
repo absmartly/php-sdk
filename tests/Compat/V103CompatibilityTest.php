@@ -129,4 +129,56 @@ class V103CompatibilityTest extends TestCase {
 		self::assertSame(ContextEventLoggerEvent::Error, $logger->events[0]->getEvent());
 		self::assertStringContainsString('seedHi', $logger->events[0]->getData()->getMessage());
 	}
+
+	public function testAnExperimentWithANullTypedFieldDegradesOnlyItself(): void {
+		$fixture = json_decode(file_get_contents(__DIR__ . '/../Fixtures/json/context.json'));
+		$broken = clone $fixture->experiments[0];
+		$broken->name = 'exp_broken';
+		$broken->unitType = null;
+		$fixture->experiments[] = $broken;
+
+		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'key', 'app', 'env'));
+		$config = new Config($client);
+		$config->setContextEventHandler(new ContextEventHandlerMock($client));
+		$contextConfig = (new ContextConfig())->setUnit('session_id', 'e791e240fcd3df7d238cfc285f475e8152fcc0ec');
+		$context = (new SDK($config))->createContextWithData($contextConfig, new ContextData($fixture->experiments));
+
+		self::assertFalse($context->isFailed());
+		self::assertSame(1, $context->getTreatment('exp_test_ab'));
+		self::assertNull($context->getExperiment('exp_broken'));
+	}
+
+	public function testSetUnitsStoresNumbersAsStrings(): void {
+		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'key', 'app', 'env'));
+		$config = new Config($client);
+		$config->setContextEventHandler(new ContextEventHandlerMock($client));
+		$context = (new SDK($config))->createContextWithData(new ContextConfig(), new ContextData([]));
+
+		$context->setUnits(['user_id' => 125, 'f' => 1.5, 's' => 'abc']);
+
+		self::assertSame('125', $context->getUnit('user_id'));
+		self::assertSame('1.5', $context->getUnit('f'));
+		self::assertSame('abc', $context->getUnit('s'));
+	}
+
+	public function testAThrowingPublishLoggerWritesNothingToErrorLog(): void {
+		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'key', 'app', 'env'));
+		$config = new Config($client);
+		$handler = new ContextEventHandlerMock($client);
+		$config->setContextEventHandler($handler);
+		$contextConfig = (new ContextConfig())->setUnit('session_id', 'abc');
+		$contextConfig->setEventLogger(new \ABSmartly\SDK\Context\ContextEventLoggerCallback(
+			static function(string $event) {
+				if ($event === ContextEventLoggerEvent::Publish) {
+					throw new \RuntimeException('logger failed');
+				}
+			}
+		));
+		$context = (new SDK($config))->createContextWithData($contextConfig, new ContextData([]));
+		$context->track('goal');
+		$context->publish();
+
+		self::assertSame(0, $context->getPendingCount());
+		self::assertSame('', file_get_contents($this->errorLogFile));
+	}
 }
