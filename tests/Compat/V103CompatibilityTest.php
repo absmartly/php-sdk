@@ -421,7 +421,14 @@ class V103CompatibilityTest extends TestCase {
 		self::assertCount(1, $errors);
 		// The same type and message v1.0.3 passed, so a logger matching on them keeps working.
 		self::assertInstanceOf(\JsonException::class, $errors[0]->getData());
-		self::assertSame('Syntax error', $errors[0]->getData()->getMessage());
+		try {
+			json_decode('{not json', false, 512, JSON_THROW_ON_ERROR);
+			self::fail('expected invalid JSON');
+		}
+		catch (\JsonException $original) {
+			self::assertSame($original->getMessage(), $errors[0]->getData()->getMessage());
+			self::assertSame($original->getCode(), $errors[0]->getData()->getCode());
+		}
 	}
 
 	public function testTheDepthCheckMatchesWhatAPublishCanEncode(): void {
