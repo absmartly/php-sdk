@@ -76,10 +76,6 @@ class Client implements AsyncClientInterface {
 		return $this->headers['X-Agent'];
 	}
 
-	private function authRequest(): void {
-
-	}
-
 	public function getApplication(): string {
 		return $this->query['application'];
 	}
@@ -89,7 +85,6 @@ class Client implements AsyncClientInterface {
 	}
 
 	public function getContextData(): ContextData {
-		$this->authRequest();
 		$response = $this->httpClient->get($this->url, $this->query, $this->headers);
 		$decoded = $this->decode($response->content);
 		return new ContextData($decoded->experiments);
@@ -104,18 +99,12 @@ class Client implements AsyncClientInterface {
 			}
 		}
 
-		try {
-			$this->authRequest();
-		} catch (\Throwable $e) {
-			return reject($e);
-		}
 		return $this->httpClient
 			->getAsync($this->url, $this->query, $this->headers)
 			->then(fn($response) => new ContextData($this->decode($response->content)->experiments));
 	}
 
 	public function publish(PublishEvent $publishEvent): void {
-		$this->authRequest();
 		$data = $this->encode($publishEvent);
 		$this->httpClient->put($this->url, $this->query, $this->headers, $data);
 	}
@@ -131,7 +120,6 @@ class Client implements AsyncClientInterface {
 		}
 
 		try {
-			$this->authRequest();
 			$data = $this->encode($publishEvent);
 		} catch (\Throwable $e) {
 			return reject($e);

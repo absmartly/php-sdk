@@ -103,7 +103,7 @@ class V103CompatibilityTest extends TestCase {
 
 	public function testAssignmentVariablesKeepsItsV103Type(): void {
 		$type = (new \ReflectionProperty(\ABSmartly\SDK\Assignment::class, 'variables'))->getType();
-		self::assertSame('stdClass', (string) $type);
+		self::assertSame('stdClass', $type->getName());
 		self::assertFalse($type->allowsNull());
 	}
 
@@ -180,5 +180,22 @@ class V103CompatibilityTest extends TestCase {
 
 		self::assertSame(0, $context->getPendingCount());
 		self::assertSame('', file_get_contents($this->errorLogFile));
+	}
+
+	public function testContextConfigAttributesAreConvertedToStringsAsInV103(): void {
+		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'key', 'app', 'env'));
+		$config = new Config($client);
+		$handler = new ContextEventHandlerMock($client);
+		$config->setContextEventHandler($handler);
+		$contextConfig = (new ContextConfig())->setUnit('session_id', 'abc');
+		$contextConfig->setAttributes(['age' => 25, 'vip' => true, 'name' => 'Alice']);
+		$context = (new SDK($config))->createContextWithData($contextConfig, new ContextData([]));
+
+		self::assertSame('25', $context->getAttribute('age'));
+		self::assertSame('1', $context->getAttribute('vip'));
+		$context->track('goal');
+		$context->publish();
+		$published = array_column(json_decode(json_encode($handler->submitted[0]), true)['attributes'], 'value', 'name');
+		self::assertSame(['age' => '25', 'vip' => '1', 'name' => 'Alice'], $published);
 	}
 }

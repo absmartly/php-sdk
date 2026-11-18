@@ -170,9 +170,17 @@ class AudienceMatcher {
 			return $value;
 		}
 
-		if (!is_float($value) || is_nan($value) || is_infinite($value) || floor($value) !== $value
-			|| $value > PHP_INT_MAX || $value < PHP_INT_MIN) {
+		if (!is_float($value) || is_nan($value) || is_infinite($value) || floor($value) !== $value) {
 			return null;
+		}
+
+		// An integral float outside the int range (2^63 and up, which PHP_INT_MAX rounds to) is a valid variant
+		// that is out of bounds, so normal assignment applies, as in JS. Saturate it rather than casting it.
+		if ($value >= 9.2233720368547758E18) {
+			return PHP_INT_MAX;
+		}
+		if ($value < -9.2233720368547758E18) {
+			return PHP_INT_MIN;
 		}
 
 		return (int) $value;

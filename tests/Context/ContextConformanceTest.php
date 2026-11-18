@@ -91,7 +91,6 @@ class MistypedDataAsyncProvider extends AsyncContextDataProvider {
 	}
 
 	public function getContextDataAsync(): PromiseInterface {
-		// A variant whose `config` is an array makes setData() raise a TypeError, not an Exception.
 		$experiment = (object) [
 			'id' => 1, 'name' => 'exp', 'unitType' => 'session_id', 'iteration' => 1, 'seedHi' => 0, 'seedLo' => 0,
 			'split' => [1], 'trafficSeedHi' => 0, 'trafficSeedLo' => 0, 'trafficSplit' => [0, 1], 'fullOnVariant' => 0,
@@ -246,7 +245,7 @@ class ContextConformanceTest extends TestCase {
 		$context = $this->context();
 		$context->setUnit('x', true);
 		self::assertSame('1', $context->getUnit('x'));
-		self::assertSame('string', (string) (new \ReflectionParameter([Context::class, 'setUnit'], 'uid'))->getType());
+		self::assertSame('string', (new \ReflectionParameter([Context::class, 'setUnit'], 'uid'))->getType()->getName());
 		$this->expectExceptionMessage('Unit "y" UID must not be blank');
 		$context->setUnit('y', false);
 	}
@@ -258,7 +257,7 @@ class ContextConformanceTest extends TestCase {
 
 	public function testLegacyContextSignaturesAndScalarCoercion(): void {
 		self::assertTrue(class_exists(LegacyContext::class));
-		self::assertSame('string', (string) (new \ReflectionParameter([Context::class, 'setAttribute'], 'value'))->getType());
+		self::assertSame('string', (new \ReflectionParameter([Context::class, 'setAttribute'], 'value'))->getType()->getName());
 		$trackType = (new \ReflectionParameter([Context::class, 'track'], 'properties'))->getType();
 		self::assertSame('object', $trackType->getName());
 		self::assertTrue($trackType->allowsNull());
@@ -293,6 +292,14 @@ class ContextConformanceTest extends TestCase {
 			}
 			self::assertSame(0, $context->getPendingCount());
 		}
+	}
+
+	public function testTrackWithPropertiesAfterCloseThrowsClosedBeforeValidating(): void {
+		$context = $this->context();
+		$context->close();
+		$this->expectException(\LogicException::class);
+		$this->expectExceptionMessage('ABSmartly Context is closed');
+		$context->trackWithProperties('goal', 'not-an-object');
 	}
 
 	public function testTrackAcceptsObjectsAndAssociativeArrays(): void {

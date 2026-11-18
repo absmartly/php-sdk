@@ -232,7 +232,6 @@ class ContextRuleRegressionTest extends TestCase {
 		$config = new Config($client);
 		$config->setContextDataProvider(new class($client) extends \ABSmartly\SDK\Context\ContextDataProvider {
 			public function getContextData(): ContextData {
-				// setData() throws on the second experiment (invalid audience JSON) after installing the first.
 				return new ContextData([ContextRuleRegressionTest::validExperiment(), ContextRuleRegressionTest::brokenExperiment()]);
 			}
 		});

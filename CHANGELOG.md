@@ -55,9 +55,9 @@ changes below before upgrading. It is not a guarantee that every 1.0.3 workload 
   conditions without being set (a user attribute of the same name wins); they are not published. *Affects:* audiences
   with an `application`/`environment` condition, which used to see them as missing; `audienceStrict` experiments
   with such a condition no longer force variant 0. `app_version` is never injected.
-- **Typed attributes.** Values set through `ContextConfig` or the new `setAttributeValue()` and
-  `setAttributeValues()` retain their JSON types for evaluation and publication. Legacy `setAttribute()` and
-  `setAttributes()` still convert scalar values to strings as in 1.0.3 (or reject them under strict typing).
+- **Typed attributes are opt-in.** Values set through the new `setAttributeValue()` and `setAttributeValues()`
+  keep their JSON types for evaluation and publication. `setAttribute()`, `setAttributes()` and `ContextConfig`
+  attributes still convert scalar values to strings, as in 1.0.3 (or reject them under strict typing).
 - **Audience re-evaluation after `setAttribute()`.** As in JS, a treatment computed before an attribute changed is
   re-evaluated, so the treatment and exposures can change. *Affects:* code setting audience attributes after
   reading a treatment; strict audiences can move from variant 0 and send a second exposure.
@@ -96,6 +96,10 @@ changes below before upgrading. It is not a guarantee that every 1.0.3 workload 
 - An experiment missing a required field no longer fails the whole context: it is left out (an `Error` event is
   logged) and the other experiments still load.
 - The JSON decoder accepts payloads nested deeper than 16 levels (`Client::decode()`).
+- **Published events are no longer sent again on every later publish.** 1.0.3 kept every exposure and goal after
+  a successful `publish()`, so each later publish re-sent all earlier events (goals per PUT: `g1`, then `g1,g2`,
+  then `g1,g2,g3`); now each event is sent once. *Affects:* contexts that publish more than once, whose exported
+  exposure and goal counts were inflated by the duplicates.
 - A batch the collector accepted is cleared before the `Publish` event is logged, so a throwing event logger can
   no longer cause it to be sent again.
 - `curl_close()` is no longer called on PHP 8+ (deprecated in 8.5), and `HTTPClient` no longer triggers the

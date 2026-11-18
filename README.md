@@ -266,7 +266,7 @@ $context->setAttributes([
 
 `setAttribute()` retains its string parameter, as in 1.0.3. To preserve numeric, boolean, object or other
 values for evaluation and publication, use `setAttributeValue('age', 25)` or `setAttributeValues([...])`.
-`ContextConfig` also accepts typed values.
+Attributes set on a `ContextConfig` are converted to strings, as in 1.0.3.
 
 The `application` and `environment` names configured on the client are always available to audience
 filters as the `application` and `environment` attributes, without being set explicitly. A user

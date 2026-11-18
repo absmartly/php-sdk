@@ -186,6 +186,42 @@ class ContextAssignmentRulesTest extends TestCase {
 		self::assertSame(self::NORMAL_VARIANT, $this->createContext([self::assignRule(-1, null)])->getTreatment('exp_test_abc'));
 	}
 
+	/**
+	 * @dataProvider hugeVariants
+	 */
+	public function testAHugeIntegralRuleVariantIsOutOfBoundsAndStopsRuleEvaluation(string $variant): void {
+		// JS Number.isInteger accepts these, so the first rule is selected, then out of bounds: normal assignment, not
+		// the second rule's variant 1. Rules are raw JSON so the literal reaches the decoder unchanged.
+		$rules = '{"rules":[{"name":"huge","type":"assign","conditions":null,"environments":[],"variant":' . $variant
+			. '},{"name":"next","type":"assign","conditions":null,"environments":[],"variant":1}]}';
+		set_error_handler(static function (int $severity, string $message): bool {
+			throw new \ErrorException($message, 0, $severity);
+		});
+		try {
+			$context = $this->createContext([], ['assignmentRules' => $rules]);
+			self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_test_abc'));
+		}
+		finally {
+			restore_error_handler();
+		}
+	}
+
+	public static function hugeVariants(): array {
+		return [
+			'1e20' => ['1e20'],
+			'beyond int64' => ['99999999999999999999'],
+			'2^63' => ['9223372036854775808'],
+			'below -2^63' => ['-9223372036854775809'],
+		];
+	}
+
+	public function testAnInfiniteRuleVariantIsMalformedAndSkipped(): void {
+		// A 401-digit literal decodes to INF, which is not an integer in JS either: the rule is skipped.
+		$rules = '{"rules":[{"name":"inf","type":"assign","conditions":null,"environments":[],"variant":'
+			. str_repeat('9', 401) . '},{"name":"next","type":"assign","conditions":null,"environments":[],"variant":1}]}';
+		self::assertSame(1, $this->createContext([], ['assignmentRules' => $rules])->getTreatment('exp_test_abc'));
+	}
+
 	public function testInvalidRulesFallBackToNormalAssignment(): void {
 		$context = $this->createContext([], ['assignmentRules' => 'not-valid-json{{{']);
 		self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_test_abc'));

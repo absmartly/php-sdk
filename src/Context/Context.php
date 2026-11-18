@@ -164,13 +164,7 @@ class Context {
 		$this->setUnits($contextConfig->getUnits());
 		$this->setOverrides($contextConfig->getOverrides());
 		$this->setCustomAssignments($contextConfig->getCustomAssignments());
-		foreach ($contextConfig->getAttributes() as $name => $value) {
-			if (is_string($value)) {
-				$this->setAttributes([$name => $value]);
-			} else {
-				$this->setAttributeValue($name, $value);
-			}
-		}
+		$this->setAttributes($contextConfig->getAttributes());
 
 		if ($logger = $contextConfig->getEventLogger()) {
 			$this->setEventLogger($logger);
@@ -229,8 +223,6 @@ class Context {
 				$experimentVariables->data = new Experiment($experiment);
 			}
 			catch (RuntimeException | \TypeError $exception) {
-				// An experiment missing a required field, or sending one with the wrong type (such as a null name),
-				// degrades only itself: it is left out, the others still load.
 				$this->logError($exception);
 				continue;
 			}
