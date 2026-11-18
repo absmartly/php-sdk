@@ -126,6 +126,10 @@ class Context {
 	 * bare-name slot shared by pre-start, unservable and legacy resolutions.
 	 */
 	private array $switchbackEpochs = [];
+	/** The clock reading of the latest switchback resolution, which its exposure is stamped with. */
+	private int $switchbackReadAt = 0;
+	/** Whether any installed data had a switchback: until then no read consults the switchback state. */
+	private bool $hasSwitchbacks = false;
 	/** Source of SwitchbackSources::$generation. */
 	private int $switchbackGenerationCounter = 0;
 	/** @var Closure(): int|null Test seam for getTime(); null reads the system clock. */
@@ -368,6 +372,7 @@ class Context {
 			? $previous->generation
 			: ++$this->switchbackGenerationCounter;
 		$this->switchbackSources[$name] = $sources;
+		$this->hasSwitchbacks = true;
 	}
 
 	/**
@@ -729,19 +734,18 @@ class Context {
 		return false;
 	}
 
-	/**
-	 * @param int|null $now the call's clock reading, which picks a switchback's period; read here when null
-	 */
-	private function getAssignment(string $experimentName, ?int $now = null): Assignment {
+	private function getAssignment(string $experimentName): Assignment {
 		$experiment = $this->getExperiment($experimentName);
 
-		// Both checks short-circuit for data that never had a switchback, so unit reads stay as cheap as before.
-		if ($this->switchbackSources !== [] && isset($this->switchbackSources[$experimentName])) {
-			return $this->getSwitchbackAssignment($experimentName, $experiment, $this->switchbackSources[$experimentName], $now ?? self::getTime());
-		}
-		if ($this->switchbackEpochs !== [] && isset($this->switchbackEpochs[$experimentName])) {
-			// No longer a switchback (removed, or now a unit experiment): its slots are from another epoch.
-			$this->dropSwitchbackEpoch($experimentName);
+		// Short-circuits for data that never had a switchback, so unit reads stay as cheap as before.
+		if ($this->hasSwitchbacks) {
+			if (isset($this->switchbackSources[$experimentName])) {
+				return $this->getSwitchbackAssignment($experimentName, $experiment, $this->switchbackSources[$experimentName]);
+			}
+			if (isset($this->switchbackEpochs[$experimentName])) {
+				// No longer a switchback (removed, or now a unit experiment): its slots are from another epoch.
+				$this->dropSwitchbackEpoch($experimentName);
+			}
 		}
 
 		if (isset($this->assignmentCache[$experimentName])) {
@@ -893,7 +897,10 @@ class Context {
 	 * reused while it is current; otherwise it is resolved again, keeping the serving unit and cluster key it read, so
 	 * they are read once per slot.
 	 */
-	private function getSwitchbackAssignment(string $experimentName, ExperimentVariables $experiment, SwitchbackSources $sources, int $now): Assignment {
+	private function getSwitchbackAssignment(string $experimentName, ExperimentVariables $experiment, SwitchbackSources $sources): Assignment {
+		// One reading per resolution, cached or not. Every caller exposes right after resolving, so the exposure is stamped
+		// with the reading that picked its period (SWITCHBACK.md: each exposing call uses its own reading).
+		$this->switchbackReadAt = $now = self::getTime();
 		$data = $experiment->data;
 		$period = null;
 		if ($sources->servable && $sources->paths !== null && $now >= $data->switchbackStartAt) {
@@ -911,7 +918,7 @@ class Context {
 			// A unit experiment's assignment left on the bare-name slot by a refresh.
 			$cached = null;
 		}
-		if ($cached !== null && $this->switchbackAssignmentCurrent($experimentName, $cached, $experiment, $sources)) {
+		if ($cached !== null && $this->switchbackAssignmentCurrent($experimentName, $cached, $experiment)) {
 			return $cached;
 		}
 
@@ -919,7 +926,7 @@ class Context {
 		$assignment->name = $experimentName;
 		$assignment->eligible = true;
 		$assignment->id = $data->id;
-		$assignment->switchback = $slot = new SwitchbackSlot($sources->config, $period);
+		$assignment->switchback = $slot = new SwitchbackSlot($period);
 		$slot->custom = $this->cassignments[$experimentName] ?? null;
 
 		$cachedServing = $cached !== null ? $cached->switchback->serving : null;
@@ -1032,13 +1039,11 @@ class Context {
 	}
 
 	/**
-	 * Whether a cached switchback slot still holds: the same override, or the same grid, run, custom assignment, rule
-	 * outcome and audience outcome. Seed and split edits keep it, as for unit experiments.
+	 * Whether a cached switchback slot still holds: the same override, or the same run, custom assignment, rule outcome
+	 * and audience outcome. A grid change starts a new generation, which drops the slot before this is asked. Seed and
+	 * split edits keep it, as for unit experiments.
 	 */
-	private function switchbackAssignmentCurrent(string $experimentName, Assignment $assignment, ExperimentVariables $experiment, SwitchbackSources $sources): bool {
-		if ($assignment->switchback->config !== $sources->config) {
-			return false;
-		}
+	private function switchbackAssignmentCurrent(string $experimentName, Assignment $assignment, ExperimentVariables $experiment): bool {
 		if (array_key_exists($experimentName, $this->overrides)) {
 			return $assignment->overridden && $assignment->variant === $this->overrides[$experimentName];
 		}
@@ -1263,14 +1268,11 @@ class Context {
 	 * its holdouts' exposures not yet queued, so an exposed assignment re-queues only arms the retained-event cap
 	 * dropped. Callers skip exposed assignments while nothing is dropped, as in JS.
 	 */
-	private function triggerExposures(Assignment $assignment, ?int $now = null): void {
+	private function triggerExposures(Assignment $assignment): void {
 		if ($assignment->switchback !== null) {
 			// Stamped with the clock reading that picked the period, since analysis derives the period from exposedAt.
-			if ($assignment->switchback->silent) {
-				$assignment->exposed = true;
-			}
-			else {
-				$this->queueExposure($assignment, $now);
+			if (!$assignment->switchback->silent) {
+				$this->queueExposure($assignment, $this->switchbackReadAt);
 			}
 			return;
 		}
@@ -1345,15 +1347,13 @@ class Context {
 		// A held-out unit reads the control value, not $default, when nothing else wins. The first suppressed
 		// experiment is kept even if it lacks the key, so a later suppressed one can't win (JS).
 		$suppressedFallback = null;
-		// One clock reading for every switchback on the key.
-		$now = $this->switchbackSources !== [] ? self::getTime() : null;
 
 		foreach ($experiments as $experimentVariables) {
-			$assignment = $this->getAssignment($experimentVariables->data->name, $now);
+			$assignment = $this->getAssignment($experimentVariables->data->name);
 
 			if ($assignment->variables !== null) {
 				if ($exposeAssignments && (!$assignment->exposed || $this->droppedHoldoutArms !== [])) {
-					$this->triggerExposures($assignment, $now);
+					$this->triggerExposures($assignment);
 				}
 
 				// property_exists (not isset) so a present key whose value is null is still returned,
@@ -1470,10 +1470,9 @@ class Context {
 
 	public function getTreatment(string $experimentName): int {
 		$this->checkReady();
-		$now = $this->switchbackSources !== [] ? self::getTime() : null;
-		$assignment = $this->getAssignment($experimentName, $now);
+		$assignment = $this->getAssignment($experimentName);
 		if (!$assignment->exposed || $this->droppedHoldoutArms !== []) {
-			$this->triggerExposures($assignment, $now);
+			$this->triggerExposures($assignment);
 		}
 
 		return $assignment->variant;

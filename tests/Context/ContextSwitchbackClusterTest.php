@@ -52,7 +52,7 @@ class ContextSwitchbackClusterTest extends TestCase {
 		return $result;
 	}
 
-	private function attributeContext(object $experiment, array $units = null): Context {
+	private function attributeContext(object $experiment, ?array $units = null): Context {
 		return $this->createContext(self::dataOf($experiment), $units, []);
 	}
 

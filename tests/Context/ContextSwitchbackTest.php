@@ -323,6 +323,17 @@ class ContextSwitchbackTest extends TestCase {
 		}
 	}
 
+	/** Traffic comes before the custom assignment: a traffic miss serves control, recorded eligible=false. */
+	public function testTrafficMissWinsOverACustomAssignment(): void {
+		$experiment = self::switchback(3);
+		$experiment->trafficSplit = [1.0, 0.0];
+		$context = $this->createContext(self::dataOf($experiment));
+		$context->setCustomAssignment('exp_sb', 2);
+		$this->now = self::$ANCHOR + self::$HOUR + 1;
+		self::assertSame(0, $context->getTreatment('exp_sb'));
+		self::assertSame([self::sbExposure(0, self::$ANCHOR + self::$HOUR + 1, true, false)], $this->publishExposures($context));
+	}
+
 	/** A custom assignment set or changed within a period re-resolves the slot, as for a unit experiment. */
 	public function testCustomAssignmentChangeWithinAPeriodReresolves(): void {
 		$context = $this->createContext(self::dataOf(self::switchback(3)));
@@ -501,6 +512,9 @@ class ContextSwitchbackTest extends TestCase {
 			self::sbExposure(self::$EXPECTED_2_ARMS[1], self::$ANCHOR + self::$HOUR),
 			self::sbExposure(self::$EXPECTED_2_ARMS[2], self::$ANCHOR + 2 * self::$HOUR),
 		], $this->publishExposures($context));
+		// Not even resolved: no holdout state exists for a switchback, so unit reads keep their holdout-free path.
+		self::assertSame([], self::privateValue($context, 'experimentHoldouts'));
+		self::assertFalse(self::privateValue($context, 'hasHoldouts'));
 	}
 
 	/** A holdout covering both a unit experiment and a switchback is exposed through the unit one only. */
@@ -690,6 +704,19 @@ class ContextSwitchbackTest extends TestCase {
 		self::assertSame(-1, $context->peekVariableValue('sb.arm', -1));
 		self::assertSame(0, $context->getPendingCount());
 		self::assertSame(-1, $context->getVariableValue('sb.arm', -1));
+	}
+
+	/** A holdout covering a strict-mismatched switchback never makes it a held-out fallback on a variable key. */
+	public function testACoveringHoldoutNeverMakesASwitchbackAVariableFallback(): void {
+		$sb = self::switchback(2);
+		$sb->audience = self::STRICT_GOLD_AUDIENCE;
+		$sb->audienceStrict = true;
+		$sb->holdoutIds = [11];
+		// split [1, 0]: arm 0, which holds every unit out of a unit experiment.
+		$context = $this->createContext(new ContextData([$sb], [self::holdout([1.0, 0.0])]));
+		self::assertSame(-1, $context->peekVariableValue('sb.arm', -1));
+		self::assertSame(-1, $context->getVariableValue('sb.arm', -1));
+		self::assertSame([self::strictMismatchExposure(self::$ANCHOR)], $this->publishExposures($context));
 	}
 
 	/**
@@ -908,17 +935,25 @@ class ContextSwitchbackTest extends TestCase {
 		self::assertSame([self::sbExposure(self::$EXPECTED_2_ARMS[0], self::$ANCHOR + 20 * 60000)], $this->publishExposures($context));
 	}
 
-	/** Unit experiments keep stamping at enqueue time. */
+	/**
+	 * Unit experiments keep stamping at enqueue time, with the one clock reading they took before switchbacks existed,
+	 * even next to a switchback: the first reading after resolving (nextRead) is the enqueue's.
+	 */
 	public function testUnitExposureTimingIsUnchanged(): void {
 		$unit = self::switchback(2);
 		$unit->randomizationType = 'unit';
-		// With a switchback installed, getTreatment() takes its own clock reading first.
 		$context = $this->createContext(self::dataOf($unit, self::switchback(2, null, 2, 'exp_other')));
 		$this->now = self::$ANCHOR + self::$HOUR;
 		$this->nextRead = self::$ANCHOR + self::$HOUR - 1;
 
 		$variant = $context->getTreatment('exp_sb');
-		self::assertSame([self::sbExposure($variant, self::$ANCHOR + self::$HOUR)], $this->publishExposures($context));
+		self::assertNull($this->nextRead);
+		self::assertSame([self::sbExposure($variant, self::$ANCHOR + self::$HOUR - 1)], $this->publishExposures($context));
+
+		// A peek takes no reading at all.
+		$this->nextRead = 1;
+		$context->peekTreatment('exp_sb');
+		self::assertSame(1, $this->nextRead);
 	}
 
 	/** A grid change that lowers the current index below the retained ones must not evict the slot it just installed. */
@@ -1058,6 +1093,36 @@ class ContextSwitchbackTest extends TestCase {
 		$this->refreshTo($context, $gridA);
 		self::assertSame(0, $context->getTreatment('exp_sb'));
 		self::assertSame(1, $context->getPendingCount());
+		self::assertSame(0, $context->getVariableValue('sb.arm', -1));
+		self::assertSame(1, $context->getPendingCount());
+	}
+
+	/** The pre-anchor slot shares the experiment's name as its cache key; a unit experiment never reuses it. */
+	public function testAPreAnchorSlotIsNotServedToAUnitExperiment(): void {
+		$preAnchor = self::switchback(2);
+		$preAnchor->switchbackStartAt = self::$ANCHOR + 10 * self::$HOUR;
+		// store-1's unit draw is 1, so a stale control slot would be visible.
+		$context = $this->createContext(self::dataOf($preAnchor), [self::$UNIT_TYPE => 'store-1']);
+		$this->now = self::$ANCHOR + 10;
+		$context->getTreatment('exp_sb');
+		$this->now = self::$ANCHOR + 11 * self::$HOUR;
+		$context->peekTreatment('exp_sb');
+		self::assertSame(0, $context->getPendingCount());
+
+		$toUnit = clone $preAnchor;
+		$toUnit->randomizationType = 'unit';
+		$this->refreshTo($context, $toUnit);
+		$unitVariant = (new VariantAssigner('store-1'))->assign([0.5, 0.5], self::$SEED_HI, self::$SEED_LO);
+		self::assertSame(1, $unitVariant);
+		self::assertSame($unitVariant, $context->getTreatment('exp_sb'));
+		self::assertSame(1, $context->getPendingCount());
+		// Every slot of the old epoch is gone: only the unit assignment is cached.
+		self::assertSame(1, self::cacheSize($context));
+
+		// And back: the unit assignment on the bare-name key is not a switchback slot.
+		$this->refreshTo($context, $preAnchor);
+		$this->now = self::$ANCHOR + 10;
+		self::assertSame(0, $context->getTreatment('exp_sb'));
 		self::assertSame(0, $context->getVariableValue('sb.arm', -1));
 		self::assertSame(1, $context->getPendingCount());
 	}

@@ -24,7 +24,7 @@ final class SwitchbackSources {
 	public ?array $paths = null;
 	/**
 	 * Every input to the period grid and the cluster key: the ordered cluster map, the allow-list, startAt, periodMs
-	 * and the design. A cached assignment is reused only while it was resolved under an identical value.
+	 * and the design. Part of the switchback identity (Context::installSwitchback()).
 	 */
 	public array $config;
 	/** Whether the schedule can be drawn: see servable(). */
