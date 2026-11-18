@@ -746,6 +746,105 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertSame(1, $context->getTreatment('exp_new'));
 	}
 
+	// An override on an experiment no holdout covers is reused across a unit type change, as without holdouts.
+	public function testUncoveredOverrideIsReusedAcrossAUnitTypeChange(): void {
+		$holdout = self::holdout(11, 'holdout_a', 13, 111);
+		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'test-api-key', 'website', 'production'));
+		$config = new Config($client);
+		$provider = new HoldoutDataProvider();
+		$config->setContextDataProvider($provider);
+		$this->eventHandler = new ContextEventHandlerMock($client);
+		$config->setContextEventHandler($this->eventHandler);
+		$contextConfig = new ContextConfig();
+		$contextConfig->setUnits(['session_id' => self::UID, 'user_id' => self::UID]);
+		$contextConfig->setOverride('exp', 1);
+		$context = (new SDK($config))->createContextWithData($contextConfig,
+			new ContextData([self::experiment(1, 'exp', []), self::experiment(2, 'exp_covered', [11])], [$holdout]));
+		self::assertSame(1, $context->getTreatment('exp'));
+
+		$provider->next = new ContextData([self::experiment(1, 'exp', [], 'user_id'), self::experiment(2, 'exp_covered', [11])], [$holdout]);
+		$context->refresh();
+		self::assertSame(1, $context->getTreatment('exp'));
+		self::assertSame([[1, 'exp', 'session_id', 1]], $this->published($context));
+	}
+
+	/** @return array{0: Context, 1: HoldoutDataProvider, 2: object} */
+	private function contextWithThrowingRefreshLogger(\Throwable $throwable): array {
+		$logger = new class($throwable) implements ContextEventLogger {
+			public bool $armed = false;
+			public array $events = [];
+			private \Throwable $throwable;
+
+			public function __construct(\Throwable $throwable) {
+				$this->throwable = $throwable;
+			}
+
+			public function handleEvent(Context $context, ContextEventLoggerEvent $event): void {
+				$this->events[] = $event->getEvent();
+				if ($this->armed && $event->getEvent() === ContextEventLoggerEvent::Refresh) {
+					throw $this->throwable;
+				}
+			}
+		};
+		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'test-api-key', 'website', 'production'));
+		$config = new Config($client);
+		$provider = new HoldoutDataProvider();
+		$config->setContextDataProvider($provider);
+		$config->setContextEventHandler(new ContextEventHandlerMock($client));
+		$contextConfig = new ContextConfig();
+		$contextConfig->setUnits(['session_id' => self::UID]);
+		$contextConfig->setEventLogger($logger);
+		$context = (new SDK($config))->createContextWithData($contextConfig,
+			new ContextData([self::experiment(1, 'exp', [11])], [self::holdout(11, 'holdout_a', 1, 222)]));
+		$logger->armed = true;
+		$logger->events = [];
+		return [$context, $provider, $logger];
+	}
+
+	private static function captureErrorLog(callable $action): array {
+		$file = tempnam(sys_get_temp_dir(), 'absmartly-log');
+		$previous = ini_set('error_log', $file);
+		try {
+			$action();
+		}
+		finally {
+			ini_set('error_log', $previous === false ? '' : $previous);
+		}
+		$lines = array_values(array_filter(explode("\n", (string) file_get_contents($file))));
+		unlink($file);
+		return $lines;
+	}
+
+	// A throwing Refresh logger, Exception or Error, is reported once to the error log and not sent back to that
+	// logger as an Error event, and the refreshed data stays installed.
+	public function testThrowingRefreshLoggerWritesOneErrorLogLineAndNoErrorEvent(): void {
+		foreach ([new \RuntimeException('logger failed'), new \Error('logger broke')] as $throwable) {
+			[$context, $provider, $logger] = $this->contextWithThrowingRefreshLogger($throwable);
+			$provider->next = new ContextData([self::experiment(1, 'exp', [11]), self::experiment(2, 'exp_new', [])], []);
+
+			$lines = self::captureErrorLog(fn() => $context->refresh());
+
+			self::assertSame([ContextEventLoggerEvent::Refresh], $logger->events, get_class($throwable));
+			self::assertCount(1, $lines);
+			self::assertStringContainsString('Event logger failed handling Refresh: ' . $throwable->getMessage(), $lines[0]);
+			self::assertSame(['exp', 'exp_new'], $context->getExperiments());
+		}
+	}
+
+	// A refresh whose data fails to install sends an Error event, never Refresh, and keeps the previous data.
+	public function testRefreshWhoseDataFailsToInstallKeepsThePreviousData(): void {
+		[$context, $provider, $logger] = $this->contextWithThrowingRefreshLogger(new \RuntimeException('unused'));
+		$broken = self::experiment(2, 'exp_broken', []);
+		unset($broken->split);
+		$provider->next = new ContextData([self::experiment(1, 'exp', []), $broken], []);
+
+		self::captureErrorLog(fn() => $context->refresh());
+
+		self::assertSame([ContextEventLoggerEvent::Error], $logger->events);
+		self::assertSame(['exp'], $context->getExperiments());
+		self::assertSame([11], $context->getContextData()->experiments[0]->holdoutIds);
+	}
+
 	private static function droppedHoldoutArms(Context $context): array {
 		$property = new \ReflectionProperty(Context::class, 'droppedHoldoutArms');
 		if (PHP_VERSION_ID < 80100) {

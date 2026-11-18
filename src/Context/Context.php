@@ -686,8 +686,9 @@ class Context {
 				$override = $this->overrides[$experimentName];
 				if ($assignment->overridden && $assignment->variant === $override
 					&& ($experiment === null || !$this->hasHoldouts
-						// A unit type change re-draws the holdout arms, as experimentMatches() rebuilds the normal path.
-						|| ($assignment->unitType === $experiment->data->unitType
+						// A covered override is rebuilt on a unit type change so its holdout arms are drawn for the new
+						// unit; an uncovered one is reused as before.
+						|| (($assignment->holdouts === null || $assignment->unitType === $experiment->data->unitType)
 							&& $this->holdoutSetMatches($experimentName, $assignment)))) {
 					// override up-to-date
 					return $assignment;
@@ -1568,7 +1569,7 @@ class Context {
 		try {
 			$this->logEvent(ContextEventLoggerEvent::Refresh, $data);
 		}
-		catch (Exception $exception) {
+		catch (Throwable $exception) {
 			error_log(sprintf(
 				'ABsmartly SDK Error: Event logger failed handling Refresh: %s in %s:%d',
 				$exception->getMessage(),
