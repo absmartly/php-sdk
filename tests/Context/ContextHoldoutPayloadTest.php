@@ -747,6 +747,29 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertSame(1, $context->getTreatment('exp_new'));
 	}
 
+	// A covered experiment that changes unit type on refresh is assigned again for the new unit, and both it and its
+	// holdout publish an exposure for that unit type.
+	public function testCoveredExperimentIsReassignedWhenTheUnitTypeChanges(): void {
+		$holdout = self::holdout(11, 'holdout_a', 1, 222);
+		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'test-api-key', 'website', 'production'));
+		$config = new Config($client);
+		$provider = new HoldoutDataProvider();
+		$config->setContextDataProvider($provider);
+		$this->eventHandler = new ContextEventHandlerMock($client);
+		$config->setContextEventHandler($this->eventHandler);
+		$contextConfig = new ContextConfig();
+		$contextConfig->setUnits(['session_id' => self::UID, 'user_id' => self::UID]);
+		$context = (new SDK($config))->createContextWithData($contextConfig, new ContextData([self::experiment(1, 'exp', [11])], [$holdout]));
+		$context->getTreatment('exp');
+
+		$provider->next = new ContextData([self::experiment(1, 'exp', [11], 'user_id')], [$holdout]);
+		$context->refresh();
+		$context->getTreatment('exp');
+
+		$units = array_map(fn($exposure) => [$exposure[0], $exposure[2]], $this->published($context));
+		self::assertSame([[1, 'session_id'], [11, 'session_id'], [1, 'user_id'], [11, 'user_id']], $units);
+	}
+
 	// An override on an experiment no holdout covers is reused across a unit type change, as without holdouts.
 	public function testUncoveredOverrideIsReusedAcrossAUnitTypeChange(): void {
 		$holdout = self::holdout(11, 'holdout_a', 13, 111);

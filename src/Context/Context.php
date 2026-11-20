@@ -1017,9 +1017,8 @@ class Context {
 		// A held-out unit reads the control value, not $default, when nothing else wins. The first suppressed
 		// experiment is kept even if it lacks the key, so a later suppressed one can't win (JS).
 		$suppressedFallback = null;
-		// A throwing logger on a holdout-covered candidate must not stop the walk: later candidates are still exposed
-		// (Java), and the first logger error is re-thrown once the winner is found. Without holdouts it stops at once,
-		// as before.
+		// A throwing logger must not stop the walk: later candidates and their holdouts are still exposed (Java), and
+		// the first logger error is re-thrown once the winner is found. Data without holdouts took main's loop above.
 		$error = null;
 
 		foreach ($experiments as $experimentVariables) {
@@ -1032,9 +1031,6 @@ class Context {
 					}
 					catch (Throwable $exception) {
 						$error = $error ?? $exception;
-						if ($assignment->holdoutAssignments === null) {
-							throw $error;
-						}
 					}
 				}
 

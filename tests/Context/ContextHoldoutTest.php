@@ -1179,7 +1179,7 @@ class ContextHoldoutTest extends TestCase {
 		self::assertSame(1, $context->getPendingCount());
 	}
 
-	// An experiment whose holdoutIds name no holdout is uncovered: a throwing logger still stops the walk, as on main.
+	// holdoutIds that name no holdout leave the data without holdouts, so a throwing logger stops the walk, as on main.
 	public function testUnknownHoldoutIdLeavesTheVariableCandidateUncovered(): void {
 		$logger = new ThrowingExposureLogger();
 		$logger->throwWhen = fn($exposure) => $exposure->id === 1;
@@ -1244,8 +1244,9 @@ class ContextHoldoutTest extends TestCase {
 		self::assertSame(1, $context->getPendingCount());
 	}
 
-	// Without holdouts a throwing logger still stops the walk at that candidate, as on main.
-	public function testThrowingLoggerOnUncoveredVariableCandidateStillStopsTheWalk(): void {
+	// With holdouts in the data, an uncovered candidate's logger error is deferred too, so a later covered candidate's
+	// own and holdout exposures are still queued (Java). Data without holdouts keeps main's loop.
+	public function testThrowingLoggerOnUncoveredVariableCandidateKeepsWalkingWhenTheDataHasHoldouts(): void {
 		$logger = new ThrowingExposureLogger();
 		$logger->throwWhen = fn($exposure) => $exposure->id === 1;
 		$first = self::experiment(1, 'exp_var_uncovered_first');
@@ -1266,7 +1267,7 @@ class ContextHoldoutTest extends TestCase {
 			self::assertSame('boom', $exception->getMessage());
 		}
 
-		self::assertSame(1, $context->getPendingCount());
+		self::assertSame(3, $context->getPendingCount());
 	}
 
 	public function testThrowingLoggerDoesNotMakeExperimentOrHoldoutExposureRetryable(): void {

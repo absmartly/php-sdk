@@ -127,10 +127,13 @@
   `getTreatment()`/`getVariableValue()` of an experiment it covers; peeks publish nothing. The arm is kept until
   the holdout's iteration changes, so a same-iteration seed or split edit does not re-randomize or re-expose, and a
   unit set later re-resolves a not-yet-exposed experiment. A held-out unit's `getVariableValue()` returns the
-  control value unless another experiment assigns the key. Holdouts without a usable `split`, ids that name no
-  holdout and unknown fields are ignored. `new ContextData($experiments)` keeps working (no holdouts). Payloads
-  without holdouts keep the previous exposure and variable lookup code. Cached assignment validation reads the
-  experiment data once and compares its fields inline, offsetting the additional holdout flag check on reads.
+  control value unless another experiment assigns the key. Holdouts without a usable `split` (a non-empty array
+  of numbers; numeric strings, which JS would coerce, are not accepted), ids that name no holdout and unknown
+  fields are ignored. `new ContextData($experiments)` keeps working (no holdouts). Payloads without holdouts keep
+  the previous exposure and variable lookup code. Cached assignment validation reads the experiment data once and
+  compares its fields inline, offsetting the additional holdout flag check on reads. With holdouts in the data, an
+  exposure logger error during `getVariableValue()` no longer stops the walk over the experiments defining the
+  key: later ones are still exposed and the first error is re-thrown afterwards, as in the Java SDK.
 - **Assignment rules.** An experiment's `assignmentRules` are evaluated in order, and the first rule whose
   environments and conditions match decides the variant: `assign` rules pick a fixed variant and `split` rules
   split traffic with their own percentages (such as `20/30/50`, which must sum to 100 within 0.01), hashing the
