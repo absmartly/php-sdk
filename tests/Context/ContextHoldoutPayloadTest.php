@@ -220,9 +220,18 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertNull($experiment->holdoutType);
 
 		$malformed = self::experiment(1, 'exp', []);
-		$malformed->holdoutIds = [11, '12', 1.5, null, [13], 1e19, 14];
+		// 9223372036854775808.0 is 2^63, the first float past PHP_INT_MAX: casting it would warn and wrap.
+		$malformed->holdoutIds = [11, '12', 1.5, null, [13], 1e19, 9223372036854775808.0, -9223372036854775808.0, 14];
 		$malformed->holdoutType = ['full'];
-		$experiment = new Experiment($malformed);
+		set_error_handler(static function (int $errno, string $message): bool {
+			throw new \ErrorException($message, 0, $errno);
+		});
+		try {
+			$experiment = new Experiment($malformed);
+		}
+		finally {
+			restore_error_handler();
+		}
 		self::assertSame([11, 14], $experiment->holdoutIds);
 		self::assertNull($experiment->holdoutType);
 
