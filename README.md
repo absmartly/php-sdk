@@ -358,7 +358,8 @@ $treatment = $context->getTreatment('exp_delivery_fee'); // this period's varian
 - Attributes are published with their timestamps, as before: the collector resolves the cluster again from them.
 - The collector also resolves the serving unit again from the published units. A switchback exposure queued before a
   unit was added with `setUnit()` is published first, in its own batch with the units it was served with, so the new
-  unit cannot drop it or move it to another unit; the other events follow with the current units.
+  unit cannot drop it or move it to another unit; the other events follow with the current units. That `publish()`
+  then calls the event handler, and logs `Publish`, once per batch.
 
 ### Semantic Version Conditions
 

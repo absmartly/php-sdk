@@ -282,6 +282,9 @@ class ContextSwitchbackTest extends TestCase {
 			self::exposure(2, 'exp_override', self::$UNIT_TYPE, 1, self::$ANCHOR + 10, false, true, true),
 			self::sbExposure(self::$EXPECTED_2_ARMS[0], self::$ANCHOR + 10),
 		], $this->publishExposures($context));
+		// The override was queued with no linked unit, so it is published with the one set since, which the Collector
+		// needs to record it.
+		self::assertSame([[['user_id', self::$UNIT_TYPE], ['exp_override', 'exp_sb'], 0]], $this->publishedBatches());
 	}
 
 	/** A slot resolved with no linked unit is never reused as the serving resolution once the unit is set. */
@@ -1756,5 +1759,144 @@ class ContextSwitchbackTest extends TestCase {
 		$context->track('goal');
 		$context->publish();
 		self::assertSame([[[self::$UNIT_TYPE], ['exp_sb', 'exp_unit'], 1]], $this->publishedBatches());
+	}
+
+	/** A context whose exp_sb exposure, served by store_id, is queued before user_id is added; user_id would disagree. */
+	private function contextWithAnEarlierUnitExposure(): Context {
+		$experiment = self::switchback(2);
+		$experiment->switchbackClusters = self::clusters('user_id', 'user_store', self::$UNIT_TYPE, self::$CLUSTER_PATH);
+		$context = $this->createContext(self::dataOf($experiment, self::unitExperiment()), null,
+			[self::$CLUSTER_PATH => self::$CLUSTER_KEY, 'user_store' => 'Faro']);
+		$this->now = self::$ANCHOR + 10;
+		$context->getTreatment('exp_sb');
+		$context->setUnit('user_id', 'u1');
+		return $context;
+	}
+
+	/** Fails the handler's first $failures calls. */
+	private function failFirst(int $failures): void {
+		$calls = 0;
+		$this->eventHandler->prerun = static function () use (&$calls, $failures) {
+			if (++$calls <= $failures) {
+				throw new \RuntimeException('collector down');
+			}
+		};
+	}
+
+	private function publishEventCount(): int {
+		return count(array_filter($this->logger->events ?? [], static function ($event) {
+			return $event->getEvent() === \ABSmartly\SDK\Context\ContextEventLoggerEvent::Publish;
+		}));
+	}
+
+	/** A failed earlier batch stops the publish: the later batch is not sent ahead of it, and the retry keeps the order. */
+	public function testAFailedEarlierBatchHoldsBackTheRest(): void {
+		$context = $this->contextWithAnEarlierUnitExposure();
+		$context->getTreatment('exp_unit');
+		$context->track('goal');
+		$this->failFirst(1);
+		@$context->publish();
+		self::assertSame(3, $context->getPendingCount());
+		self::assertSame([], $this->publishedBatches());
+
+		$context->publish();
+		self::assertSame(0, $context->getPendingCount());
+		self::assertSame([
+			[[self::$UNIT_TYPE], ['exp_sb'], 0],
+			[[self::$UNIT_TYPE, 'user_id'], ['exp_unit'], 1],
+		], $this->publishedBatches());
+	}
+
+	/** An earlier batch that succeeds is cleared even when the later batch fails. */
+	public function testASentEarlierBatchIsClearedWhenTheLaterOneFails(): void {
+		$context = $this->contextWithAnEarlierUnitExposure();
+		$context->track('goal');
+		$calls = 0;
+		$this->eventHandler->prerun = static function () use (&$calls) {
+			if (++$calls === 2) {
+				throw new \RuntimeException('collector down');
+			}
+		};
+		@$context->publish();
+		self::assertSame(1, $context->getPendingCount());
+		self::assertSame([[[self::$UNIT_TYPE], ['exp_sb'], 0]], $this->publishedBatches());
+	}
+
+	/**
+	 * With only an earlier exposure queued, one batch is sent: with the served units and the attributes the Collector
+	 * resolves the cluster from, and logged as a Publish.
+	 */
+	public function testAnEarlierBatchCarriesTheAttributesAndIsLogged(): void {
+		$context = $this->contextWithAnEarlierUnitExposure();
+		$context->publish();
+		self::assertSame(0, $context->getPendingCount());
+		self::assertSame([[[self::$UNIT_TYPE], ['exp_sb'], 0]], $this->publishedBatches());
+		self::assertSame([self::$CLUSTER_PATH, 'user_store'],
+			array_column($this->eventHandler->submitted[0]->attributes, 'name'));
+		self::assertSame(1, $this->publishEventCount());
+	}
+
+	/** Exposures read with different units go out in one batch per unit set, in queue order. */
+	public function testEachEarlierUnitSetGetsItsOwnBatch(): void {
+		$context = $this->contextWithAnEarlierUnitExposure();
+		$other = self::switchback(2, null, 2, 'exp_other');
+		$other->switchbackClusters = self::clusters(self::$UNIT_TYPE, self::$CLUSTER_PATH);
+		$context = $this->createContext(self::dataOf(
+			(function () {
+				$experiment = self::switchback(2);
+				$experiment->switchbackClusters = self::clusters('user_id', 'user_store', self::$UNIT_TYPE, self::$CLUSTER_PATH);
+				return $experiment;
+			})(), $other), null, [self::$CLUSTER_PATH => self::$CLUSTER_KEY, 'user_store' => 'Faro']);
+		$this->now = self::$ANCHOR + 10;
+		$context->getTreatment('exp_sb');
+		$context->setUnit('user_id', 'u1');
+		$context->getTreatment('exp_other');
+		$context->setUnit('device_id', 'd1');
+		$context->publish();
+		self::assertSame([
+			[[self::$UNIT_TYPE], ['exp_sb'], 0],
+			[[self::$UNIT_TYPE, 'user_id'], ['exp_other'], 0],
+		], $this->publishedBatches());
+		self::assertSame(2, $this->publishEventCount());
+	}
+
+	/** A slot rebuilt from its cached serving keeps the units that serving was read with. */
+	public function testARebuiltSlotKeepsItsServedUnits(): void {
+		$experiment = self::switchback(2);
+		$experiment->switchbackClusters = self::clusters('user_id', 'user_store', self::$UNIT_TYPE, self::$CLUSTER_PATH);
+		$context = $this->createContext(self::dataOf($experiment), null, [self::$CLUSTER_PATH => self::$CLUSTER_KEY, 'user_store' => 'Faro']);
+		$this->now = self::$ANCHOR + 10;
+		$context->peekTreatment('exp_sb');
+		$context->setUnit('user_id', 'u1');
+		$context->setCustomAssignment('exp_sb', 1);
+		$context->getTreatment('exp_sb');
+		$context->publish();
+		self::assertSame([[[self::$UNIT_TYPE], ['exp_sb'], 0]], $this->publishedBatches());
+	}
+
+	/** An earlier batch's failure applies the retained-event cap, as the main batch's does. */
+	public function testAFailedEarlierBatchAppliesTheRetainedEventCap(): void {
+		$context = $this->contextWithAnEarlierUnitExposure();
+		$context->maxRetainedEvents = 1;
+		$context->track('goal');
+		$context->track('goal');
+		$this->failFirst(1);
+		@$context->publish();
+		self::assertSame(1, $context->getPendingCount());
+	}
+
+	/** close() re-throws an earlier batch's failure and stays open with the events queued. */
+	public function testCloseRethrowsAFailedEarlierBatch(): void {
+		$context = $this->contextWithAnEarlierUnitExposure();
+		$this->failFirst(1);
+		try {
+			@$context->close();
+			self::fail('close() did not throw');
+		}
+		catch (\RuntimeException $exception) {
+			self::assertSame('collector down', $exception->getMessage());
+		}
+		self::assertFalse($context->isClosed());
+		self::assertSame(1, $context->getPendingCount());
 	}
 }

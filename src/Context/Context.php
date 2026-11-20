@@ -1739,19 +1739,7 @@ class Context {
 			$this->eventHandler->publish($event);
 		}
 		catch (Exception $exception) {
-			error_log(sprintf(
-				'ABsmartly SDK Error: Failed to publish %d exposures and %d goals: %s. Events preserved for retry.',
-				count($this->exposures),
-				count($this->achievements),
-				$exception->getMessage()
-			));
-			$this->logError($exception, false);
-			$this->capRetainedEvents();
-
-			if ($rethrow) {
-				throw $exception;
-			}
-
+			$this->publishFailed($exception, $rethrow);
 			return;
 		}
 
@@ -1762,6 +1750,26 @@ class Context {
 		$this->achievements = [];
 		$this->pendingCount = 0;
 
+		$this->logPublished($event);
+	}
+
+	/** Keeps the queued events for a retry, capped, and re-throws when $rethrow is true (close()). */
+	private function publishFailed(Exception $exception, bool $rethrow): void {
+		error_log(sprintf(
+			'ABsmartly SDK Error: Failed to publish %d exposures and %d goals: %s. Events preserved for retry.',
+			count($this->exposures),
+			count($this->achievements),
+			$exception->getMessage()
+		));
+		$this->logError($exception, false);
+		$this->capRetainedEvents();
+
+		if ($rethrow) {
+			throw $exception;
+		}
+	}
+
+	private function logPublished(PublishEvent $event): void {
 		try {
 			$this->logEvent(ContextEventLoggerEvent::Publish, $event);
 		}
@@ -1847,13 +1855,15 @@ class Context {
 	/**
 	 * Publishes, before the main batch, each queued switchback exposure whose serving was read before a unit was added,
 	 * in its own batch with the units of that read: the Collector resolves the serving unit again from a publish's
-	 * units, and a unit added since could make it drop the exposure or record it under another unit. Returns false
-	 * when a batch fails; it and the later events stay queued.
+	 * units, and a unit added since could make it drop the exposure or record it under another unit. Each batch is a
+	 * separate handler call and Publish event. Returns false when a batch fails; it and the later events stay queued.
 	 */
 	private function publishEarlierSwitchbackUnits(bool $rethrow): bool {
 		$batches = [];
 		foreach ($this->exposureAssignments as $i => $assignment) {
-			if ($assignment->switchback !== null && $assignment->switchback->units !== $this->units) {
+			// An absent serving had no linked unit to protect: a unit added since is what lets the Collector record it.
+			if ($assignment->switchback !== null && $assignment->switchback->serving->status !== SwitchbackServing::ABSENT
+				&& $assignment->switchback->units !== $this->units) {
 				$batches[serialize($assignment->switchback->units)][] = $i;
 			}
 		}
@@ -1874,19 +1884,7 @@ class Context {
 			catch (Exception $exception) {
 				$this->exposures = array_values($this->exposures);
 				$this->exposureAssignments = array_values($this->exposureAssignments);
-				error_log(sprintf(
-					'ABsmartly SDK Error: Failed to publish %d exposures and %d goals: %s. Events preserved for retry.',
-					count($this->exposures),
-					count($this->achievements),
-					$exception->getMessage()
-				));
-				$this->logError($exception, false);
-				$this->capRetainedEvents();
-
-				if ($rethrow) {
-					throw $exception;
-				}
-
+				$this->publishFailed($exception, $rethrow);
 				return false;
 			}
 
@@ -1895,17 +1893,7 @@ class Context {
 			}
 			$this->pendingCount -= count($indexes);
 
-			try {
-				$this->logEvent(ContextEventLoggerEvent::Publish, $event);
-			}
-			catch (Throwable $exception) {
-				error_log(sprintf(
-					'ABsmartly SDK Error: Event logger failed handling Publish: %s in %s:%d',
-					$exception->getMessage(),
-					$exception->getFile(),
-					$exception->getLine()
-				));
-			}
+			$this->logPublished($event);
 		}
 
 		if ($batches !== []) {
