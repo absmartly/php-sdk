@@ -1868,6 +1868,9 @@ class Context {
 					$exposures[spl_object_id($this->exposures[$i])] = $this->exposures[$i];
 				}
 			}
+			if ($exposures === []) {
+				break;
+			}
 
 			$event = new PublishEvent();
 			$event->setUnits($units);
