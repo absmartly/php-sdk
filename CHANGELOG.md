@@ -75,6 +75,11 @@
 
 ### Changed
 
+- Ready and Refresh event logger data now includes an additive `holdouts: []` field even when no holdouts exist.
+- With holdouts in the data, an exposure logger error during `getVariableValue()` no longer stops the walk over
+  the experiments defining the key: later ones are still exposed and the first error is re-thrown afterwards,
+  as in the Java SDK. Payloads without holdouts keep the previous exception behaviour.
+
 - The `timeout` option stays the connect timeout (`CURLOPT_CONNECTTIMEOUT_MS`) as in v1.0.3, bounding only
   connection establishment, not the whole request. An optional total budget for the entire request (including
   retries and back-off) is available opt-in via `HTTPClient::$totalTimeout`/`ReactHttpClient::$totalTimeout`
@@ -131,9 +136,7 @@
   of numbers; numeric strings, which JS would coerce, are not accepted), ids that name no holdout and unknown
   fields are ignored. `new ContextData($experiments)` keeps working (no holdouts). Payloads without holdouts keep
   the previous exposure and variable lookup code. Cached assignment validation reads the experiment data once and
-  compares its fields inline, offsetting the additional holdout flag check on reads. With holdouts in the data, an
-  exposure logger error during `getVariableValue()` no longer stops the walk over the experiments defining the
-  key: later ones are still exposed and the first error is re-thrown afterwards, as in the Java SDK.
+  compares its fields inline, offsetting the additional holdout flag check on reads.
 - **Assignment rules.** An experiment's `assignmentRules` are evaluated in order, and the first rule whose
   environments and conditions match decides the variant: `assign` rules pick a fixed variant and `split` rules
   split traffic with their own percentages (such as `20/30/50`, which must sum to 100 within 0.01), hashing the

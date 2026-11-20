@@ -257,6 +257,53 @@ class ContextHoldoutPayloadTest extends TestCase {
 		], $this->published($context));
 	}
 
+	public function testUnknownRootFieldsSurviveSyncAndAsyncClientDecoding(): void {
+		$json = file_get_contents(__DIR__ . '/../Fixtures/json/holdouts_forward_compat.json');
+		$expected = json_decode($json);
+		$config = new ClientConfig('endpoint', 'key', 'app', 'env');
+		$sync = (new Client($config, self::httpClient($json)))->getContextData();
+		$async = null;
+		(new Client($config, self::asyncHttpClient($json)))->getContextDataAsync()->then(function($data) use (&$async) {
+			$async = $data;
+		});
+		foreach ([$sync, $async] as $data) {
+			self::assertInstanceOf(ContextData::class, $data);
+			self::assertEquals($expected->experiments, $data->experiments);
+			self::assertEquals($expected->holdouts, $data->holdouts);
+			$context = $this->createContext($data);
+			self::assertSame(0, $context->getTreatment('exp_covered'));
+			self::assertSame(1, $context->getTreatment('exp_uncovered'));
+		}
+	}
+
+	public function testUnchangedHoldoutSnapshotDoesNotReadItsFieldsOnCachedPeeks(): void {
+		$holdout = self::holdout(11, 'holdout_a', 13, 111);
+		$context = $this->createContext(new ContextData([self::experiment(1, 'exp', [11])], [$holdout]));
+		$context->peekTreatment('exp');
+		$reads = 0;
+		$counted = new class($reads) {
+			private int $reads;
+			public function __construct(int &$reads) {
+				$this->reads = &$reads;
+			}
+			public function __get(string $name) {
+				++$this->reads;
+				return $name === 'id' ? 11 : 1;
+			}
+		};
+		$assignment = self::invokeGetAssignment($context, 'exp');
+		$assignment->holdouts = [$counted];
+		$sets = new \ReflectionProperty(Context::class, 'experimentHoldouts');
+		if (PHP_VERSION_ID < 80100) {
+			$sets->setAccessible(true);
+		}
+		$sets->setValue($context, ['exp' => [$counted]]);
+		for ($i = 0; $i < 10; ++$i) {
+			$context->peekTreatment('exp');
+		}
+		self::assertSame(0, $reads);
+	}
+
 	public function testMalformedHoldoutEntriesAreIgnoredAndOthersStillApply(): void {
 		$valid = self::holdout(11, 'holdout_valid', 13, 111);
 		$malformed = [
