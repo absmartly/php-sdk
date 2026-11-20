@@ -1228,6 +1228,22 @@ class ContextHoldoutTest extends TestCase {
 		self::assertSame(3, $context->getPendingCount());
 	}
 
+	// holdoutIds that name only unknown holdouts keep the context on the no-holdout read path too.
+	public function testUnknownHoldoutIdsKeepTheNoHoldoutReadPath(): void {
+		$experiment = self::coveredBy(self::experiment(1, 'exp_unknown_fast_path'), 99);
+		$experiment->variants[1]->config = '{"unknown_fast_path":"treatment"}';
+		$context = $this->createContext(self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)], $experiment));
+		self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_unknown_fast_path'));
+
+		$hasHoldouts = new \ReflectionProperty(Context::class, 'hasHoldouts');
+		if (PHP_VERSION_ID < 80100) {
+			$hasHoldouts->setAccessible(true);
+		}
+		self::assertFalse($hasHoldouts->getValue($context));
+		self::assertSame('treatment', $context->getVariableValue('unknown_fast_path', 'default'));
+		self::assertSame(1, $context->getPendingCount());
+	}
+
 	// Without holdouts a throwing logger still stops the walk at that candidate, as on main.
 	public function testThrowingLoggerOnUncoveredVariableCandidateStillStopsTheWalk(): void {
 		$logger = new ThrowingExposureLogger();
