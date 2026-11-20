@@ -2023,4 +2023,45 @@ class ContextSwitchbackTest extends TestCase {
 		self::assertCount(2, $this->eventHandler->submitted);
 		self::assertSame(0, $context->getPendingCount());
 	}
+
+	/** An event handler that publishes and then queues an exposure during an early batch keeps that exposure queued. */
+	public function testAnExposureQueuedFromTheHandlerDuringAnEarlierBatchIsKept(): void {
+		$context = $this->contextWithAnEarlierUnitExposure();
+		$calls = 0;
+		$this->eventHandler->prerun = static function () use (&$calls, $context) {
+			if (++$calls === 1) {
+				$context->publish();
+				$context->getTreatment('exp_unit');
+			}
+		};
+		$context->publish();
+		self::assertSame(0, $context->getPendingCount());
+		self::assertSame(['exp_unit'], array_column(end($this->eventHandler->submitted)->exposures, 'name'));
+	}
+
+	/** An absent override never rides in an earlier batch, even one whose units match its own. */
+	public function testAnAbsentOverrideStaysOutOfAMatchingEarlierBatch(): void {
+		$device = self::switchback(2, null, 2, 'exp_dev');
+		$device->switchbackClusters = self::clusters('device_id', 'device_key');
+		$context = $this->createContext(self::dataOf(self::switchback(2), $device), null,
+			[self::$CLUSTER_PATH => self::$CLUSTER_KEY, 'device_key' => 'Porto']);
+		$context->setOverride('exp_dev', 1);
+		$this->now = self::$ANCHOR + 10;
+		$context->getTreatment('exp_sb');
+		$context->getTreatment('exp_dev');
+		$context->setUnit('device_id', 'd1');
+		$context->publish();
+		self::assertSame([
+			[[self::$UNIT_TYPE], ['exp_sb'], 0],
+			[[self::$UNIT_TYPE, 'device_id'], ['exp_dev'], 0],
+		], $this->publishedBatches());
+	}
+
+	/** After an earlier batch, the main batch hands the handler a list of exposures, with no holes. */
+	public function testTheMainBatchExposuresAreAListAfterAnEarlierBatch(): void {
+		$context = $this->contextWithAnEarlierUnitExposure();
+		$context->getTreatment('exp_unit');
+		$context->publish();
+		self::assertSame([[0], [0]], $this->eventHandler->exposureKeys);
+	}
 }
