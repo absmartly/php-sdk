@@ -1899,4 +1899,55 @@ class ContextSwitchbackTest extends TestCase {
 		self::assertFalse($context->isClosed());
 		self::assertSame(1, $context->getPendingCount());
 	}
+
+	public function testPublishLoggerCannotDrainTheOuterBatchPlan(): void {
+		$other = self::switchback(2, null, 2, 'exp_other');
+		$context = $this->createContext(self::dataOf(self::switchback(2), $other));
+		$this->now = self::$ANCHOR + 10;
+		$context->getTreatment('exp_sb');
+		$context->setUnit('user_id', 'u1');
+		$context->getTreatment('exp_other');
+		$context->setUnit('device_id', 'd1');
+		$logger = new class implements \ABSmartly\SDK\Context\ContextEventLogger {
+			private bool $called = false;
+			public function handleEvent(Context $context, \ABSmartly\SDK\Context\ContextEventLoggerEvent $event): void {
+				if ($event->getEvent() === \ABSmartly\SDK\Context\ContextEventLoggerEvent::Publish && !$this->called) {
+					$this->called = true;
+					$context->track('from_logger');
+					$context->publish();
+				}
+			}
+		};
+		$property = new \ReflectionProperty(Context::class, 'eventLogger');
+		$property->setAccessible(true);
+		$property->setValue($context, $logger);
+		$context->publish();
+		self::assertSame(0, $context->getPendingCount());
+		self::assertSame([
+			[[self::$UNIT_TYPE], ['exp_sb'], 0],
+			[[self::$UNIT_TYPE, 'user_id'], ['exp_other'], 0],
+			[[self::$UNIT_TYPE, 'user_id', 'device_id'], [], 1],
+		], $this->publishedBatches());
+	}
+
+	public function testThrowingEarlierPublishLoggerDoesNotRetainAcceptedEvents(): void {
+		$context = $this->contextWithAnEarlierUnitExposure();
+		$logger = new class implements \ABSmartly\SDK\Context\ContextEventLogger {
+			public function handleEvent(Context $context, \ABSmartly\SDK\Context\ContextEventLoggerEvent $event): void {
+				if ($event->getEvent() === \ABSmartly\SDK\Context\ContextEventLoggerEvent::Publish) {
+					throw new \RuntimeException('logger down');
+				}
+			}
+		};
+		$property = new \ReflectionProperty(Context::class, 'eventLogger');
+		$property->setAccessible(true);
+		$property->setValue($context, $logger);
+		@$context->publish();
+		self::assertSame(0, $context->getPendingCount());
+		self::assertSame([[[self::$UNIT_TYPE], ['exp_sb'], 0]], $this->publishedBatches());
+		$context->track('later');
+		@$context->publish();
+		self::assertCount(2, $this->eventHandler->submitted);
+		self::assertSame(0, $context->getPendingCount());
+	}
 }

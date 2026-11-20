@@ -131,6 +131,8 @@ class Context {
 	 * only (two isset() calls per cached unit read, ~4% with opcache): both branches it skips find nothing without it.
 	 */
 	private bool $hasSwitchbacks = false;
+	/** Prevents callbacks from draining the queue while an outer flush is processing its batch indexes. */
+	private bool $flushing = false;
 	/** Source of SwitchbackSources::$generation. */
 	private int $switchbackGenerationCounter = 0;
 	/** @var Closure(): int|null Test seam for getTime(); null reads the system clock. */
@@ -1701,6 +1703,19 @@ class Context {
 	 * caller, when false (publish()/flush()) it is only logged, as in v1.0.3.
 	 */
 	private function flushEvents(bool $rethrow): void {
+		if ($this->flushing) {
+			return;
+		}
+		$this->flushing = true;
+		try {
+			$this->publishQueuedEvents($rethrow);
+		}
+		finally {
+			$this->flushing = false;
+		}
+	}
+
+	private function publishQueuedEvents(bool $rethrow): void {
 		if ($this->getPendingCount() === 0) {
 			return;
 		}
