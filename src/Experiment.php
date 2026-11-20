@@ -2,7 +2,6 @@
 
 namespace ABSmartly\SDK;
 
-use function abs;
 use function array_filter;
 use function array_map;
 use function array_values;
@@ -75,7 +74,7 @@ class Experiment {
 				// rather than failing the whole context.
 				$this->holdoutIds = is_array($value)
 					? array_values(array_filter(array_map(static function ($id) {
-						return is_float($id) && floor($id) === $id && abs($id) < 9.2233720368547758E18 ? (int) $id : $id;
+						return is_float($id) && floor($id) === $id && $id >= -9.2233720368547758E18 && $id < 9.2233720368547758E18 ? (int) $id : $id;
 					}, $value), 'is_int'))
 					: null;
 			}
