@@ -1022,7 +1022,13 @@ class Context {
 		$error = null;
 
 		foreach ($experiments as $experimentVariables) {
-			$assignment = $this->getAssignment($experimentVariables->data->name);
+			try {
+				$assignment = $this->getAssignment($experimentVariables->data->name);
+			}
+			catch (Throwable $exception) {
+				// A later candidate's assignment failure must not hide the logger error deferred before it.
+				throw $error ?? $exception;
+			}
 
 			if ($assignment->variables !== null) {
 				if ($exposeAssignments && (!$assignment->exposed || $this->droppedHoldoutArms !== [])) {
@@ -1568,7 +1574,9 @@ class Context {
 			$data = $this->dataProvider->getContextData();
 			$this->setData($data);
 		}
-		catch (Exception $exception) {
+		// Throwable, not Exception: a TypeError from a mistyped field must roll back too, since setData() has already
+		// cleared the indexes.
+		catch (Throwable $exception) {
 			$this->data = $oldData;
 			$this->index = $oldIndex;
 			$this->indexVariables = $oldIndexVariables;

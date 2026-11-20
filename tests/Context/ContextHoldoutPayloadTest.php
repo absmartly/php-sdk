@@ -616,6 +616,30 @@ class ContextHoldoutPayloadTest extends TestCase {
 		return [(new SDK($config))->createContextWithData($contextConfig, $data), $provider];
 	}
 
+	// Data whose install raises an Error (a TypeError from a mistyped field), not only an Exception, is rolled back:
+	// the previous data, its holdouts and its assignments stay in use and refresh() does not throw.
+	public function testRefreshThatRaisesAnErrorWhileInstallingKeepsThePreviousData(): void {
+		$data = new ContextData([self::experiment(1, 'exp', [11])], [self::holdout(11, 'holdout_a', 13, 111)]);
+		[$context, $provider] = $this->contextWithProvider($data);
+		self::assertSame(0, $context->peekTreatment('exp'));
+
+		$broken = self::experiment(2, 'exp_broken', []);
+		$broken->variants = (object) ['not' => 'a list'];
+		$provider->next = new ContextData([self::experiment(1, 'exp', []), $broken], []);
+		set_error_handler(static fn() => true);
+		try {
+			$context->refresh();
+		}
+		finally {
+			restore_error_handler();
+		}
+
+		self::assertSame($data, $context->getContextData());
+		self::assertFalse($context->isFailed());
+		self::assertSame(0, $context->getTreatment('exp'));
+		self::assertSame([[11, 'holdout_a', 'session_id', 0]], $this->published($context));
+	}
+
 	private function failNextPublish(Context $context): void {
 		$this->eventHandler->prerun = function () {
 			throw new \RuntimeException('collector down');

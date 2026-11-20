@@ -1270,6 +1270,29 @@ class ContextHoldoutTest extends TestCase {
 		self::assertSame(3, $context->getPendingCount());
 	}
 
+	// A later candidate whose assignment itself fails must not replace the first deferred logger error.
+	public function testLaterCandidateAssignmentFailureDoesNotReplaceTheDeferredLoggerError(): void {
+		$logger = new ThrowingExposureLogger();
+		$logger->throwWhen = fn($exposure) => $exposure->id === 11;
+		$suppressed = self::coveredBy(self::experiment(1, 'exp_var_then_bad_split'), 11);
+		$suppressed->variants[1]->config = '{"bad_split_key":"from_suppressed"}';
+		$broken = self::experiment(2, 'exp_var_bad_split');
+		$broken->split = ['bad', 1];
+		$broken->variants[1]->config = '{"bad_split_key":"from_broken"}';
+		$broken->variants[0]->config = '{"bad_split_key":"from_broken"}';
+		$context = $this->createContext(self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)], $suppressed,
+			$broken), [self::UNIT_TYPE => self::UID], [], [], $logger);
+
+		try {
+			$context->getVariableValue('bad_split_key', 'default');
+			self::fail('the logger error must reach the caller');
+		}
+		catch (\Throwable $exception) {
+			self::assertInstanceOf(\RuntimeException::class, $exception);
+			self::assertSame('boom', $exception->getMessage());
+		}
+	}
+
 	public function testThrowingLoggerDoesNotMakeExperimentOrHoldoutExposureRetryable(): void {
 		$logger = new ThrowingExposureLogger();
 		$logger->throwWhen = fn($exposure) => $exposure->id === 1;
