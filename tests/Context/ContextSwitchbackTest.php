@@ -2162,4 +2162,20 @@ class ContextSwitchbackTest extends TestCase {
 			[[self::$UNIT_TYPE, 'other_id', 'device_id'], ['exp_dev'], 0],
 		], $this->publishedBatches());
 	}
+
+	/** A split rule is revalidated on the serving unit, not the declared unitType the context may not have. */
+	public function testASplitRuleIsRevalidatedOnTheServingUnit(): void {
+		$experiment = self::switchback(2);
+		$experiment->unitType = 'user_id';
+		$experiment->assignmentRules = '{"rules":[{"type":"split","environments":[],"percentages":"50/50"}]}';
+		for ($u = 0; $u < 16; ++$u) {
+			$uid = 'store-' . $u;
+			$expected = (new VariantAssigner($uid))->assign([0.5, 0.5], self::$SEED_HI, self::$SEED_LO);
+			$context = $this->createContext(self::dataOf($experiment), [self::$UNIT_TYPE => $uid]);
+			self::assertSame($expected, $context->getTreatment('exp_sb'), $uid);
+			$context->setAttribute('unrelated', true);
+			self::assertSame($expected, $context->getTreatment('exp_sb'), $uid);
+			self::assertSame(1, $context->getPendingCount(), $uid);
+		}
+	}
 }
