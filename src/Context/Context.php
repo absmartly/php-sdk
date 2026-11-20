@@ -598,15 +598,15 @@ class Context {
 		}
 	}
 
-	private function experimentMatches(Experiment $experiment, Assignment $assignment): bool {
-		return $experiment->id === $assignment->id &&
-			$experiment->unitType === $assignment->unitType &&
-			$experiment->iteration === $assignment->iteration &&
-			$experiment->fullOnVariant === $assignment->fullOnVariant &&
-			$experiment->trafficSplit === $assignment->trafficSplit;
-	}
+	private function assignmentMatches(Experiment $experiment, Assignment $assignment): bool {
+		if ($experiment->id !== $assignment->id ||
+			$experiment->unitType !== $assignment->unitType ||
+			$experiment->iteration !== $assignment->iteration ||
+			$experiment->fullOnVariant !== $assignment->fullOnVariant ||
+			$experiment->trafficSplit !== $assignment->trafficSplit) {
+			return false;
+		}
 
-	private function audienceMatches(Experiment $experiment, Assignment $assignment): bool {
 		if ($experiment->audience === null && $experiment->assignmentRules === null && $assignment->ruleKey === '') {
 			// Nothing here depends on attributes.
 			return true;
@@ -720,12 +720,12 @@ class Context {
 	/**
 	 * Whether the cached assignment pins variant 0 independently of the custom variant, so an unchanged read
 	 * can reuse it (and its exposure dedup) until a trigger rebuilds it: a strict audience exclusion (rebuilt
-	 * by audienceMatches() when attributes change) or a missing unit (rebuilt once the unit is set). Full-on
+	 * by assignmentMatches() when attributes change) or a missing unit (rebuilt once the unit is set). Full-on
 	 * and not-eligible assignments are NOT pinned here: like JS, they are only reused when the custom variant
 	 * equals the assigned variant, so a differing custom variant is detected as stale and re-exposed.
 	 */
 	private function customAssignmentIgnored(Assignment $assignment, $experiment): bool {
-		// A strict audience exclusion is never assigned; attribute changes are still re-checked by audienceMatches().
+		// A strict audience exclusion is never assigned; attribute changes are still re-checked by assignmentMatches().
 		if ($assignment->audienceMismatch && !empty($experiment->data->audienceStrict)) {
 			return true;
 		}
@@ -778,8 +778,7 @@ class Context {
 				|| $this->customAssignmentIgnored($assignment, $experiment)) {
 				// A matching rule wins over a custom assignment and a suppressed one is forced to control, so a
 				// custom mismatch is not staleness.
-				if ($this->experimentMatches($experiment->data, $assignment)
-					&& $this->audienceMatches($experiment->data, $assignment)
+				if ($this->assignmentMatches($experiment->data, $assignment)
 					// Short-circuits for data without holdouts, so their cached reads stay as cheap as before.
 					&& (!$this->hasHoldouts || $this->holdoutSetMatches($experimentName, $assignment))) {
 					// assignment up-to-date

@@ -1176,6 +1176,84 @@ class ContextSwitchbackTest extends TestCase {
 		self::assertSame([self::sbExposure($variant, self::$ANCHOR + self::$HOUR - 1)], $this->loggedExposures());
 	}
 
+	public function cachedUnitContextProvider(): array {
+		return ['ordinary context' => [false], 'mixed context' => [true]];
+	}
+
+	/** @dataProvider cachedUnitContextProvider */
+	public function testCachedUnitAssignmentIsSharedByAllReadApis(bool $withSwitchback): void {
+		$unit = self::unitExperiment();
+		foreach ($unit->variants as $i => $arm) {
+			$arm->config = '{"unit.arm":' . $i . '}';
+		}
+		$data = $withSwitchback ? self::dataOf($unit, self::switchback()) : self::dataOf($unit);
+		$context = $this->createContext($data);
+		$counts = self::countEvaluations($context);
+		$this->nextRead = 123;
+
+		// The first peek resolves an uninitialized cache without exposing or reading the clock.
+		$variant = $context->peekTreatment('exp_unit');
+		$assignment = self::privateValue($context, 'assignmentCache')['exp_unit'];
+		self::assertSame($variant, $context->peekVariableValue('unit.arm', -1));
+		self::assertSame(0, $context->getPendingCount());
+		self::assertSame(123, $this->nextRead);
+		self::assertSame($variant, $context->getVariableValue('unit.arm', -1));
+		self::assertNull($this->nextRead);
+
+		$this->nextRead = 456;
+		for ($i = 0; $i < 3; ++$i) {
+			self::assertSame($variant, $context->getTreatment('exp_unit'));
+			self::assertSame($variant, $context->peekTreatment('exp_unit'));
+			self::assertSame($variant, $context->getVariableValue('unit.arm', -1));
+			self::assertSame($variant, $context->peekVariableValue('unit.arm', -1));
+		}
+		self::assertSame(456, $this->nextRead);
+		self::assertSame($assignment, self::privateValue($context, 'assignmentCache')['exp_unit']);
+		self::assertSame(1, $context->getPendingCount());
+		self::assertSame(0, $counts->rules);
+		self::assertSame(0, $counts->audiences);
+		self::assertSame([self::exposure(2, 'exp_unit', self::$UNIT_TYPE, $variant, 123)], $this->loggedExposures());
+	}
+
+	public function testCachedUnitIdentityIsCheckedBeforeRuleRevalidation(): void {
+		$unit = self::unitExperiment();
+		$unit->assignmentRules = self::ASSIGN_VARIANT_1;
+		$context = $this->createContext(self::dataOf($unit));
+		$counts = self::countEvaluations($context);
+		self::assertSame(1, $context->getTreatment('exp_unit'));
+		$assignment = self::privateValue($context, 'assignmentCache')['exp_unit'];
+		self::assertSame(1, $counts->rules);
+
+		$context->setAttribute('unrelated', true);
+		++$unit->iteration;
+		$this->refreshTo($context, $unit);
+		self::assertSame(1, $context->getTreatment('exp_unit'));
+		self::assertNotSame($assignment, self::privateValue($context, 'assignmentCache')['exp_unit']);
+		// Only the rebuild evaluates the rule; the stale assignment must be rejected before revalidation.
+		self::assertSame(2, $counts->rules);
+		self::assertSame(1, $context->peekTreatment('exp_unit'));
+		self::assertSame(2, $counts->rules);
+		self::assertSame(2, $context->getPendingCount());
+	}
+
+	public function testCachedMissingExperimentStillRevalidatesAZeroOverride(): void {
+		$context = $this->createContext(self::dataOf(self::unitExperiment()));
+		self::assertSame(0, $context->peekTreatment('missing'));
+		$missing = self::privateValue($context, 'assignmentCache')['missing'];
+		self::assertSame(0, $context->getTreatment('missing'));
+		self::assertSame($missing, self::privateValue($context, 'assignmentCache')['missing']);
+		self::assertSame(1, $context->getPendingCount());
+
+		$context->setOverride('missing', 0);
+		self::assertSame(0, $context->getTreatment('missing'));
+		$overridden = self::privateValue($context, 'assignmentCache')['missing'];
+		self::assertNotSame($missing, $overridden);
+		self::assertTrue($overridden->overridden);
+		self::assertSame(0, $context->getTreatment('missing'));
+		self::assertSame($overridden, self::privateValue($context, 'assignmentCache')['missing']);
+		self::assertSame(2, $context->getPendingCount());
+	}
+
 	/**
 	 * Unit experiments keep stamping at enqueue time, with the one clock reading they took before switchbacks existed,
 	 * even next to a switchback: the first reading after resolving (nextRead) is the enqueue's.
