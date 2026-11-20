@@ -347,10 +347,11 @@ $treatment = $context->getTreatment('exp_delivery_fee'); // this period's varian
 - `getTreatment()` sends one exposure per period, stamped with the time that chose the period. The serving unit and
   cluster key are read once per period, so a `setAttribute()` later in the period takes effect from the next period.
   `peekTreatment()` and `peekVariableValue()` send nothing.
-- **Known limit, shared with java-sdk:** the collector resolves the cluster again from the published attributes at the
-  exposure's time. If a cluster attribute changes after a period's first read (a peek, or an earlier call) and before
-  that period's exposure, the SDK serves the first cluster's variant while the collector attributes the exposure to the
-  new cluster. Set cluster attributes before the first read and keep them stable within a period.
+- **Caller constraint:** set a context's cluster attributes before a period's first read (a peek, or any call) and
+  keep them unchanged through that period's exposure and any re-queue. Changing a cluster attribute within a period is
+  not supported: the SDK keeps the variant it cached at the first read, and the change takes effect from the next
+  period. This applies to every SDK's switchbacks (java-sdk included), since the collector resolves the cluster from
+  the published attributes at the exposure's time.
 - `getVariableValue()` exposes a switchback the key reaches when it is assigned, overridden or rule-assigned, as
   java-sdk does, even if its arm lacks the key; a strict audience mismatch it passes over records nothing (unit
   experiments keep exposing every experiment the key walks past).

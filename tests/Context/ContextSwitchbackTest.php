@@ -1120,8 +1120,8 @@ class ContextSwitchbackTest extends TestCase {
 	/**
 	 * Read once per period, as in java-sdk: a peek in period 0 with cluster store-42 (arm 0), the cluster attribute then
 	 * set to Faro (arm 1 in period 0), and an exposure later in the period serves arm 0, stamped with the exposing call's
-	 * reading. The collector, which resolves the cluster from the attributes at exposedAt, sees Faro: a known limit of
-	 * the shared Java/Collector contract (SWITCHBACK.md), pinned here so a change to it is deliberate.
+	 * reading; Faro serves from period 1. A cluster attribute change within a period is not supported (a caller
+	 * constraint, as in every SDK): this pins that the cached arm is kept and the change waits for the next period.
 	 */
 	public function testAnAttributeChangeAfterAPeekKeepsTheServedArmAsInJava(): void {
 		$context = $this->createContext(self::dataOf(self::switchback(2)));
@@ -1133,6 +1133,11 @@ class ContextSwitchbackTest extends TestCase {
 		$this->now = self::$ANCHOR + 30;
 		self::assertSame(0, $context->getTreatment('exp_sb'));
 		self::assertSame([self::sbExposure(0, self::$ANCHOR + 30)], $this->publishExposures($context));
+
+		$this->now = self::$ANCHOR + self::$HOUR + 1;
+		$faro = SwitchbackAssigner::assign('Faro', 1, self::seed(), 2);
+		self::assertNotSame(SwitchbackAssigner::assign(self::$CLUSTER_KEY, 1, self::seed(), 2), $faro);
+		self::assertSame($faro, $context->getTreatment('exp_sb'));
 	}
 
 	/** A nested SDK call (from a JsonSerializable cluster attribute) cannot move an outer exposure to another period. */

@@ -898,7 +898,8 @@ class Context {
 	 * Port of java-sdk's switchback resolution (the Collector's R33 serving). The slot is the experiment's current
 	 * period, or one bare-name slot before the anchor, for an unservable schedule and on the legacy path. A slot is
 	 * reused while it is current; otherwise it is resolved again, keeping the serving unit and cluster key it read, so
-	 * they are read once per slot.
+	 * they are read once per slot. Callers must keep cluster attributes unchanged from a period's first read through its
+	 * exposure and any re-queue: a change within a period is not supported, and takes effect from the next period.
 	 */
 	private function getSwitchbackAssignment(string $experimentName, ExperimentVariables $experiment, SwitchbackSources $sources): Assignment {
 		$now = self::getTime();
