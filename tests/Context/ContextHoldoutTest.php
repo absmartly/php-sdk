@@ -1179,6 +1179,55 @@ class ContextHoldoutTest extends TestCase {
 		self::assertSame(1, $context->getPendingCount());
 	}
 
+	// An experiment whose holdoutIds name no holdout is uncovered: a throwing logger still stops the walk, as on main.
+	public function testUnknownHoldoutIdLeavesTheVariableCandidateUncovered(): void {
+		$logger = new ThrowingExposureLogger();
+		$logger->throwWhen = fn($exposure) => $exposure->id === 1;
+		$first = self::coveredBy(self::experiment(1, 'exp_var_unknown_id'), 99);
+		$first->variants[1]->config = '{"unrelated":"x"}';
+		$first->variants[0]->config = '{"unknown_id":"control"}';
+		$second = self::experiment(2, 'exp_var_unknown_id_second');
+		$second->variants[1]->config = '{"unknown_id":"from_second"}';
+		$context = $this->createContext(self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)], $first, $second),
+			[self::UNIT_TYPE => self::UID], [], [], $logger);
+
+		try {
+			$context->getVariableValue('unknown_id', 'default');
+			self::fail('the logger error must reach the caller');
+		}
+		catch (\RuntimeException $exception) {
+			self::assertSame('boom', $exception->getMessage());
+		}
+
+		self::assertSame(1, $context->getPendingCount());
+	}
+
+	// When several holdouts' loggers throw, the first holdout's error is re-thrown after all exposures are queued.
+	public function testFirstHoldoutLoggerErrorWinsOverALaterHoldoutError(): void {
+		$logger = new ThrowingExposureLogger();
+		$logger->throwWhen = function($exposure) {
+			if ($exposure->id === 11 || $exposure->id === 12) {
+				throw new \RuntimeException('holdout ' . $exposure->id);
+			}
+			return false;
+		};
+		$context = $this->createContext(self::data([
+			self::holdout(11, 'holdout_b', self::HOLDOUT_B_SEED),
+			self::holdout(12, 'holdout_b2', self::HOLDOUT_B_SEED),
+		], self::coveredBy(self::experiment(1, 'exp_two_throwing_holdouts'), 11, 12)), [self::UNIT_TYPE => self::UID], [], [],
+			$logger);
+
+		try {
+			$context->getTreatment('exp_two_throwing_holdouts');
+			self::fail('the logger error must reach the caller');
+		}
+		catch (\RuntimeException $exception) {
+			self::assertSame('holdout 11', $exception->getMessage());
+		}
+
+		self::assertSame(3, $context->getPendingCount());
+	}
+
 	// Without holdouts a throwing logger still stops the walk at that candidate, as on main.
 	public function testThrowingLoggerOnUncoveredVariableCandidateStillStopsTheWalk(): void {
 		$logger = new ThrowingExposureLogger();
