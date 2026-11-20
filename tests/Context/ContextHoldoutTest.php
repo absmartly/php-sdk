@@ -1150,6 +1150,35 @@ class ContextHoldoutTest extends TestCase {
 		self::assertSame($cached, $cache->getValue($context)['exp_no_holdouts_cached']);
 	}
 
+	// A holdout that covers no experiment leaves the context on main's exposure and variable lookup: an arm planted on
+	// the cached assignment and marked dropped is never queued by either read.
+	public function testHoldoutCoveringNothingKeepsTheNoHoldoutReadPath(): void {
+		$experiment = self::experiment(1, 'exp_fast_path');
+		$experiment->variants[1]->config = '{"fast_path":"treatment"}';
+		$context = $this->createContext(self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)], $experiment));
+		self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_fast_path'));
+
+		$cache = new \ReflectionProperty(Context::class, 'assignmentCache');
+		$dropped = new \ReflectionProperty(Context::class, 'droppedHoldoutArms');
+		if (PHP_VERSION_ID < 80100) {
+			$cache->setAccessible(true);
+			$dropped->setAccessible(true);
+		}
+		$assignment = $cache->getValue($context)['exp_fast_path'];
+		$arm = new \ABSmartly\SDK\Assignment();
+		$arm->id = 11;
+		$arm->unitType = self::UNIT_TYPE;
+		$arm->assigned = true;
+		$arm->eligible = true;
+		$assignment->holdouts = [self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)];
+		$assignment->holdoutAssignments = [$arm];
+		$dropped->setValue($context, [spl_object_id($arm) => $arm]);
+
+		self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_fast_path'));
+		self::assertSame('treatment', $context->getVariableValue('fast_path', 'default'));
+		self::assertSame(1, $context->getPendingCount());
+	}
+
 	// Without holdouts a throwing logger still stops the walk at that candidate, as on main.
 	public function testThrowingLoggerOnUncoveredVariableCandidateStillStopsTheWalk(): void {
 		$logger = new ThrowingExposureLogger();

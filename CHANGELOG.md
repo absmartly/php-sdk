@@ -129,8 +129,9 @@
   unit set later re-resolves a not-yet-exposed experiment. A held-out unit's `getVariableValue()` returns the
   control value unless another experiment assigns the key. Holdouts without a usable `split`, ids that name no
   holdout and unknown fields are ignored. `new ContextData($experiments)` keeps working (no holdouts). Payloads
-  without holdouts keep the previous exposure and variable lookup code; their cached `getTreatment()`/
-  `peekTreatment()` reads cost one extra flag check (about 2-3% without the JIT, within noise with it).
+  without holdouts keep the previous exposure and variable lookup code; their cached `getTreatment()`,
+  `peekTreatment()` and `getVariableValue()` reads cost one extra flag check each, about 2-3% without the JIT and
+  up to about 2% with it.
 - **Assignment rules.** An experiment's `assignmentRules` are evaluated in order, and the first rule whose
   environments and conditions match decides the variant: `assign` rules pick a fixed variant and `split` rules
   split traffic with their own percentages (such as `20/30/50`, which must sum to 100 within 0.01), hashing the
