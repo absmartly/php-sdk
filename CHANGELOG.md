@@ -79,7 +79,6 @@
 - With holdouts in the data, an exposure logger error during `getVariableValue()` no longer stops the walk over
   the experiments defining the key: later ones are still exposed and the first error is re-thrown afterwards,
   as in the Java SDK. Payloads without holdouts keep the previous exception behaviour.
-
 - The `timeout` option stays the connect timeout (`CURLOPT_CONNECTTIMEOUT_MS`) as in v1.0.3, bounding only
   connection establishment, not the whole request. An optional total budget for the entire request (including
   retries and back-off) is available opt-in via `HTTPClient::$totalTimeout`/`ReactHttpClient::$totalTimeout`
@@ -132,9 +131,10 @@
   `getTreatment()`/`getVariableValue()` of an experiment it covers; peeks publish nothing. The arm is kept until
   the holdout's iteration changes, so a same-iteration seed or split edit does not re-randomize or re-expose, and a
   unit set later re-resolves a not-yet-exposed experiment. A held-out unit's `getVariableValue()` returns the
-  control value unless another experiment assigns the key. Holdouts without a usable `split` (a non-empty array
-  of numbers; numeric strings, which JS would coerce, are not accepted), ids that name no holdout and unknown
-  fields are ignored. `new ContextData($experiments)` keeps working (no holdouts). Payloads without holdouts keep
+  control value unless another experiment assigns the key. Ignored, unlike JS, which coerces them: holdouts
+  without a usable `split` (a non-empty array of numbers, not numeric strings), and holdout ids that are not JSON
+  integers within the int64 range (integral floats such as `11.0` count; numeric strings such as `"11"` do not).
+  Ids that name no holdout and unknown fields are ignored too. `new ContextData($experiments)` keeps working (no holdouts). Payloads without holdouts keep
   the previous exposure and variable lookup code. Cached assignment validation reads the experiment data once and
   compares its fields inline, offsetting the additional holdout flag check on reads.
 - **Assignment rules.** An experiment's `assignmentRules` are evaluated in order, and the first rule whose

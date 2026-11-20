@@ -220,7 +220,7 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertNull($experiment->holdoutType);
 
 		$malformed = self::experiment(1, 'exp', []);
-		$malformed->holdoutIds = [11, '12', 1.5, null, [13], 14];
+		$malformed->holdoutIds = [11, '12', 1.5, null, [13], 1e19, 14];
 		$malformed->holdoutType = ['full'];
 		$experiment = new Experiment($malformed);
 		self::assertSame([11, 14], $experiment->holdoutIds);
