@@ -997,6 +997,26 @@ class Context {
 	 */
 	private function resolveVariableValue(string $key, $default, bool $exposeAssignments) {
 		$experiments = $this->indexVariables[$key] ?? [];
+		if (!$this->hasHoldouts) {
+			// Data that never had holdouts keeps main's loop: nothing is suppressed and no exposure has holdout arms.
+			foreach ($experiments as $experimentVariables) {
+				$assignment = $this->getAssignment($experimentVariables->data->name);
+
+				if ($assignment->variables !== null) {
+					if ($exposeAssignments && empty($assignment->exposed)) {
+						$this->queueExposure($assignment);
+					}
+
+					if (property_exists($assignment->variables, $key)
+						&& ($assignment->assigned || $assignment->overridden || $assignment->ruleOverride)) {
+						return $assignment->variables->{$key};
+					}
+				}
+			}
+
+			return $default;
+		}
+
 		// A held-out unit reads the control value, not $default, when nothing else wins. The first suppressed
 		// experiment is kept even if it lacks the key, so a later suppressed one can't win (JS).
 		$suppressedFallback = null;
@@ -1143,7 +1163,13 @@ class Context {
 	public function getTreatment(string $experimentName): int {
 		$this->checkReady();
 		$assignment = $this->getAssignment($experimentName);
-		if (!$assignment->exposed || $this->droppedHoldoutArms !== []) {
+		if (!$this->hasHoldouts) {
+			// Data that never had holdouts keeps main's read path: no assignment can carry holdout arms.
+			if (empty($assignment->exposed)) {
+				$this->queueExposure($assignment);
+			}
+		}
+		else if (!$assignment->exposed || $this->droppedHoldoutArms !== []) {
 			$this->triggerExposures($assignment);
 		}
 

@@ -1036,6 +1036,120 @@ class ContextHoldoutTest extends TestCase {
 		self::assertSame(1, $context->getPendingCount());
 	}
 
+	/** A first candidate covered by holdout 12 whose UID variant (1) lacks $key, and a later candidate that has it. */
+	private static function candidateWithoutKeyThenOneWithKey(string $key): array {
+		$first = self::coveredBy(self::experiment(1, 'exp_var_first_' . $key), 12);
+		$first->variants[0]->config = json_encode([$key => 'from_first_control']);
+		$first->variants[1]->config = '{"unrelated":"x"}';
+		$second = self::experiment(2, 'exp_var_second_' . $key);
+		$second->variants[1]->config = json_encode([$key => 'from_second']);
+		return [$first, $second];
+	}
+
+	// A candidate covered by a holdout that does not hold the unit out also defers the error and keeps walking.
+	public function testThrowingHoldoutLoggerOnCoveredNotHeldOutVariableCandidateKeepsWalking(): void {
+		$logger = new ThrowingExposureLogger();
+		$logger->throwWhen = fn($exposure) => $exposure->id === 12;
+		[$first, $second] = self::candidateWithoutKeyThenOneWithKey('covered_assigned');
+		$context = $this->createContext(self::data([self::holdout(12, 'holdout_b', self::HOLDOUT_B_SEED)], $first, $second),
+			[self::UNIT_TYPE => self::UID], [], [], $logger);
+
+		try {
+			$context->getVariableValue('covered_assigned', 'default');
+			self::fail('the logger error must reach the caller');
+		}
+		catch (\RuntimeException $exception) {
+			self::assertSame('boom', $exception->getMessage());
+		}
+
+		self::assertSame(3, $context->getPendingCount());
+	}
+
+	// An overridden covered candidate still fires its holdout exposures, so it defers the error and keeps walking too.
+	public function testThrowingHoldoutLoggerOnOverriddenCoveredVariableCandidateKeepsWalking(): void {
+		$logger = new ThrowingExposureLogger();
+		$logger->throwWhen = fn($exposure) => $exposure->id === 12;
+		[$first, $second] = self::candidateWithoutKeyThenOneWithKey('covered_overridden');
+		$context = $this->createContext(self::data([self::holdout(12, 'holdout_b', self::HOLDOUT_B_SEED)], $first, $second),
+			[self::UNIT_TYPE => self::UID], ['exp_var_first_covered_overridden' => 1], [], $logger);
+
+		try {
+			$context->getVariableValue('covered_overridden', 'default');
+			self::fail('the logger error must reach the caller');
+		}
+		catch (\RuntimeException $exception) {
+			self::assertSame('boom', $exception->getMessage());
+		}
+
+		self::assertSame(3, $context->getPendingCount());
+	}
+
+	// Any Throwable is deferred, not only an Exception: a logger TypeError still lets later candidates be queued.
+	public function testThrowingHoldoutLoggerErrorIsDeferredOnTheVariablePath(): void {
+		$logger = new ThrowingExposureLogger();
+		$logger->throwWhen = function($exposure) {
+			if ($exposure->id === 12) {
+				throw new \TypeError('logger type error');
+			}
+			return false;
+		};
+		[$first, $second] = self::candidateWithoutKeyThenOneWithKey('covered_type_error');
+		$context = $this->createContext(self::data([self::holdout(12, 'holdout_b', self::HOLDOUT_B_SEED)], $first, $second),
+			[self::UNIT_TYPE => self::UID], [], [], $logger);
+
+		try {
+			$context->getVariableValue('covered_type_error', 'default');
+			self::fail('the logger error must reach the caller');
+		}
+		catch (\TypeError $exception) {
+			self::assertSame('logger type error', $exception->getMessage());
+		}
+
+		self::assertSame(3, $context->getPendingCount());
+	}
+
+	// A logger Error on the experiment's own exposure still lets its holdout's exposure be queued.
+	public function testThrowingOwnExposureErrorStillQueuesTheHoldoutExposure(): void {
+		$logger = new ThrowingExposureLogger();
+		$logger->throwWhen = function($exposure) {
+			if ($exposure->id === 1) {
+				throw new \TypeError('logger type error');
+			}
+			return false;
+		};
+		$context = $this->createContext(self::data([self::holdout(11, 'holdout_b', self::HOLDOUT_B_SEED)],
+			self::coveredBy(self::experiment(1, 'exp_own_type_error'), 11)), [self::UNIT_TYPE => self::UID], [], [], $logger);
+
+		try {
+			$context->getTreatment('exp_own_type_error');
+			self::fail('the logger error must reach the caller');
+		}
+		catch (\TypeError $exception) {
+			self::assertSame('logger type error', $exception->getMessage());
+		}
+
+		$this->assertPublished($context, self::exposure(1, 'exp_own_type_error', self::NORMAL_VARIANT),
+			self::holdoutExposure(11, 'holdout_b', 1));
+	}
+
+	// Data without holdouts never consults the holdout set on a cached read (the cheap path): a set planted behind the
+	// flag's back would otherwise rebuild the assignment.
+	public function testCachedReadWithoutHoldoutsSkipsTheHoldoutSetCheck(): void {
+		$context = $this->createContext(self::data([], self::experiment(1, 'exp_no_holdouts_cached')));
+		self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_no_holdouts_cached'));
+		$cache = new \ReflectionProperty(Context::class, 'assignmentCache');
+		$holdouts = new \ReflectionProperty(Context::class, 'experimentHoldouts');
+		if (PHP_VERSION_ID < 80100) {
+			$cache->setAccessible(true);
+			$holdouts->setAccessible(true);
+		}
+		$cached = $cache->getValue($context)['exp_no_holdouts_cached'];
+		$holdouts->setValue($context, ['exp_no_holdouts_cached' => [self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)]]);
+
+		self::assertSame(self::NORMAL_VARIANT, $context->peekTreatment('exp_no_holdouts_cached'));
+		self::assertSame($cached, $cache->getValue($context)['exp_no_holdouts_cached']);
+	}
+
 	// Without holdouts a throwing logger still stops the walk at that candidate, as on main.
 	public function testThrowingLoggerOnUncoveredVariableCandidateStillStopsTheWalk(): void {
 		$logger = new ThrowingExposureLogger();
