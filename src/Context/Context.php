@@ -131,8 +131,6 @@ class Context {
 	 * only (two isset() calls per cached unit read, ~4% with opcache): both branches it skips find nothing without it.
 	 */
 	private bool $hasSwitchbacks = false;
-	/** Prevents callbacks from draining the queue while an outer flush is processing its batch indexes. */
-	private bool $flushing = false;
 	/** Source of SwitchbackSources::$generation. */
 	private int $switchbackGenerationCounter = 0;
 	/** @var Closure(): int|null Test seam for getTime(); null reads the system clock. */
@@ -1703,19 +1701,6 @@ class Context {
 	 * caller, when false (publish()/flush()) it is only logged, as in v1.0.3.
 	 */
 	private function flushEvents(bool $rethrow): void {
-		if ($this->flushing) {
-			return;
-		}
-		$this->flushing = true;
-		try {
-			$this->publishQueuedEvents($rethrow);
-		}
-		finally {
-			$this->flushing = false;
-		}
-	}
-
-	private function publishQueuedEvents(bool $rethrow): void {
 		if ($this->getPendingCount() === 0) {
 			return;
 		}
@@ -1871,52 +1856,60 @@ class Context {
 	 * Publishes, before the main batch, each queued switchback exposure whose serving was read before a unit was added,
 	 * in its own batch with the units of that read: the Collector resolves the serving unit again from a publish's
 	 * units, and a unit added since could make it drop the exposure or record it under another unit. Each batch is a
-	 * separate handler call and Publish event. Returns false when a batch fails; it and the later events stay queued.
+	 * separate handler call and Publish event. Batches are planned one at a time from the current queue and sent events
+	 * are removed by identity, so a callback that queues events or publishes in between is safe. Returns false when a
+	 * batch fails; it and the later events stay queued.
 	 */
 	private function publishEarlierSwitchbackUnits(bool $rethrow): bool {
-		$batches = [];
-		foreach ($this->exposureAssignments as $i => $assignment) {
-			// An absent serving had no linked unit to protect: a unit added since is what lets the Collector record it.
-			if ($assignment->switchback !== null && $assignment->switchback->serving->status !== SwitchbackServing::ABSENT
-				&& $assignment->switchback->units !== $this->units) {
-				$batches[serialize($assignment->switchback->units)][] = $i;
-			}
-		}
-
-		foreach ($batches as $indexes) {
-			$event = new PublishEvent();
-			$event->setUnits($this->exposureAssignments[$indexes[0]]->switchback->units);
-			$event->setAttributes($this->attributes);
+		while (($units = $this->earlierSwitchbackUnits()) !== null) {
 			$exposures = [];
-			foreach ($indexes as $i) {
-				$exposures[] = $this->exposures[$i];
+			foreach ($this->exposureAssignments as $i => $assignment) {
+				if (self::publishedEarlier($assignment) && $assignment->switchback->units === $units) {
+					$exposures[spl_object_id($this->exposures[$i])] = $this->exposures[$i];
+				}
 			}
-			$event->exposures = $exposures;
+
+			$event = new PublishEvent();
+			$event->setUnits($units);
+			$event->setAttributes($this->attributes);
+			$event->exposures = array_values($exposures);
 
 			try {
 				$this->eventHandler->publish($event);
 			}
 			catch (Exception $exception) {
-				$this->exposures = array_values($this->exposures);
-				$this->exposureAssignments = array_values($this->exposureAssignments);
 				$this->publishFailed($exception, $rethrow);
 				return false;
 			}
 
-			foreach ($indexes as $i) {
-				unset($this->exposures[$i], $this->exposureAssignments[$i]);
+			foreach ($this->exposures as $i => $exposure) {
+				if (isset($exposures[spl_object_id($exposure)])) {
+					unset($this->exposures[$i], $this->exposureAssignments[$i]);
+					--$this->pendingCount;
+				}
 			}
-			$this->pendingCount -= count($indexes);
+			$this->exposures = array_values($this->exposures);
+			$this->exposureAssignments = array_values($this->exposureAssignments);
 
 			$this->logPublished($event);
 		}
 
-		if ($batches !== []) {
-			$this->exposures = array_values($this->exposures);
-			$this->exposureAssignments = array_values($this->exposureAssignments);
-		}
-
 		return true;
+	}
+
+	/** The served units of the first queued exposure that needs an earlier batch, or null when none does. */
+	private function earlierSwitchbackUnits(): ?array {
+		foreach ($this->exposureAssignments as $assignment) {
+			if (self::publishedEarlier($assignment) && $assignment->switchback->units !== $this->units) {
+				return $assignment->switchback->units;
+			}
+		}
+		return null;
+	}
+
+	/** An absent serving had no linked unit to protect: a unit added since is what lets the Collector record it. */
+	private static function publishedEarlier(Assignment $assignment): bool {
+		return $assignment->switchback !== null && $assignment->switchback->serving->status !== SwitchbackServing::ABSENT;
 	}
 
 	/**

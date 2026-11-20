@@ -1900,6 +1900,83 @@ class ContextSwitchbackTest extends TestCase {
 		self::assertSame(1, $context->getPendingCount());
 	}
 
+	private function setLogger(Context $context, \ABSmartly\SDK\Context\ContextEventLogger $logger): void {
+		$property = new \ReflectionProperty(Context::class, 'eventLogger');
+		if (PHP_VERSION_ID < 80100) {
+			$property->setAccessible(true);
+		}
+		$property->setValue($context, $logger);
+	}
+
+	/** A Publish logger that calls $then once, on the first Publish. */
+	private static function publishCallback(callable $then): \ABSmartly\SDK\Context\ContextEventLogger {
+		return new class($then) implements \ABSmartly\SDK\Context\ContextEventLogger {
+			private $then;
+			private bool $called = false;
+
+			public function __construct(callable $then) {
+				$this->then = $then;
+			}
+
+			public function handleEvent(Context $context, \ABSmartly\SDK\Context\ContextEventLoggerEvent $event): void {
+				if ($event->getEvent() === \ABSmartly\SDK\Context\ContextEventLoggerEvent::Publish && !$this->called) {
+					$this->called = true;
+					($this->then)($context);
+				}
+			}
+		};
+	}
+
+	/** Without switchbacks, a goal a Publish logger tracks and publishes is sent, as before. */
+	public function testAGoalPublishedFromAPublishLoggerIsSent(): void {
+		$context = $this->createContext(self::dataOf(self::unitExperiment()));
+		$context->getTreatment('exp_unit');
+		$this->setLogger($context, self::publishCallback(static function (Context $context) {
+			$context->track('from_logger');
+			$context->publish();
+		}));
+		$context->publish();
+		self::assertSame(0, $context->getPendingCount());
+		self::assertCount(2, $this->eventHandler->submitted);
+	}
+
+	/** Without switchbacks, a goal a Publish logger tracks before close() is sent and the context closes. */
+	public function testAGoalClosedFromAPublishLoggerIsSent(): void {
+		$context = $this->createContext(self::dataOf(self::unitExperiment()));
+		$context->getTreatment('exp_unit');
+		$this->setLogger($context, self::publishCallback(static function (Context $context) {
+			$context->track('from_logger');
+			$context->close();
+		}));
+		$context->publish();
+		self::assertSame(0, $context->getPendingCount());
+		self::assertCount(2, $this->eventHandler->submitted);
+		self::assertTrue($context->isClosed());
+	}
+
+	/** A switchback exposure queued from a Publish callback during the earlier batches still gets its served units. */
+	public function testASwitchbackExposureQueuedFromACallbackKeepsItsUnits(): void {
+		$experiment = self::switchback(2);
+		$experiment->switchbackClusters = self::clusters('user_id', 'user_store', self::$UNIT_TYPE, self::$CLUSTER_PATH);
+		$other = self::switchback(2, null, 2, 'exp_other');
+		$other->switchbackClusters = $experiment->switchbackClusters;
+		$context = $this->createContext(self::dataOf($experiment, $other), null,
+			[self::$CLUSTER_PATH => self::$CLUSTER_KEY, 'user_store' => 'Faro']);
+		$this->now = self::$ANCHOR + 10;
+		$context->getTreatment('exp_sb');
+		$context->peekTreatment('exp_other');
+		$context->setUnit('user_id', 'u1');
+		$this->setLogger($context, self::publishCallback(static function (Context $context) {
+			$context->getTreatment('exp_other');
+		}));
+		$context->publish();
+		self::assertSame(0, $context->getPendingCount());
+		self::assertSame([
+			[[self::$UNIT_TYPE], ['exp_sb'], 0],
+			[[self::$UNIT_TYPE], ['exp_other'], 0],
+		], $this->publishedBatches());
+	}
+
 	public function testPublishLoggerCannotDrainTheOuterBatchPlan(): void {
 		$other = self::switchback(2, null, 2, 'exp_other');
 		$context = $this->createContext(self::dataOf(self::switchback(2), $other));
@@ -1918,9 +1995,7 @@ class ContextSwitchbackTest extends TestCase {
 				}
 			}
 		};
-		$property = new \ReflectionProperty(Context::class, 'eventLogger');
-		$property->setAccessible(true);
-		$property->setValue($context, $logger);
+		$this->setLogger($context, $logger);
 		$context->publish();
 		self::assertSame(0, $context->getPendingCount());
 		self::assertSame([
@@ -1939,9 +2014,7 @@ class ContextSwitchbackTest extends TestCase {
 				}
 			}
 		};
-		$property = new \ReflectionProperty(Context::class, 'eventLogger');
-		$property->setAccessible(true);
-		$property->setValue($context, $logger);
+		$this->setLogger($context, $logger);
 		@$context->publish();
 		self::assertSame(0, $context->getPendingCount());
 		self::assertSame([[[self::$UNIT_TYPE], ['exp_sb'], 0]], $this->publishedBatches());
