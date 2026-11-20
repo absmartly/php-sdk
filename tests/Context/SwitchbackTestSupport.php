@@ -31,7 +31,6 @@ trait SwitchbackTestSupport {
 	protected static int $SEED_HI = -5;
 	protected static int $SEED_LO = -7;
 
-	// The store unit's cluster value: attribute CLUSTER_PATH, set on every default context.
 	protected static string $CLUSTER_PATH = 'store_key';
 	protected static string $CLUSTER_KEY = 'store-42';
 	// Periods 0..11 of the raw cluster key "store-42" under seed (SEED_HI, SEED_LO), from java-sdk ContextSwitchbackTest

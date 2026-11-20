@@ -866,7 +866,6 @@ class ContextSwitchbackClusterTest extends TestCase {
 								$message = "$cluster/$anchor/$periodMs/$uid/$key/$now";
 								self::assertSame($variant, $context->getTreatment('sbc'), $message);
 								self::assertSame($isEligible === 1, $this->resolution($context, 'sbc')['eligible'], $message);
-								// Before the anchor nothing is recorded; from it, a keyed cluster records one exposure.
 								$exposures = $this->loggedExposures();
 								$expectedExposures = $oracleKey !== null && $now >= $anchor ? 1 : 0;
 								self::assertCount($expectedExposures, $exposures, $message);

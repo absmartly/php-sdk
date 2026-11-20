@@ -323,7 +323,6 @@ class Context {
 				$this->ruleKeys[$experiment->name] = $experimentVariables->data->assignmentRules . ':' . $environment;
 			}
 			if ($experimentVariables->data->randomizationType === 'switchback') {
-				// Holdouts never apply to a switchback.
 				$this->installSwitchback($experiment->name, $experimentVariables->data, $previousSwitchbacks[$experiment->name] ?? null);
 			}
 			elseif (!empty($experimentVariables->data->holdoutIds) && $this->holdoutsById !== []) {
@@ -934,9 +933,14 @@ class Context {
 
 		$slot->readAt = $now;
 		$cachedServing = $cached !== null ? $cached->switchback->serving : null;
-		$serving = $cachedServing !== null && $cachedServing->status !== SwitchbackServing::ABSENT
-			? $cachedServing
-			: $this->resolveSwitchbackServing($data, $sources, $now);
+		if ($cachedServing !== null && $cachedServing->status !== SwitchbackServing::ABSENT) {
+			$serving = $cachedServing;
+			$slot->units = $cached->switchback->units;
+		}
+		else {
+			$serving = $this->resolveSwitchbackServing($data, $sources, $now);
+			$slot->units = $this->units;
+		}
 		$slot->serving = $serving;
 
 		if (isset($this->overrides[$experimentName])) {
@@ -1722,6 +1726,13 @@ class Context {
 			return;
 		}
 
+		if ($this->hasSwitchbacks && !$this->publishEarlierSwitchbackUnits($rethrow)) {
+			return;
+		}
+		if ($this->pendingCount === 0) {
+			return;
+		}
+
 		$event = $this->buildPublishEvent();
 
 		try {
@@ -1831,6 +1842,78 @@ class Context {
 		$event->goals = $this->achievements;
 
 		return $event;
+	}
+
+	/**
+	 * Publishes, before the main batch, each queued switchback exposure whose serving was read before a unit was added,
+	 * in its own batch with the units of that read: the Collector resolves the serving unit again from a publish's
+	 * units, and a unit added since could make it drop the exposure or record it under another unit. Returns false
+	 * when a batch fails; it and the later events stay queued.
+	 */
+	private function publishEarlierSwitchbackUnits(bool $rethrow): bool {
+		$batches = [];
+		foreach ($this->exposureAssignments as $i => $assignment) {
+			if ($assignment->switchback !== null && $assignment->switchback->units !== $this->units) {
+				$batches[serialize($assignment->switchback->units)][] = $i;
+			}
+		}
+
+		foreach ($batches as $indexes) {
+			$event = new PublishEvent();
+			$event->setUnits($this->exposureAssignments[$indexes[0]]->switchback->units);
+			$event->setAttributes($this->attributes);
+			$exposures = [];
+			foreach ($indexes as $i) {
+				$exposures[] = $this->exposures[$i];
+			}
+			$event->exposures = $exposures;
+
+			try {
+				$this->eventHandler->publish($event);
+			}
+			catch (Exception $exception) {
+				$this->exposures = array_values($this->exposures);
+				$this->exposureAssignments = array_values($this->exposureAssignments);
+				error_log(sprintf(
+					'ABsmartly SDK Error: Failed to publish %d exposures and %d goals: %s. Events preserved for retry.',
+					count($this->exposures),
+					count($this->achievements),
+					$exception->getMessage()
+				));
+				$this->logError($exception, false);
+				$this->capRetainedEvents();
+
+				if ($rethrow) {
+					throw $exception;
+				}
+
+				return false;
+			}
+
+			foreach ($indexes as $i) {
+				unset($this->exposures[$i], $this->exposureAssignments[$i]);
+			}
+			$this->pendingCount -= count($indexes);
+
+			try {
+				$this->logEvent(ContextEventLoggerEvent::Publish, $event);
+			}
+			catch (Throwable $exception) {
+				error_log(sprintf(
+					'ABsmartly SDK Error: Event logger failed handling Publish: %s in %s:%d',
+					$exception->getMessage(),
+					$exception->getFile(),
+					$exception->getLine()
+				));
+			}
+		}
+
+		if ($batches !== []) {
+			$this->exposures = array_values($this->exposures);
+			$this->exposureAssignments = array_values($this->exposureAssignments);
+		}
+
+		return true;
 	}
 
 	/**

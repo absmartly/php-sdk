@@ -19,6 +19,11 @@ final class SwitchbackSlot {
 	public bool $silent = false;
 	/** The custom assignment read while resolving, so a later setCustomAssignment() is detected as stale. */
 	public ?int $custom = null;
+	/**
+	 * The context units when the serving was read. The Collector resolves the serving unit again from a publish's units,
+	 * so an exposure is published with these, not with units set after it.
+	 */
+	public array $units = [];
 
 	public function __construct(?int $period) {
 		$this->period = $period;

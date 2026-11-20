@@ -1134,10 +1134,13 @@ class ContextSwitchbackTest extends TestCase {
 		self::assertSame(0, $context->getTreatment('exp_sb'));
 		self::assertSame([self::sbExposure(0, self::$ANCHOR + 30)], $this->publishExposures($context));
 
+		// Period 1 resolves afresh under Faro and exposes again; a stale period-0 slot would expose nothing.
 		$this->now = self::$ANCHOR + self::$HOUR + 1;
 		$faro = SwitchbackAssigner::assign('Faro', 1, self::seed(), 2);
 		self::assertNotSame(SwitchbackAssigner::assign(self::$CLUSTER_KEY, 1, self::seed(), 2), $faro);
 		self::assertSame($faro, $context->getTreatment('exp_sb'));
+		self::assertSame([self::sbExposure(0, self::$ANCHOR + 30), self::sbExposure($faro, self::$ANCHOR + self::$HOUR + 1)],
+			$this->publishExposures($context));
 	}
 
 	/** A nested SDK call (from a JsonSerializable cluster attribute) cannot move an outer exposure to another period. */
@@ -1664,7 +1667,6 @@ class ContextSwitchbackTest extends TestCase {
 		self::assertSame(0, $context->getTreatment('exp_sb'));
 		$this->now = self::$ANCHOR + 15;
 		$context->track('goal');
-		// The cap drops the exposure, keeping the goal.
 		@$context->publish();
 		self::assertSame(1, $context->getPendingCount());
 
@@ -1675,5 +1677,84 @@ class ContextSwitchbackTest extends TestCase {
 		$this->now = self::$ANCHOR + 30;
 		self::assertSame(0, $context->getTreatment('exp_sb'));
 		self::assertSame([self::sbExposure(0, self::$ANCHOR + 30)], $this->publishExposures($context));
+	}
+
+	/** The unit types of each published batch, in order, with each batch's exposure names. */
+	private function publishedBatches(): array {
+		$batches = [];
+		foreach ($this->eventHandler->submitted as $event) {
+			$batches[] = [array_map(static function ($unit) {
+				return $unit->type;
+			}, $event->units ?? []), array_map(static function ($exposure) {
+				return $exposure->name;
+			}, $event->exposures ?? []), count($event->goals ?? [])];
+		}
+		return $batches;
+	}
+
+	/**
+	 * The Collector resolves a switchback's serving unit again from the publish's units, so a linked unit added after an
+	 * exposure is queued (here with a disagreeing cluster value, which would drop it) must not reach that exposure: it is
+	 * published first, in its own batch with the units of its read, and the rest follow with the current units.
+	 */
+	public function testAUnitAddedAfterAQueuedExposureIsNotPublishedWithIt(): void {
+		$experiment = self::switchback(2);
+		$experiment->switchbackClusters = self::clusters('user_id', 'user_store', self::$UNIT_TYPE, self::$CLUSTER_PATH);
+		$context = $this->createContext(self::dataOf($experiment, self::unitExperiment()), null,
+			[self::$CLUSTER_PATH => self::$CLUSTER_KEY, 'user_store' => 'Faro']);
+		$this->now = self::$ANCHOR + 10;
+		self::assertSame(self::$EXPECTED_2_ARMS[0], $context->getTreatment('exp_sb'));
+		$this->now = self::$ANCHOR + self::$HOUR + 10;
+		$context->setUnit('user_id', 'u1');
+		$context->getTreatment('exp_unit');
+		$context->track('goal');
+		self::assertSame(3, $context->getPendingCount());
+
+		$context->publish();
+		self::assertSame(0, $context->getPendingCount());
+		self::assertSame([
+			[[self::$UNIT_TYPE], ['exp_sb'], 0],
+			[[self::$UNIT_TYPE, 'user_id'], ['exp_unit'], 1],
+		], $this->publishedBatches());
+		self::assertSame(self::$ANCHOR + 10, (int) $this->eventHandler->submitted[0]->exposures[0]->exposedAt);
+	}
+
+	/** A batch that fails keeps every event queued; the retry still publishes the switchback with its own units. */
+	public function testAUnitAddedBeforeARetryIsNotPublishedWithTheQueuedExposure(): void {
+		$experiment = self::switchback(2);
+		$experiment->switchbackClusters = self::clusters('user_id', 'user_store', self::$UNIT_TYPE, self::$CLUSTER_PATH);
+		$context = $this->createContext(self::dataOf($experiment), null, [self::$CLUSTER_PATH => self::$CLUSTER_KEY, 'user_store' => 'Faro']);
+		$this->eventHandler->prerun = static function () {
+			throw new \RuntimeException('collector down');
+		};
+		$this->now = self::$ANCHOR + 10;
+		$context->getTreatment('exp_sb');
+		$context->track('goal');
+		@$context->publish();
+		self::assertSame(2, $context->getPendingCount());
+
+		$context->setUnit('user_id', 'u1');
+		@$context->publish();
+		self::assertSame(2, $context->getPendingCount());
+
+		$this->eventHandler->prerun = null;
+		$context->publish();
+		self::assertSame(0, $context->getPendingCount());
+		self::assertSame([
+			[[self::$UNIT_TYPE], ['exp_sb'], 0],
+			[[self::$UNIT_TYPE, 'user_id'], [], 1],
+		], $this->publishedBatches());
+	}
+
+	/** With no unit added, everything goes out in the one batch it always did. */
+	public function testExposuresWithTheSameUnitsShareOneBatch(): void {
+		$context = $this->createContext(self::dataOf(self::switchback(2), self::unitExperiment()));
+		$this->now = self::$ANCHOR + 10;
+		$context->getTreatment('exp_sb');
+		$context->getTreatment('exp_unit');
+		$context->setUnit(self::$UNIT_TYPE, self::$UID);
+		$context->track('goal');
+		$context->publish();
+		self::assertSame([[[self::$UNIT_TYPE], ['exp_sb', 'exp_unit'], 1]], $this->publishedBatches());
 	}
 }

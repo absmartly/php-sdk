@@ -356,6 +356,9 @@ $treatment = $context->getTreatment('exp_delivery_fee'); // this period's varian
   java-sdk does, even if its arm lacks the key; a strict audience mismatch it passes over records nothing (unit
   experiments keep exposing every experiment the key walks past).
 - Attributes are published with their timestamps, as before: the collector resolves the cluster again from them.
+- The collector also resolves the serving unit again from the published units. A switchback exposure queued before a
+  unit was added with `setUnit()` is published first, in its own batch with the units it was served with, so the new
+  unit cannot drop it or move it to another unit; the other events follow with the current units.
 
 ### Semantic Version Conditions
 
