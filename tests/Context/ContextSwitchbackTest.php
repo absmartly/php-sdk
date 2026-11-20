@@ -1652,4 +1652,28 @@ class ContextSwitchbackTest extends TestCase {
 			self::sbExposure(self::$EXPECTED_2_ARMS[0], self::$ANCHOR + 20),
 		], $this->publishExposures($context));
 	}
+
+	/** A re-queue after a same-period cluster attribute change re-sends the cached arm: the change waits for the next period. */
+	public function testARequeueAfterAnAttributeChangeKeepsTheCachedArm(): void {
+		$context = $this->createContext(self::dataOf(self::switchback(2)));
+		$context->maxRetainedEvents = 1;
+		$this->eventHandler->prerun = static function () {
+			throw new \RuntimeException('collector down');
+		};
+		$this->now = self::$ANCHOR + 10;
+		self::assertSame(0, $context->getTreatment('exp_sb'));
+		$this->now = self::$ANCHOR + 15;
+		$context->track('goal');
+		// The cap drops the exposure, keeping the goal.
+		@$context->publish();
+		self::assertSame(1, $context->getPendingCount());
+
+		$this->eventHandler->prerun = null;
+		$this->now = self::$ANCHOR + 20;
+		$context->setAttribute(self::$CLUSTER_PATH, 'Faro');
+		self::assertSame(1, SwitchbackAssigner::assign('Faro', 0, self::seed(), 2));
+		$this->now = self::$ANCHOR + 30;
+		self::assertSame(0, $context->getTreatment('exp_sb'));
+		self::assertSame([self::sbExposure(0, self::$ANCHOR + 30)], $this->publishExposures($context));
+	}
 }

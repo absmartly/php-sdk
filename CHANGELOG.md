@@ -139,10 +139,10 @@
   rule-assigned, as in java-sdk; a strict mismatch records nothing.
   Callers must set cluster attributes before a period's first read and keep them unchanged through its exposure and
   any re-queue: a change within a period is not supported, the cached variant is kept and the change takes effect
-  from the next period (the same constraint as every SDK's switchbacks). Exposures and the publish payload carry no new fields. Payloads without switchbacks take the same paths as
-  before. See the README's *Switchback Experiments*. Set cluster attributes as strings or integers: a float attribute
-  is published as JSON (`3.0` as `3`), so the collector, which resolves the cluster again from the published
-  attributes, could key it where the SDK did not.
+  from the next period (the same constraint as every SDK's switchbacks). Exposures and the publish payload carry no
+  new fields. Payloads without switchbacks take the same paths as before. See the README's *Switchback Experiments*.
+  Set cluster attributes as strings or integers: a float attribute is published as JSON (`3.0` as `3`), so the
+  collector, which resolves the cluster again from the published attributes, could key it where the SDK did not.
 - **Holdouts.** `ContextData::$holdouts` carries the collector's `holdouts` and `Experiment::$holdoutIds` (and
   `$holdoutType`) the ids that cover each experiment, as in the JavaScript and Java SDKs. A unit held out by any of
   an experiment's holdouts gets control (variant 0, not assigned) without an exposure of its own, ahead of the
