@@ -542,14 +542,6 @@ class Context {
 		}
 	}
 
-	private function experimentMatches(Experiment $experiment, Assignment $assignment): bool {
-		return $experiment->id === $assignment->id &&
-			$experiment->unitType === $assignment->unitType &&
-			$experiment->iteration === $assignment->iteration &&
-			$experiment->fullOnVariant === $assignment->fullOnVariant &&
-			$experiment->trafficSplit === $assignment->trafficSplit;
-	}
-
 	private function audienceMatches(Experiment $experiment, Assignment $assignment): bool {
 		if ($experiment->audience === null && $experiment->assignmentRules === null && $assignment->ruleKey === '') {
 			// Nothing here depends on attributes.
@@ -707,9 +699,14 @@ class Context {
 				|| $this->customAssignmentIgnored($assignment, $experiment)) {
 				// A matching rule wins over a custom assignment and a suppressed one is forced to control, so a
 				// custom mismatch is not staleness.
-				if ($this->experimentMatches($experiment->data, $assignment)
+				$experimentData = $experiment->data;
+				if ($experimentData->id === $assignment->id
+					&& $experimentData->unitType === $assignment->unitType
+					&& $experimentData->iteration === $assignment->iteration
+					&& $experimentData->fullOnVariant === $assignment->fullOnVariant
+					&& $experimentData->trafficSplit === $assignment->trafficSplit
 					&& $this->audienceMatches($experiment->data, $assignment)
-					// Short-circuits for data without holdouts, so their cached reads stay as cheap as before.
+					// Do not inspect holdout sets for data that never had holdouts.
 					&& (!$this->hasHoldouts || $this->holdoutSetMatches($experimentName, $assignment))) {
 					// assignment up-to-date
 					return $assignment;
