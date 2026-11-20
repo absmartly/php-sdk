@@ -330,36 +330,50 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertSame([11, 'holdout_valid', 'session_id', 0], $this->published($context)[0]);
 	}
 
-	// An iteration or seed outside the int64 range or not whole, or a name that is not a string, can't serve an arm:
-	// the holdout is ignored without a warning, so a strict error handler doesn't fail the context, and the covered
-	// experiment assigns normally. The split [1, 0] would hold every unit out if the holdout were applied.
+	// A missing iteration, seed or name, an iteration or seed outside the int64 range or not whole, a name that is not a
+	// string, or a split with a non-number can't serve an arm: the holdout is ignored without a warning, so a strict
+	// error handler doesn't fail the context, and the covered experiment assigns normally. The split [1, 0] would
+	// hold every unit out if the holdout were applied.
 	public function testMalformedHoldoutIterationSeedOrNameIsIgnoredWithoutAWarning(): void {
+		$unset = new \stdClass();
 		$cases = [];
 		foreach (['iteration', 'seedHi', 'seedLo'] as $numeric) {
 			$cases[] = [$numeric, 1e19];
 			$cases[] = [$numeric, -1e19];
+			// 2^63, the first float past PHP_INT_MAX.
+			$cases[] = [$numeric, 9223372036854775808.0];
 		}
 		$cases[] = ['seedHi', 13.5];
 		$cases[] = ['iteration', 1.5];
+		$cases[] = ['seedLo', $unset];
 		$cases[] = ['name', null];
 		$cases[] = ['name', 5];
+		$cases[] = ['name', $unset];
+		foreach ([[null, 1], [true, 0], [[1], 0], [1, null]] as $split) {
+			$cases[] = ['split', $split];
+		}
 		foreach ($cases as [$field, $value]) {
-			$label = $field . '=' . var_export($value, true);
+			$label = $field . '=' . ($value === $unset ? 'unset' : json_encode($value));
 			$holdout = self::holdout(11, 'holdout_malformed', 13, 111, [1, 0]);
-			$holdout->{$field} = $value;
+			if ($value === $unset) {
+				unset($holdout->{$field});
+			}
+			else {
+				$holdout->{$field} = $value;
+			}
 			set_error_handler(static function (int $errno, string $message): bool {
 				throw new \ErrorException($message, 0, $errno);
 			});
 			try {
 				$context = $this->createContext(new ContextData([self::experiment(1, 'exp', [11])], [$holdout]));
+				self::assertTrue($context->isReady(), $label);
+				self::assertFalse($context->isFailed(), $label);
+				self::assertSame(1, $context->getTreatment('exp'), $label);
 			}
 			finally {
 				restore_error_handler();
 			}
 
-			self::assertTrue($context->isReady(), $label);
-			self::assertFalse($context->isFailed(), $label);
-			self::assertSame(1, $context->getTreatment('exp'), $label);
 			self::assertSame([[1, 'exp', 'session_id', 1]], $this->published($context), $label);
 		}
 	}
