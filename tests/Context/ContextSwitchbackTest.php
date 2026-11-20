@@ -2064,4 +2064,24 @@ class ContextSwitchbackTest extends TestCase {
 		$context->publish();
 		self::assertSame([[0], [0]], $this->eventHandler->exposureKeys);
 	}
+
+	/** An absent slot queued first, under other units, does not stop a later exposure from getting its earlier batch. */
+	public function testAnAbsentSlotQueuedFirstDoesNotHideALaterEarlierBatch(): void {
+		$device = self::switchback(2, null, 2, 'exp_dev');
+		$device->switchbackClusters = self::clusters('device_id', 'device_key');
+		$context = $this->createContext(self::dataOf(self::switchback(2), $device), null,
+			[self::$CLUSTER_PATH => self::$CLUSTER_KEY, 'device_key' => 'Porto']);
+		$context->setOverride('exp_dev', 1);
+		$this->now = self::$ANCHOR + 10;
+		$context->getTreatment('exp_dev');
+		$context->setUnit('other_id', 'o1');
+		$context->getTreatment('exp_sb');
+		$context->setUnit('device_id', 'd1');
+		$context->publish();
+		self::assertSame(0, $context->getPendingCount());
+		self::assertSame([
+			[[self::$UNIT_TYPE, 'other_id'], ['exp_sb'], 0],
+			[[self::$UNIT_TYPE, 'other_id', 'device_id'], ['exp_dev'], 0],
+		], $this->publishedBatches());
+	}
 }
