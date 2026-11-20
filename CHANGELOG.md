@@ -98,6 +98,10 @@
 - **`X-Agent` drops the `v` prefix.** The header is `absmartly-php-sdk/2.0.0` (old: `absmartly-php-sdk/v1.0.3`),
   the same `<name>/<version>` form as the other SDKs. The collector stores it as an opaque string.
 - `var_dump()` of a `ClientConfig` (its `__debugInfo()`) now also lists `applicationVersion`.
+- `refresh()` keeps the previous data and logs an `Error` event when fetching or installing the new data raises any
+  `Throwable`, not only an `Exception`, as the JS SDK does. A data provider that throws an `\Error`, or a mistyped
+  field that raises a `TypeError` while installing, no longer escapes `refresh()` (which also left the experiment
+  index cleared). Code that caught `\Error` around `refresh()` should listen for the `Error` event instead.
 - A `Refresh` event logger that throws (any `Throwable`) no longer undoes the refresh. The new data stays installed,
   so assignments the handler read from it can't outlive it, and the error is written to the error log rather than
   sent back to that logger as an `Error` event, as in JS, which swallows logger errors. v1.0.3 instead cleared the
@@ -109,9 +113,6 @@
 - A batch the collector has accepted is cleared from the queue before the `Publish` event is logged, so an event
   logger that throws on `Publish` no longer causes those exposures and goals to be retained and sent again, and is
   not reported as a publish failure (`close()` still completes).
-- `refresh()` keeps the previous data and logs an `Error` event when installing the new data raises any `Throwable`
-  (e.g. a `TypeError` from a mistyped field), not only an `Exception`. Before, the error escaped `refresh()` and left
-  the context with its experiment index cleared.
 - `createContextAsync()`/`createContextPending()` resolve a context that is ready and failed when the loaded data
   raises any `Throwable` (e.g. a `TypeError` from a mistyped field), not only an `Exception`.
 - `ReactHttpClient::$timeout` of 0 or less now means no per-attempt limit, as documented (it previously made every

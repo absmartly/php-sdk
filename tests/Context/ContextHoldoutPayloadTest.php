@@ -619,7 +619,10 @@ class ContextHoldoutPayloadTest extends TestCase {
 	// Data whose install raises an Error (a TypeError from a mistyped field), not only an Exception, is rolled back:
 	// the previous data, its holdouts and its assignments stay in use and refresh() does not throw.
 	public function testRefreshThatRaisesAnErrorWhileInstallingKeepsThePreviousData(): void {
-		$data = new ContextData([self::experiment(1, 'exp', [11])], [self::holdout(11, 'holdout_a', 13, 111)]);
+		$experiment = self::experiment(1, 'exp', [11]);
+		$experiment->variants = [(object) ['name' => 'A', 'config' => '{"color":"control"}'],
+			(object) ['name' => 'B', 'config' => '{"color":"treatment"}']];
+		$data = new ContextData([$experiment], [self::holdout(11, 'holdout_a', 13, 111)]);
 		[$context, $provider] = $this->contextWithProvider($data);
 		self::assertSame(0, $context->peekTreatment('exp'));
 
@@ -636,6 +639,8 @@ class ContextHoldoutPayloadTest extends TestCase {
 
 		self::assertSame($data, $context->getContextData());
 		self::assertFalse($context->isFailed());
+		self::assertSame(['color' => 'exp'], $context->getVariableKeys());
+		self::assertSame('control', $context->peekVariableValue('color', 'default'));
 		self::assertSame(0, $context->getTreatment('exp'));
 		self::assertSame([[11, 'holdout_a', 'session_id', 0]], $this->published($context));
 	}
