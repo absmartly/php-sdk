@@ -959,6 +959,108 @@ class ContextHoldoutTest extends TestCase {
 		self::assertSame(2, $context->getPendingCount());
 	}
 
+	// A lower-id variable candidate's throwing holdout logger must not stop the walk: the later candidate's own and
+	// holdout exposures are still queued and the first logger error reaches the caller (Java).
+	public function testThrowingHoldoutLoggerOnEarlierVariableCandidateStillQueuesLaterCandidates(): void {
+		$logger = new ThrowingExposureLogger();
+		$logger->throwWhen = fn($exposure) => $exposure->id === 11;
+		$suppressed = self::coveredBy(self::experiment(1, 'exp_var_throwing_suppressed'), 11);
+		$suppressed->variants[1]->config = '{"shared_throw":"from_suppressed"}';
+		$assigned = self::coveredBy(self::experiment(2, 'exp_var_throwing_assigned'), 12);
+		$assigned->variants[1]->config = '{"shared_throw":"from_assigned"}';
+		$context = $this->createContext(self::data([
+			self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED),
+			self::holdout(12, 'holdout_b', self::HOLDOUT_B_SEED),
+		], $suppressed, $assigned), [self::UNIT_TYPE => self::UID], [], [], $logger);
+
+		try {
+			$context->getVariableValue('shared_throw', 'default');
+			self::fail('the logger error must reach the caller');
+		}
+		catch (\RuntimeException $exception) {
+			self::assertSame('boom', $exception->getMessage());
+		}
+		$logger->throwWhen = fn($exposure) => false;
+
+		self::assertSame(3, $context->getPendingCount());
+		$this->assertPublished($context, self::holdoutExposure(11, 'holdout_a', 0),
+			self::exposure(2, 'exp_var_throwing_assigned', self::NORMAL_VARIANT), self::holdoutExposure(12, 'holdout_b', 1));
+	}
+
+	// The first error wins when a later candidate's logger throws too.
+	public function testFirstVariableCandidateLoggerErrorWinsOverALaterOne(): void {
+		$logger = new ThrowingExposureLogger();
+		$suppressed = self::coveredBy(self::experiment(1, 'exp_var_first_error'), 11);
+		$suppressed->variants[1]->config = '{"shared_first":"from_suppressed"}';
+		$assigned = self::experiment(2, 'exp_var_second_error');
+		$assigned->variants[1]->config = '{"shared_first":"from_assigned"}';
+		$context = $this->createContext(self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)], $suppressed,
+			$assigned), [self::UNIT_TYPE => self::UID], [], [], $logger);
+		$first = null;
+		$logger->throwWhen = function($exposure) use (&$first) {
+			if ($first === null) {
+				$first = $exposure->id;
+				throw new \LogicException('first');
+			}
+			return true;
+		};
+
+		try {
+			$context->getVariableValue('shared_first', 'default');
+			self::fail('the logger error must reach the caller');
+		}
+		catch (\Throwable $exception) {
+			self::assertSame(11, $first);
+			self::assertInstanceOf(\LogicException::class, $exception);
+		}
+		self::assertSame(2, $context->getPendingCount());
+	}
+
+	// With no winner the walk ends on the suppressed fallback, and the deferred logger error still reaches the caller.
+	public function testDeferredVariableCandidateLoggerErrorIsThrownWhenNoCandidateWins(): void {
+		$logger = new ThrowingExposureLogger();
+		$logger->throwWhen = fn($exposure) => $exposure->id === 11;
+		$suppressed = self::coveredBy(self::experiment(1, 'exp_var_no_winner'), 11);
+		$suppressed->variants[1]->config = '{"shared_none":"from_suppressed"}';
+		$context = $this->createContext(self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)], $suppressed),
+			[self::UNIT_TYPE => self::UID], [], [], $logger);
+
+		try {
+			$context->getVariableValue('shared_none', 'default');
+			self::fail('the logger error must reach the caller');
+		}
+		catch (\RuntimeException $exception) {
+			self::assertSame('boom', $exception->getMessage());
+		}
+
+		self::assertSame(1, $context->getPendingCount());
+	}
+
+	// Without holdouts a throwing logger still stops the walk at that candidate, as on main.
+	public function testThrowingLoggerOnUncoveredVariableCandidateStillStopsTheWalk(): void {
+		$logger = new ThrowingExposureLogger();
+		$logger->throwWhen = fn($exposure) => $exposure->id === 1;
+		$first = self::experiment(1, 'exp_var_uncovered_first');
+		$first->variants[1]->config = '{"shared_uncovered":"from_first"}';
+		$first->variants[1]->name = 'B';
+		$first->split = [1.0, 0.0];
+		$first->variants[0]->config = '{"other":"x"}';
+		$second = self::coveredBy(self::experiment(2, 'exp_var_uncovered_second'), 11);
+		$second->variants[1]->config = '{"shared_uncovered":"from_second"}';
+		$context = $this->createContext(self::data([self::holdout(11, 'holdout_b', self::HOLDOUT_B_SEED)], $first,
+			$second), [self::UNIT_TYPE => self::UID], [], [], $logger);
+
+		try {
+			$context->getVariableValue('shared_uncovered', 'default');
+			self::fail('the logger error must reach the caller');
+		}
+		catch (\RuntimeException $exception) {
+			self::assertSame('boom', $exception->getMessage());
+		}
+
+		self::assertSame(1, $context->getPendingCount());
+	}
+
 	public function testThrowingLoggerDoesNotMakeExperimentOrHoldoutExposureRetryable(): void {
 		$logger = new ThrowingExposureLogger();
 		$logger->throwWhen = fn($exposure) => $exposure->id === 1;
@@ -970,6 +1072,7 @@ class ContextHoldoutTest extends TestCase {
 			self::fail('the logger error must reach the caller');
 		}
 		catch (\RuntimeException $exception) {
+			self::assertSame('boom', $exception->getMessage());
 		}
 		$logger->throwWhen = fn($exposure) => false;
 
@@ -990,6 +1093,7 @@ class ContextHoldoutTest extends TestCase {
 			self::fail('the logger error must reach the caller');
 		}
 		catch (\RuntimeException $exception) {
+			self::assertSame('boom', $exception->getMessage());
 		}
 
 		self::assertSame(1, $context->getPendingCount());
