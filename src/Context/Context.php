@@ -600,15 +600,7 @@ class Context {
 		}
 	}
 
-	private function assignmentMatches(Experiment $experiment, Assignment $assignment): bool {
-		if ($experiment->id !== $assignment->id ||
-			$experiment->unitType !== $assignment->unitType ||
-			$experiment->iteration !== $assignment->iteration ||
-			$experiment->fullOnVariant !== $assignment->fullOnVariant ||
-			$experiment->trafficSplit !== $assignment->trafficSplit) {
-			return false;
-		}
-
+	private function audienceMatches(Experiment $experiment, Assignment $assignment): bool {
 		if ($experiment->audience === null && $experiment->assignmentRules === null && $assignment->ruleKey === '') {
 			// Nothing here depends on attributes.
 			return true;
@@ -721,12 +713,12 @@ class Context {
 	/**
 	 * Whether the cached assignment pins variant 0 independently of the custom variant, so an unchanged read
 	 * can reuse it (and its exposure dedup) until a trigger rebuilds it: a strict audience exclusion (rebuilt
-	 * by assignmentMatches() when attributes change) or a missing unit (rebuilt once the unit is set). Full-on
+	 * by audienceMatches() when attributes change) or a missing unit (rebuilt once the unit is set). Full-on
 	 * and not-eligible assignments are NOT pinned here: like JS, they are only reused when the custom variant
 	 * equals the assigned variant, so a differing custom variant is detected as stale and re-exposed.
 	 */
 	private function customAssignmentIgnored(Assignment $assignment, $experiment): bool {
-		// A strict audience exclusion is never assigned; attribute changes are still re-checked by assignmentMatches().
+		// A strict audience exclusion is never assigned; attribute changes are still re-checked by audienceMatches().
 		if ($assignment->audienceMismatch && !empty($experiment->data->audienceStrict)) {
 			return true;
 		}
@@ -779,8 +771,13 @@ class Context {
 				|| $this->customAssignmentIgnored($assignment, $experiment)) {
 				// A matching rule wins over a custom assignment and a suppressed one is forced to control, so a
 				// custom mismatch is not staleness.
-				if ($this->assignmentMatches($experiment->data, $assignment)
-					// Short-circuits for data without holdouts, so their cached reads stay as cheap as before.
+				$experimentData = $experiment->data;
+				if ($experimentData->id === $assignment->id
+					&& $experimentData->unitType === $assignment->unitType
+					&& $experimentData->iteration === $assignment->iteration
+					&& $experimentData->fullOnVariant === $assignment->fullOnVariant
+					&& $experimentData->trafficSplit === $assignment->trafficSplit
+					&& $this->audienceMatches($experimentData, $assignment)
 					&& (!$this->hasHoldouts || $this->holdoutSetMatches($experimentName, $assignment))) {
 					// assignment up-to-date
 					return $assignment;
@@ -1350,12 +1347,41 @@ class Context {
 	 */
 	private function resolveVariableValue(string $key, $default, bool $exposeAssignments) {
 		$experiments = $this->indexVariables[$key] ?? [];
+		if (!$this->hasHoldouts && !$this->hasSwitchbacks) {
+			// Data that never had holdouts keeps main's loop: nothing is suppressed and no exposure has holdout arms.
+			foreach ($experiments as $experimentVariables) {
+				$assignment = $this->getAssignment($experimentVariables->data->name);
+
+				if ($assignment->variables !== null) {
+					if ($exposeAssignments && empty($assignment->exposed)) {
+						$this->queueExposure($assignment);
+					}
+
+					if (property_exists($assignment->variables, $key)
+						&& ($assignment->assigned || $assignment->overridden || $assignment->ruleOverride)) {
+						return $assignment->variables->{$key};
+					}
+				}
+			}
+
+			return $default;
+		}
+
 		// A held-out unit reads the control value, not $default, when nothing else wins. The first suppressed
 		// experiment is kept even if it lacks the key, so a later suppressed one can't win (JS).
 		$suppressedFallback = null;
+		// A throwing logger must not stop the walk: later candidates and their holdouts are still exposed (Java), and
+		// the first logger error is re-thrown once the winner is found. Data without holdouts or switchbacks took
+		// main's loop above.
+		$error = null;
 
 		foreach ($experiments as $experimentVariables) {
-			$assignment = $this->getAssignment($experimentVariables->data->name);
+			try {
+				$assignment = $this->getAssignment($experimentVariables->data->name);
+			}
+			catch (Throwable $exception) {
+				throw $error ?? $exception;
+			}
 
 			if ($assignment->variables !== null) {
 				// A switchback is exposed when the key reaches it assigned, overridden or rule-assigned, as java-sdk does, even
@@ -1364,13 +1390,24 @@ class Context {
 				if ($exposeAssignments && (!$assignment->exposed || $this->droppedHoldoutArms !== [])
 					&& (!$this->hasSwitchbacks || $assignment->switchback === null
 						|| $assignment->assigned || $assignment->overridden || $assignment->ruleOverride)) {
-					$this->triggerExposures($assignment);
+					try {
+						$this->triggerExposures($assignment);
+					}
+					catch (Throwable $exception) {
+						$error = $error ?? $exception;
+						if ($this->isClosed()) {
+							throw $error;
+						}
+					}
 				}
 
 				// property_exists (not isset) so a present key whose value is null is still returned,
 				// matching JS: a lower-id experiment that defines $key=null shadows a later competitor.
 				if (property_exists($assignment->variables, $key)
 					&& ($assignment->assigned || $assignment->overridden || $assignment->ruleOverride)) {
+					if ($error !== null) {
+						throw $error;
+					}
 					return $assignment->variables->{$key};
 				}
 
@@ -1379,6 +1416,10 @@ class Context {
 					$suppressedFallback = $assignment->variables;
 				}
 			}
+		}
+
+		if ($error !== null) {
+			throw $error;
 		}
 
 		if ($suppressedFallback !== null && property_exists($suppressedFallback, $key)) {
@@ -1482,7 +1523,13 @@ class Context {
 	public function getTreatment(string $experimentName): int {
 		$this->checkReady();
 		$assignment = $this->getAssignment($experimentName);
-		if (!$assignment->exposed || $this->droppedHoldoutArms !== []) {
+		if (!$this->hasHoldouts && $assignment->switchback === null) {
+			// Data that never had holdouts keeps main's read path: no assignment can carry holdout arms.
+			if (empty($assignment->exposed)) {
+				$this->queueExposure($assignment);
+			}
+		}
+		else if (!$assignment->exposed || $this->droppedHoldoutArms !== []) {
 			$this->triggerExposures($assignment);
 		}
 
@@ -1490,7 +1537,9 @@ class Context {
 	}
 
 	private function queueExposure(Assignment $assignment, ?int $exposedAt = null): void {
-		if (!empty($assignment->exposed)) {
+		// With holdouts, a logger can close the context between an experiment's exposure and its holdouts'; nothing
+		// queued after that could be published. Without holdouts this keeps main's (and JS's) queueing.
+		if (!empty($assignment->exposed) || ($this->closed && $this->hasHoldouts)) {
 			return;
 		}
 
@@ -2017,11 +2066,14 @@ class Context {
 		$oldHoldoutsById = $this->holdoutsById;
 		$oldExperimentHoldouts = $this->experimentHoldouts;
 		$oldSwitchbackSources = $this->switchbackSources;
+		$oldHasHoldouts = $this->hasHoldouts;
 		try {
 			$data = $this->dataProvider->getContextData();
 			$this->setData($data);
 		}
-		catch (Exception $exception) {
+		// Throwable, not Exception: a TypeError from a mistyped field must roll back too, since setData() has already
+		// cleared the indexes.
+		catch (Throwable $exception) {
 			$this->data = $oldData;
 			$this->index = $oldIndex;
 			$this->indexVariables = $oldIndexVariables;
@@ -2030,6 +2082,7 @@ class Context {
 			$this->holdoutsById = $oldHoldoutsById;
 			$this->experimentHoldouts = $oldExperimentHoldouts;
 			$this->switchbackSources = $oldSwitchbackSources;
+			$this->hasHoldouts = $oldHasHoldouts;
 			error_log(sprintf(
 				'ABsmartly SDK Error: Failed to refresh context, keeping existing data: %s in %s:%d',
 				$exception->getMessage(),

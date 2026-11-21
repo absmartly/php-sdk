@@ -79,6 +79,13 @@
   assigned by cluster and period (see Added). v1.0.3 served it as a sticky unit experiment on its `unitType` (or not at
   all without one), so units of a running switchback can change variant and publish one exposure per period, under the
   unit that serves the cluster, after the upgrade. Upgrade every SDK that serves a switchback experiment.
+- Ready and Refresh event logger data now includes an additive `holdouts: []` field even when no holdouts exist.
+- With holdouts in the data, an exposure logger error during `getVariableValue()` no longer stops the walk over
+  the experiments defining the key: later ones are still exposed and the first error is re-thrown afterwards,
+  as in the Java SDK. Once an event logger closes the context mid-read, whether or not it then throws, nothing
+  more is queued from that read (`getTreatment()` or `getVariableValue()`), including the experiment's holdout
+  exposures, since a closed context can't publish them. A context whose data has never covered an experiment
+  with a holdout keeps the previous exception and queueing behaviour.
 - The `timeout` option stays the connect timeout (`CURLOPT_CONNECTTIMEOUT_MS`) as in v1.0.3, bounding only
   connection establishment, not the whole request. An optional total budget for the entire request (including
   retries and back-off) is available opt-in via `HTTPClient::$totalTimeout`/`ReactHttpClient::$totalTimeout`
@@ -97,17 +104,21 @@
 - **`X-Agent` drops the `v` prefix.** The header is `absmartly-php-sdk/2.0.0` (old: `absmartly-php-sdk/v1.0.3`),
   the same `<name>/<version>` form as the other SDKs. The collector stores it as an opaque string.
 - `var_dump()` of a `ClientConfig` (its `__debugInfo()`) now also lists `applicationVersion`.
+- `refresh()` keeps the previous data and logs an `Error` event when fetching or installing the new data raises any
+  `Throwable`, not only an `Exception`, as the JS SDK does. A data provider that throws an `\Error`, or a mistyped
+  field that raises a `TypeError` while installing, no longer escapes `refresh()` (which also left the experiment
+  index cleared). Code that caught `\Error` around `refresh()` should listen for the `Error` event instead.
+- A `Refresh` event logger that throws (any `Throwable`) no longer undoes the refresh. The new data stays installed,
+  so assignments the handler read from it can't outlive it, and the error is written to the error log rather than
+  sent back to that logger as an `Error` event, as in JS, which swallows logger errors. v1.0.3 instead cleared the
+  data, marked the context failed and sent an `Error` event; code that relied on that must catch errors inside its
+  `Refresh` handler. A refresh that fails to load or install data still keeps the previous data and sends `Error`.
 
 ### Fixed
 
 - A batch the collector has accepted is cleared from the queue before the `Publish` event is logged, so an event
   logger that throws on `Publish` no longer causes those exposures and goals to be retained and sent again, and is
   not reported as a publish failure (`close()` still completes).
-- A `Refresh` event logger that throws (any `Throwable`) no longer undoes the refresh. The new data stays installed,
-  so assignments the handler read from it can't outlive it, and the error is written to the error log rather than
-  sent back to that logger as an `Error` event, as in JS, which swallows logger errors. v1.0.3 instead cleared the
-  data, marked the context failed and sent an `Error` event; code that relied on that must catch errors inside its
-  `Refresh` handler. A refresh that fails to load or install data still keeps the previous data and sends `Error`.
 - `createContextAsync()`/`createContextPending()` resolve a context that is ready and failed when the loaded data
   raises any `Throwable` (e.g. a `TypeError` from a mistyped field), not only an `Exception`.
 - `ReactHttpClient::$timeout` of 0 or less now means no per-attempt limit, as documented (it previously made every
@@ -156,9 +167,14 @@
   `getTreatment()`/`getVariableValue()` of an experiment it covers; peeks publish nothing. The arm is kept until
   the holdout's iteration changes, so a same-iteration seed or split edit does not re-randomize or re-expose, and a
   unit set later re-resolves a not-yet-exposed experiment. A held-out unit's `getVariableValue()` returns the
-  control value unless another experiment assigns the key. Holdouts without a usable `split`, ids that name no
-  holdout and unknown fields are ignored. `new ContextData($experiments)` keeps working (no holdouts), and payloads
-  without holdouts take the same cached read path as before.
+  control value unless another experiment assigns the key. Unlike JS, which coerces them, malformed holdouts are
+  ignored and their experiments assign normally: a holdout whose `id`, `iteration`, `seedHi` or `seedLo` is
+  missing, null or not a JSON integer within the int64 range (integral floats such as `11.0` count; numeric
+  strings such as `"11"` do not), whose `name` is not a string, or whose `split` is not a non-empty array of
+  numbers; and `holdoutIds` entries that are not such integers. Ids that name no holdout and unknown fields are
+  ignored too. `new ContextData($experiments)` keeps working (no holdouts). Payloads without holdouts keep
+  the previous exposure and variable lookup code. Cached assignment validation reads the experiment data once and
+  compares its fields inline, offsetting the additional holdout flag check on reads.
 - **Assignment rules.** An experiment's `assignmentRules` are evaluated in order, and the first rule whose
   environments and conditions match decides the variant: `assign` rules pick a fixed variant and `split` rules
   split traffic with their own percentages (such as `20/30/50`, which must sum to 100 within 0.01), hashing the
