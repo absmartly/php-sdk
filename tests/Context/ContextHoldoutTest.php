@@ -719,18 +719,32 @@ class ContextHoldoutTest extends TestCase {
 	}
 
 	public function testTriggerApplicableHoldoutExposuresNeverLiveResolvesAPinnedNullEntryForAnAlreadyExposedAssignment(): void {
-		$experiment = self::coveredBy(self::experiment(1, 'exp_a_mutant_pinned_null', 'user_id', 1), 11);
+		$experiment = self::coveredBy(self::experiment(1, 'exp_a_mutant_pinned_null', 'user_id', 1), 12);
 		$experiment->variants[1]->config = '{"my_var":"value_from_variant"}';
-		$context = $this->createContext(self::data([self::holdout(11, 'holdout_a_mutant_pinned_null', self::HOLDOUT_A_SEED, 'user_id')],
-			$experiment), []);
+		$context = $this->createContext(self::data([
+			self::holdout(11, 'holdout_dropped_arm', self::HOLDOUT_B_SEED),
+			self::holdout(12, 'holdout_a_mutant_pinned_null', self::HOLDOUT_A_SEED, 'user_id'),
+		], $experiment, self::coveredBy(self::experiment(2, 'exp_dropped_arm'), 11)));
 
+		self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_dropped_arm'));
 		self::assertSame(1, $context->getTreatment('exp_a_mutant_pinned_null'));
+		self::assertSame(3, $context->getPendingCount());
+
+		// The cap drops exp_dropped_arm and its holdout arm, so exposed reads take the retry path from here on.
+		$context->maxRetainedEvents = 1;
+		$this->eventHandler->prerun = static function (): void {
+			throw new \RuntimeException('collector down');
+		};
+		$context->publish();
+		$this->eventHandler->prerun = null;
 		self::assertSame(1, $context->getPendingCount());
 
 		$context->setUnit('user_id', self::UID);
 
+		self::assertSame(1, $context->getTreatment('exp_a_mutant_pinned_null'));
 		self::assertSame('value_from_variant', $context->getVariableValue('my_var', 'default'));
 		self::assertSame(1, $context->getPendingCount());
+		$this->assertPublished($context, self::exposure(1, 'exp_a_mutant_pinned_null', 1, true, false, true, false, false, false, 'user_id'));
 	}
 
 	public function testSetUnitEvictsAssignmentWithMultipleHoldoutsDeclaringDifferentUnitTypes(): void {
@@ -1666,15 +1680,14 @@ class ContextHoldoutTest extends TestCase {
 
 	public function testVariablePathHoldoutExposureIsPublishedWithoutAnyOtherEvent(): void {
 		$suppressed = self::coveredBy(self::experiment(1, 'exp_var_flush_suppressed'), 11);
+		$suppressed->variants[0]->config = '{"flush_key":"control"}';
 		$suppressed->variants[1]->config = '{"flush_key":"from_suppressed"}';
-		$assigned = self::experiment(2, 'exp_var_flush_assigned');
-		$assigned->variants[1]->config = '{"flush_key":"from_assigned"}';
-		$context = $this->createContext(self::data([self::holdout(11, 'holdout_flush', self::HOLDOUT_A_SEED)], $suppressed, $assigned));
+		$context = $this->createContext(self::data([self::holdout(11, 'holdout_flush', self::HOLDOUT_A_SEED)], $suppressed));
 
-		self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_var_flush_assigned'));
-		self::assertSame('from_assigned', $context->getVariableValue('flush_key', 'default'));
-		$this->assertPublished($context, self::exposure(2, 'exp_var_flush_assigned', self::NORMAL_VARIANT),
-			self::holdoutExposure(11, 'holdout_flush', 0));
+		self::assertSame(0, $context->getPendingCount());
+		self::assertSame('control', $context->getVariableValue('flush_key', 'default'));
+		self::assertSame(1, $context->getPendingCount());
+		$this->assertPublished($context, self::holdoutExposure(11, 'holdout_flush', 0));
 	}
 
 	public function testSetDataDoesNotMutateCallerSuppliedHoldoutIdsArray(): void {
