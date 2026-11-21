@@ -87,6 +87,9 @@ class Context {
 	private array $inFlightExposures = [];
 	/** A close() from the handler during an early batch, finished by the outer publish once nothing is left queued. */
 	private bool $closeDeferred = false;
+	private bool $switchbackPublishing = false;
+	private bool $mainBatchPublishing = false;
+	private bool $switchbackPublishFailed = false;
 	private array $achievements = [];
 
 	private array $attributes = [];
@@ -668,11 +671,15 @@ class Context {
 			return null;
 		}
 
-		if (!array_key_exists($experiment->name, $this->parsedRules)) {
-			$this->parsedRules[$experiment->name] = $this->audienceMatcher->parseRules($experiment->assignmentRules);
+		if (($this->index[$experiment->name]->data ?? null) !== $experiment) {
+			$rules = $this->audienceMatcher->parseRules($experiment->assignmentRules);
 		}
-
-		$rules = $this->parsedRules[$experiment->name];
+		else {
+			if (!array_key_exists($experiment->name, $this->parsedRules)) {
+				$this->parsedRules[$experiment->name] = $this->audienceMatcher->parseRules($experiment->assignmentRules);
+			}
+			$rules = $this->parsedRules[$experiment->name];
+		}
 		if (empty($rules)) {
 			return null;
 		}
@@ -955,6 +962,13 @@ class Context {
 			$assignment->variables = $experiment->variables[$assignment->variant];
 		}
 
+		$nested = $this->assignmentCache[$cacheKey] ?? null;
+		if ($nested !== null && $nested !== $cached && $nested->switchback !== null
+			&& ($this->switchbackSources[$experimentName]->generation ?? null) === $sources->generation
+			&& $this->switchbackAssignmentCurrent($experimentName, $nested, $experiment)) {
+			$nested->switchback->readAt = $now;
+			return $nested;
+		}
 		$assignment->attrsSeq = $this->attrsSeq;
 		// A refresh from a callback in the resolution started a new epoch: this read finishes on its snapshot, but its
 		// slot must not take the place of the refreshed experiment's.
@@ -1417,7 +1431,7 @@ class Context {
 				// A switchback is exposed when the key reaches it assigned, overridden or rule-assigned, as java-sdk does, even
 				// if its arm lacks the key (a control arm with no config must still be recorded); a strict mismatch records
 				// nothing. Unit experiments keep the JS behaviour of exposing every candidate.
-				if ($exposeAssignments && (!$assignment->exposed || $this->droppedHoldoutArms !== [])
+				if ($exposeAssignments && !$this->closed && (!$assignment->exposed || $this->droppedHoldoutArms !== [])
 					&& (!$this->hasSwitchbacks || $assignment->switchback === null
 						|| $assignment->assigned || $assignment->overridden || $assignment->ruleOverride)) {
 					try {
@@ -1772,11 +1786,45 @@ class Context {
 	}
 
 	public function flush(): void {
-		$this->flushEvents(false);
-		if ($this->closeDeferred && $this->inFlightExposures === [] && $this->pendingCount === 0) {
-			$this->closeDeferred = false;
-			$this->logEvent(ContextEventLoggerEvent::Close, null);
-			$this->closed = true;
+		if (!$this->hasSwitchbacks) {
+			$this->flushEvents(false);
+			return;
+		}
+		$this->flushSwitchbackEvents(false);
+	}
+
+	/** A callback may queue work or request close, but the active publisher owns the drain and its outcome. */
+	private function flushSwitchbackEvents(bool $rethrow): void {
+		if ($this->switchbackPublishing) {
+			if ($this->inFlightExposures !== [] && !$this->mainBatchPublishing) {
+				$this->flushEvents($rethrow);
+			}
+			return;
+		}
+		$this->switchbackPublishing = true;
+		try {
+			do {
+				$this->switchbackPublishFailed = false;
+				$this->flushEvents($rethrow);
+				if ($this->switchbackPublishFailed) {
+					return;
+				}
+			} while ($this->closeDeferred && $this->pendingCount !== 0);
+			if ($this->closeDeferred && $this->pendingCount === 0 && !$this->closed) {
+				// Seal before notifying Close: callbacks cannot accept work that would have no publisher.
+				$this->closed = true;
+				try {
+					$this->logEvent(ContextEventLoggerEvent::Close, null);
+				}
+				catch (Throwable $exception) {
+					$this->closed = false;
+					throw $exception;
+				}
+				$this->closeDeferred = false;
+			}
+		}
+		finally {
+			$this->switchbackPublishing = false;
 		}
 	}
 
@@ -1823,6 +1871,7 @@ class Context {
 			return;
 		}
 
+		$this->mainBatchPublishing = true;
 		try {
 			$this->eventHandler->publish($event);
 		}
@@ -1830,26 +1879,41 @@ class Context {
 			$this->publishFailed($exception, $rethrow);
 			return;
 		}
+		finally {
+			$this->mainBatchPublishing = false;
+		}
 
-		// The collector has accepted the batch: clear it before notifying the event logger so a throwing logger
-		// can never cause these events to be retained and sent again.
-		if ($this->inFlightExposures === []) {
-			$this->exposures = [];
-			$this->exposureAssignments = [];
+		// Remove only the submitted snapshot: callbacks may have queued more work during this send.
+		if ($this->hasSwitchbacks) {
+			$sent = [];
+			foreach ($event->exposures as $exposure) {
+				$sent[spl_object_id($exposure)] = true;
+			}
+			$this->removeExposures(static function ($exposure) use ($sent) {
+				return isset($sent[spl_object_id($exposure)]);
+			});
+			$goals = [];
+			foreach ($event->goals as $goal) {
+				$goals[spl_object_id($goal)] = true;
+			}
+			$this->achievements = array_values(array_filter($this->achievements, static function ($goal) use ($goals) {
+				return !isset($goals[spl_object_id($goal)]);
+			}));
+			$this->pendingCount = count($this->exposures) + count($this->achievements);
 		}
 		else {
-			$this->removeExposures(function ($exposure) {
-				return !isset($this->inFlightExposures[spl_object_id($exposure)]);
-			});
+			$this->exposures = [];
+			$this->exposureAssignments = [];
+			$this->achievements = [];
+			$this->pendingCount = 0;
 		}
-		$this->achievements = [];
-		$this->pendingCount = count($this->exposures);
 
 		$this->logPublished($event);
 	}
 
 	/** Keeps the queued events for a retry, capped, and re-throws when $rethrow is true (close()). */
 	private function publishFailed(Exception $exception, bool $rethrow): void {
+		$this->switchbackPublishFailed = true;
 		error_log(sprintf(
 			'ABsmartly SDK Error: Failed to publish %d exposures and %d goals: %s. Events preserved for retry.',
 			count($this->exposures) - count($this->inFlightExposures),
@@ -2154,12 +2218,23 @@ class Context {
 	 * Publishes any queued events and closes the context. A failed final publish is re-thrown and the context is
 	 * left open (isClosed() stays false) with its events still queued, so calling close() again retries publishing
 	 * them. The Close event is emitted only once the close succeeds. Called from the event handler while it sends an
-	 * early switchback batch, close() publishes the other queued events but leaves the context open, since that batch
-	 * may still fail and must stay retryable: an outer close() finishes it, and an outer publish() does once it leaves
-	 * nothing queued (after a failure, the next publish() or close() that does).
+	 * early switchback batch, close() records the request before any nested drain. Only the active publisher completes
+	 * it, after draining accepted work; a failure leaves the request and unsent events retryable.
 	 */
 	public function close(): void {
 		if ($this->isClosed()) {
+			return;
+		}
+
+		if ($this->hasSwitchbacks) {
+			$this->closeDeferred = true;
+			$this->finalizing = true;
+			try {
+				$this->flushSwitchbackEvents(true);
+			}
+			finally {
+				$this->finalizing = false;
+			}
 			return;
 		}
 
@@ -2172,11 +2247,6 @@ class Context {
 		finally {
 			$this->finalizing = false;
 		}
-		if ($this->inFlightExposures !== []) {
-			$this->closeDeferred = true;
-			return;
-		}
-		$this->closeDeferred = false;
 
 		$this->logEvent(ContextEventLoggerEvent::Close, null);
 		$this->closed = true;
