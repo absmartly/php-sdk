@@ -1041,9 +1041,10 @@ class Context {
 		// the first logger error is re-thrown once the winner is found. Data without holdouts took main's loop above.
 
 		foreach ($experiments as $experimentVariables) {
-			if (!isset($this->index[$experimentVariables->data->name])) {
+			if (!isset($this->index[$experimentVariables->data->name])
+				&& !array_key_exists($experimentVariables->data->name, $this->overrides)) {
 				// A logger's refresh removed this candidate mid-walk: a cached assignment for it must not supply a value
-				// or a holdout exposure.
+				// or a holdout exposure. An override still applies, as on main and in JS.
 				continue;
 			}
 			try {

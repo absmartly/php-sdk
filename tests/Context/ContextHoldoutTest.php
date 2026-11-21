@@ -1501,6 +1501,47 @@ class ContextHoldoutTest extends TestCase {
 			self::holdoutExposure(11, 'holdout_a', 0));
 	}
 
+	// An overridden candidate a mid-walk refresh removed keeps its override, as on main and in JS: it supplies the
+	// override's value, its own (overridden) exposure and its holdout's exposure.
+	public function testOverriddenCandidateRemovedByAMidWalkRefreshKeepsItsOverride(): void {
+		$logger = self::refreshingLogger(1);
+		[$first, $second] = self::closeCandidates('refresh_override');
+		$context = $this->createContext(self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)], $first,
+			self::coveredBy($second, 11)), [self::UNIT_TYPE => self::UID], ['exp_close_second_refresh_override' => 1], [],
+			$logger);
+		self::assertSame(1, $context->peekTreatment('exp_close_second_refresh_override'));
+		[$first] = self::closeCandidates('refresh_override');
+		$this->dataProvider->next = self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)], $first);
+		$logger->next = $this->dataProvider->next;
+
+		self::assertSame('from_second', $context->getVariableValue('refresh_override', 'default'));
+		$this->assertPublished($context, self::exposure(1, 'exp_close_first_refresh_override', self::NORMAL_VARIANT),
+			self::exposure(2, 'exp_close_second_refresh_override', 1, false, true),
+			self::holdoutExposure(11, 'holdout_a', 0));
+	}
+
+	// Skipping a removed candidate moves on to the next one rather than ending the walk: a later held-out candidate
+	// that stayed installed still supplies its control value and holdout exposure.
+	public function testWalkContinuesPastACandidateRemovedByAMidWalkRefresh(): void {
+		$logger = self::refreshingLogger(1);
+		[$first, $second] = self::closeCandidates('refresh_skip');
+		$second->variants[0]->config = '{"refresh_skip":"removed-control"}';
+		$third = self::coveredBy(self::experiment(3, 'exp_close_third_refresh_skip'), 11);
+		$third->variants[0]->config = '{"refresh_skip":"ctl3"}';
+		$context = $this->createContext(self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)], $first,
+			self::coveredBy($second, 11), $third), [self::UNIT_TYPE => self::UID], [], [], $logger);
+		self::assertSame(0, $context->peekTreatment('exp_close_second_refresh_skip'));
+		[$first] = self::closeCandidates('refresh_skip');
+		$third = self::coveredBy(self::experiment(3, 'exp_close_third_refresh_skip'), 11);
+		$third->variants[0]->config = '{"refresh_skip":"ctl3"}';
+		$this->dataProvider->next = self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)], $first, $third);
+		$logger->next = $this->dataProvider->next;
+
+		self::assertSame('ctl3', $context->getVariableValue('refresh_skip', 'default'));
+		$this->assertPublished($context, self::exposure(1, 'exp_close_first_refresh_skip', self::NORMAL_VARIANT),
+			self::holdoutExposure(11, 'holdout_a', 0));
+	}
+
 	// A candidate the refresh removed takes no part in the rest of the walk, even when a peek cached its suppressed
 	// assignment: it neither supplies its control value nor queues its holdout exposure.
 	public function testCandidateRemovedByAMidWalkRefreshIsSkippedEvenWhenItsSuppressedAssignmentIsCached(): void {
