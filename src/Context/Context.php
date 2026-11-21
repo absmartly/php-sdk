@@ -998,7 +998,6 @@ class Context {
 			// Data that never had holdouts keeps main's loop: nothing is suppressed and no exposure has holdout arms.
 			// If a logger refreshes in the first coverage, the unvisited candidates (only those) take the
 			// holdout-aware walk below, carrying any error that logger threw.
-			$handedOff = false;
 			foreach ($experiments as $i => $experimentVariables) {
 				$assignment = $this->getAssignment($experimentVariables->data->name);
 
@@ -1026,12 +1025,11 @@ class Context {
 
 				if ($this->hasHoldouts) {
 					$experiments = array_slice($experiments, $i + 1);
-					$handedOff = true;
 					break;
 				}
 			}
 
-			if (!$handedOff) {
+			if (!$this->hasHoldouts) {
 				return $default;
 			}
 		}
@@ -1043,6 +1041,11 @@ class Context {
 		// the first logger error is re-thrown once the winner is found. Data without holdouts took main's loop above.
 
 		foreach ($experiments as $experimentVariables) {
+			if (!isset($this->index[$experimentVariables->data->name])) {
+				// A logger's refresh removed this candidate mid-walk: a cached assignment for it must not supply a value
+				// or a holdout exposure.
+				continue;
+			}
 			try {
 				$assignment = $this->getAssignment($experimentVariables->data->name);
 			}

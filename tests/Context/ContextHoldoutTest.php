@@ -1494,9 +1494,29 @@ class ContextHoldoutTest extends TestCase {
 		$logger->next = $this->dataProvider->next;
 
 		self::assertSame('control', $context->getVariableValue('refresh_epoch', 'default'));
-		self::assertSame(0, $context->getTreatment('exp_close_second_refresh_epoch'));
+		// The variable read itself queued the holdout exposure; check before any other read can queue it.
+		self::assertSame(2, $context->getPendingCount());
+		self::assertSame(0, $context->peekTreatment('exp_close_second_refresh_epoch'));
 		$this->assertPublished($context, self::exposure(1, 'exp_close_first_refresh_epoch', self::NORMAL_VARIANT),
 			self::holdoutExposure(11, 'holdout_a', 0));
+	}
+
+	// A candidate the refresh removed takes no part in the rest of the walk, even when a peek cached its suppressed
+	// assignment: it neither supplies its control value nor queues its holdout exposure.
+	public function testCandidateRemovedByAMidWalkRefreshIsSkippedEvenWhenItsSuppressedAssignmentIsCached(): void {
+		$logger = self::refreshingLogger(1);
+		[$first, $second] = self::closeCandidates('refresh_removed');
+		$second->variants[0]->config = '{"refresh_removed":"removed-control"}';
+		$context = $this->createContext(self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)], $first,
+			self::coveredBy($second, 11)), [self::UNIT_TYPE => self::UID], [], [], $logger);
+		self::assertSame(0, $context->peekTreatment('exp_close_second_refresh_removed'));
+		[$first] = self::closeCandidates('refresh_removed');
+		$this->dataProvider->next = self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)], $first);
+		$logger->next = $this->dataProvider->next;
+
+		self::assertSame('default', $context->getVariableValue('refresh_removed', 'default'));
+		self::assertSame(['exp_close_first_refresh_removed'], $context->getExperiments());
+		$this->assertPublished($context, self::exposure(1, 'exp_close_first_refresh_removed', self::NORMAL_VARIANT));
 	}
 
 	/** A logger that refreshes to $next on experiment $id's exposure, then throws if $throw. */
