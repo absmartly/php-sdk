@@ -2729,4 +2729,30 @@ class ContextSwitchbackTest extends TestCase {
 		self::assertSame(1, $this->closeEventCount());
 		self::assertSame([[[self::$UNIT_TYPE], ['exp_sb'], 0]], $this->publishedBatches());
 	}
+
+	/**
+	 * With no holdouts, a candidate the mid-walk refresh removed is skipped even though an earlier peek cached it: a
+	 * refresh that installs the first switchback hands off to the walk that skips it, so it is not exposed again.
+	 */
+	public function testAVariableWalkHandOffSkipsACandidateTheRefreshRemoved(): void {
+		$variants = [(object) ['name' => 'A', 'config' => '{"k":1}'], (object) ['name' => 'B', 'config' => '{"k":2}']];
+		$first = self::unitExperiment(2, 1, 'exp_a');
+		$first->variants = $variants;
+		$first->audience = self::STRICT_GOLD_AUDIENCE;
+		$first->audienceStrict = true;
+		$removed = self::unitExperiment(2, 2, 'exp_b');
+		$removed->variants = $variants;
+		$removed->audience = self::STRICT_GOLD_AUDIENCE;
+		$removed->audienceStrict = true;
+		$last = self::unitExperiment(2, 3, 'exp_c');
+		$last->variants = $variants;
+		$last->fullOnVariant = 1;
+		$context = $this->createContext(self::dataOf($first, $removed, $last));
+		$this->now = self::$ANCHOR + 10;
+		$context->peekTreatment('exp_b');
+		$this->dataProvider->next = self::dataOf($first, $last, self::switchback(2, null, 4, 'exp_sb'));
+		$this->setLogger($context, self::refreshOnFirstExposure());
+		self::assertSame(2, $context->getVariableValue('k', -1));
+		self::assertSame(['exp_a', 'exp_c'], array_column($this->publishExposures($context), 1));
+	}
 }
