@@ -705,8 +705,7 @@ class Context {
 					&& $experimentData->iteration === $assignment->iteration
 					&& $experimentData->fullOnVariant === $assignment->fullOnVariant
 					&& $experimentData->trafficSplit === $assignment->trafficSplit
-					&& $this->audienceMatches($experiment->data, $assignment)
-					// Do not inspect holdout sets for data that never had holdouts.
+					&& $this->audienceMatches($experimentData, $assignment)
 					&& (!$this->hasHoldouts || $this->holdoutSetMatches($experimentName, $assignment))) {
 					// assignment up-to-date
 					return $assignment;
@@ -1026,7 +1025,6 @@ class Context {
 				$assignment = $this->getAssignment($experimentVariables->data->name);
 			}
 			catch (Throwable $exception) {
-				// A later candidate's assignment failure must not hide the logger error deferred before it.
 				throw $error ?? $exception;
 			}
 
@@ -1037,6 +1035,9 @@ class Context {
 					}
 					catch (Throwable $exception) {
 						$error = $error ?? $exception;
+						if ($this->isClosed()) {
+							throw $error;
+						}
 					}
 				}
 
@@ -1570,6 +1571,7 @@ class Context {
 		$oldParsedRules = $this->parsedRules;
 		$oldHoldoutsById = $this->holdoutsById;
 		$oldExperimentHoldouts = $this->experimentHoldouts;
+		$oldHasHoldouts = $this->hasHoldouts;
 		try {
 			$data = $this->dataProvider->getContextData();
 			$this->setData($data);
@@ -1584,6 +1586,7 @@ class Context {
 			$this->parsedRules = $oldParsedRules;
 			$this->holdoutsById = $oldHoldoutsById;
 			$this->experimentHoldouts = $oldExperimentHoldouts;
+			$this->hasHoldouts = $oldHasHoldouts;
 			error_log(sprintf(
 				'ABsmartly SDK Error: Failed to refresh context, keeping existing data: %s in %s:%d',
 				$exception->getMessage(),

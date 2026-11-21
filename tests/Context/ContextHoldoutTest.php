@@ -1228,8 +1228,65 @@ class ContextHoldoutTest extends TestCase {
 		self::assertSame(3, $context->getPendingCount());
 	}
 
-	// holdoutIds that name only unknown holdouts keep the context on the no-holdout read path too.
-	public function testUnknownHoldoutIdsKeepTheNoHoldoutReadPath(): void {
+	/** @dataProvider rejectedCoverageInstalls */
+	public function testRejectedRefreshPreservesThePreviousVariableExposureBehavior(bool $hadCoverage, bool $typeError): void {
+		$logger = new ThrowingExposureLogger();
+		$logger->throwWhen = fn($exposure) => $exposure->id === 1;
+		$first = self::experiment(1, 'exp_refresh_first');
+		$first->variants[0]->config = '{"refresh_key":"control"}';
+		$first->variants[1]->config = '{"other":"x"}';
+		$second = self::withVariables(self::experiment(2, 'exp_refresh_second'), 'refresh_key');
+		$oldData = self::data([], $first, $second);
+		$holdout = self::holdout(11, 'holdout_refresh', self::HOLDOUT_A_SEED);
+		$covered = self::coveredBy(self::experiment(3, 'exp_refresh_covered'), 11);
+		$context = $this->createContext($hadCoverage ? self::data([$holdout], $covered) : $oldData,
+			[self::UNIT_TYPE => self::UID], [], [], $logger);
+		if ($hadCoverage) {
+			$this->refresh($context, $oldData);
+		}
+
+		$malformed = self::experiment(4, 'exp_refresh_malformed');
+		if ($typeError) {
+			$malformed->variants = null;
+		}
+		else {
+			$malformed->audience = '{';
+		}
+		$logger->clear();
+		$this->refresh($context, self::data([$holdout], $covered, $malformed));
+
+		self::assertSame($oldData, $context->getContextData());
+		self::assertTrue($context->isReady());
+		self::assertFalse($context->isFailed());
+		self::assertCount(1, $logger->events);
+		self::assertSame(ContextEventLoggerEvent::Error, $logger->events[0]->getEvent());
+		self::assertInstanceOf($typeError ? \TypeError::class : \JsonException::class, $logger->events[0]->getData());
+		try {
+			$context->getVariableValue('refresh_key', 'default');
+			self::fail('the logger error must reach the caller');
+		}
+		catch (\RuntimeException $exception) {
+			self::assertSame('boom', $exception->getMessage());
+		}
+
+		$expected = [self::exposure(1, 'exp_refresh_first', self::NORMAL_VARIANT)];
+		if ($hadCoverage) {
+			$expected[] = self::exposure(2, 'exp_refresh_second', self::NORMAL_VARIANT);
+		}
+		self::assertSame(count($expected), $context->getPendingCount());
+		$this->assertPublished($context, ...$expected);
+	}
+
+	public static function rejectedCoverageInstalls(): array {
+		return [
+			'first coverage rejected by JsonException' => [false, false],
+			'first coverage rejected by TypeError' => [false, true],
+			'past coverage retained after JsonException' => [true, false],
+			'past coverage retained after TypeError' => [true, true],
+		];
+	}
+
+	public function testUnknownHoldoutIdsDoNotMarkTheContextAsHavingHoldouts(): void {
 		$experiment = self::coveredBy(self::experiment(1, 'exp_unknown_fast_path'), 99);
 		$experiment->variants[1]->config = '{"unknown_fast_path":"treatment"}';
 		$context = $this->createContext(self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)], $experiment));
@@ -1268,6 +1325,60 @@ class ContextHoldoutTest extends TestCase {
 		}
 
 		self::assertSame(3, $context->getPendingCount());
+	}
+
+	/** @dataProvider loggerCloseOutcomes */
+	public function testVariableWalkStopsOnlyAfterASuccessfulLoggerClose(int $closeAt, bool $closeSucceeds): void {
+		$logger = new ThrowingExposureLogger();
+		$logger->throwWhen = function($exposure) use (&$context, $closeAt) {
+			if ($exposure->id === $closeAt) {
+				$context->close();
+			}
+			if ($exposure->id <= $closeAt) {
+				throw new \RuntimeException('logger ' . $exposure->id);
+			}
+			return false;
+		};
+		$first = self::experiment(1, 'exp_close_first');
+		$first->variants[0]->config = '{"close_key":"control"}';
+		$first->variants[1]->config = '{"other":"x"}';
+		$second = self::experiment(2, 'exp_close_second');
+		$second->variants[0]->config = '{"close_key":"control"}';
+		$second->variants[1]->config = '{"other":"x"}';
+		$third = self::withVariables(self::experiment(3, 'exp_close_third'), 'close_key');
+		$context = $this->createContext(self::data([self::holdout(11, 'holdout_close', self::HOLDOUT_A_SEED)],
+			$first, $second, $third, self::coveredBy(self::experiment(4, 'exp_close_covered'), 11)),
+			[self::UNIT_TYPE => self::UID], [], [], $logger);
+		if (!$closeSucceeds) {
+			$this->eventHandler->prerun = static function() {
+				throw new \RuntimeException('publish failed');
+			};
+		}
+
+		try {
+			$context->getVariableValue('close_key', 'default');
+			self::fail('the first error must reach the caller');
+		}
+		catch (\RuntimeException $exception) {
+			self::assertSame($closeSucceeds || $closeAt > 1 ? 'logger 1' : 'publish failed', $exception->getMessage());
+		}
+
+		self::assertSame($closeSucceeds, $context->isClosed());
+		self::assertSame($closeSucceeds ? 0 : 3, $context->getPendingCount());
+		$this->eventHandler->prerun = null;
+		$context->close();
+		self::assertSame(0, $context->getPendingCount());
+		self::assertCount(1, $this->eventHandler->submitted);
+		self::assertSame($closeSucceeds ? range(1, $closeAt) : [1, 2, 3],
+			array_column($this->eventHandler->submitted[0]->exposures, 'id'));
+	}
+
+	public static function loggerCloseOutcomes(): array {
+		return [
+			'first logger closes' => [1, true],
+			'later logger closes after an earlier error' => [2, true],
+			'failed close keeps walking' => [1, false],
+		];
 	}
 
 	// A later candidate whose assignment itself fails must not replace the first deferred logger error.

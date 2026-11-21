@@ -1201,6 +1201,32 @@ class ContextTest extends TestCase {
 		self::assertSame(ContextEventLoggerEvent::Error, $eventLogger->events[0]->getEvent());
 	}
 
+	public function testRefreshReportsProviderErrorAndKeepsPreviousDataAvailable(): void {
+		$logger = new MockContextEventLoggerProxy();
+		$context = $this->createReadyContext('context.json', true, $logger);
+		$oldData = $context->getContextData();
+		$oldExperiments = $context->getExperiments();
+		$error = new \Error('provider failed');
+		$this->dataProvider->prerun = static function() use ($error) {
+			throw $error;
+		};
+		$logger->clear();
+
+		$context->refresh();
+
+		self::assertSame($oldData, $context->getContextData());
+		self::assertSame($oldExperiments, $context->getExperiments());
+		self::assertTrue($context->isReady());
+		self::assertFalse($context->isFailed());
+		self::assertSame(0, $context->getPendingCount());
+		self::assertCount(1, $logger->events);
+		self::assertSame(ContextEventLoggerEvent::Error, $logger->events[0]->getEvent());
+		self::assertSame($error, $logger->events[0]->getData());
+		self::assertSame('large', $context->getVariableValue('banner.size', 'default'));
+		self::assertSame(1, $context->getTreatment('exp_test_ab'));
+		self::assertSame(2, $context->getTreatment('exp_test_fullon'));
+	}
+
 	public function testRefreshKeepsAssignmentCacheWhenNotChanged(): void {
 		$context = $this->createReadyContext();
 		self::assertTrue($context->isReady());
