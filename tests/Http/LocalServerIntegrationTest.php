@@ -151,6 +151,40 @@ class LocalServerIntegrationTest extends TestCase {
 		$sdk->close();
 	}
 
+	public function testSwitchbackPublishesOriginalUnitsBeforeCurrentUnits(): void {
+		$data = json_decode(file_get_contents(__DIR__ . '/../Fixtures/json/switchback_context.json'), false, 512, JSON_THROW_ON_ERROR);
+		$data->experiments[0]->switchbackStartAt = 0;
+		file_put_contents($this->contextFile, json_encode($data, JSON_THROW_ON_ERROR));
+		$clientConfig = new ClientConfig("http://127.0.0.1:{$this->port}", 'test-api-key', 'website', 'dev');
+		$sdk = new SDK(new Config(new Client($clientConfig, new ReactHttpClient())));
+
+		$contextConfig = new ContextConfig();
+		$contextConfig->setUnit('store_id', 'store-1');
+		$contextConfig->setAttribute('store', ['key' => 'porto']);
+		$context = $sdk->createContext($contextConfig);
+		self::assertTrue($context->isReady());
+		$context->getTreatment('exp_test_switchback');
+		$context->setUnit('device_id', 'device-1');
+		$context->track('payment');
+		$context->publish();
+
+		$puts = array_values(array_filter($this->recordedRequests(), static fn($r) => $r['method'] === 'PUT'));
+		self::assertCount(2, $puts);
+		$early = json_decode($puts[0]['body'], true, 512, JSON_THROW_ON_ERROR);
+		$later = json_decode($puts[1]['body'], true, 512, JSON_THROW_ON_ERROR);
+		$store = ['type' => 'store_id', 'uid' => SDK\Utils::hashUnit('store-1')];
+		$device = ['type' => 'device_id', 'uid' => SDK\Utils::hashUnit('device-1')];
+		self::assertSame([$store], $early['units']);
+		self::assertSame(['exp_test_switchback'], array_column($early['exposures'] ?? [], 'name'));
+		self::assertSame('store_id', $early['exposures'][0]['unit']);
+		self::assertEmpty($early['goals'] ?? []);
+		self::assertSame([$store, $device], $later['units']);
+		self::assertSame(['payment'], array_column($later['goals'] ?? [], 'name'));
+		self::assertEmpty($later['exposures'] ?? []);
+
+		$sdk->close();
+	}
+
 	// A held-out unit reads control and the collector receives the holdout's exposure in place of the experiment's.
 	public function testRealGetAndPutContextPublishesTheHoldoutExposureOfAHeldOutUnit(): void {
 		file_put_contents($this->contextFile, (string) file_get_contents(__DIR__ . '/../Fixtures/json/holdouts_context.json'));

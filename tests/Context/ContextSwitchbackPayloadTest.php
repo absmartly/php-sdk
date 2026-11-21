@@ -128,7 +128,7 @@ class ContextSwitchbackPayloadTest extends TestCase {
 		self::assertNull($restored->switchbackClusters);
 	}
 
-	/** The java-sdk fixture through the client's own decode: the store unit serves its raw cluster key. */
+	/** The java-sdk fixture serves through the client's synchronous and asynchronous decode paths. */
 	public function testTheJavaFixtureServesThroughTheClientDecode(): void {
 		$json = file_get_contents(__DIR__ . '/../Fixtures/json/switchback_context.json');
 		$client = new Client(new ClientConfig('endpoint', 'key', 'app', 'env'), self::httpClient($json));
