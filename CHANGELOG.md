@@ -75,13 +75,17 @@
 
 ### Changed
 
+- **Switchback experiments are served as switchbacks.** An experiment with `randomizationType: "switchback"` is now
+  assigned by cluster and period (see Added). v1.0.3 served it as a sticky unit experiment on its `unitType` (or not at
+  all without one), so units of a running switchback can change variant and publish one exposure per period, under the
+  unit that serves the cluster, after the upgrade. Upgrade every SDK that serves a switchback experiment.
 - Ready and Refresh event logger data now includes an additive `holdouts: []` field even when no holdouts exist.
 - With holdouts in the data, an exposure logger error during `getVariableValue()` no longer stops the walk over
   the experiments defining the key: later ones are still exposed and the first error is re-thrown afterwards,
   as in the Java SDK. Once an event logger closes the context mid-read, whether or not it then throws, nothing
   more is queued from that read (`getTreatment()` or `getVariableValue()`), including the experiment's holdout
   exposures, since a closed context can't publish them. A context whose data has never covered an experiment
-  with a holdout keeps the previous exception and queueing behaviour.
+  with a holdout or a switchback keeps the previous exception and queueing behaviour.
 - If an event logger refreshes the context during `getVariableValue()`, the rest of the lookup uses the refreshed
   data. An experiment the refresh removed is skipped unless it is overridden, even when an earlier peek cached its
   held-out assignment, so it supplies no control value and no holdout exposure. Unlike JS, which still serves the
@@ -132,6 +136,32 @@
 
 ### Added
 
+- **Switchback experiments** (R33, cluster-defined), as in java-sdk (java-sdk#15, on java-sdk main and in its first
+  release after 1.9.0) and the Collector. An experiment with `randomizationType: "switchback"` is randomized over
+  clusters and time: `Experiment` gains `$randomizationType`, `$switchbackClusters` (unit type => attribute path, in
+  the served order, which is kept), `$switchbackClusterValues`, `$switchbackStartAt`, `$switchbackPeriodMs`,
+  `$switchbackCarryoverDurationMs`, `$switchbackBurnInDurationMs`, `$switchbackBurnOutDurationMs`,
+  `$switchbackDesignType` and `$switchbackEstimand`, all optional and null by default. The first context unit, in the
+  declared order, whose attribute path gives a value serves the experiment, and that raw value (a non-empty string
+  as-is, an integer as its decimal text; floats such as `3.0`, booleans, objects, arrays, `""` and null give none) is
+  the cluster key of the platform's balanced-block draw for the period `floor((now - switchbackStartAt) /
+  switchbackPeriodMs)`. Units that disagree, a value outside `switchbackClusterValues`, a missing value, a pre-anchor
+  read or an unservable schedule give a control that records no exposure; overrides, assignment rules, strict
+  audiences, full-on, traffic and custom assignments apply as for a unit experiment, with the serving unit's traffic
+  and split-rule draws hashed with the platform murmur3 on every runtime. Holdouts never apply to a switchback. The
+  serving unit and cluster key are read once per period, and each period exposes once, stamped with the clock reading
+  of the exposing call. `getVariableValue()` exposes a switchback the key reaches when it is assigned, overridden or
+  rule-assigned, as in java-sdk; a strict mismatch records nothing.
+  Callers must set cluster attributes before a period's first read and keep them unchanged through its exposure and
+  any re-queue: a change within a period is not supported, the cached variant is kept and the change takes effect
+  from the next period (the same constraint as every SDK's switchbacks). A switchback exposure queued before a unit
+  was added is published first, in its own batch with the units it was served with, since the collector resolves the
+  serving unit again from a publish's units; that `publish()` calls the event handler once per batch. Cached reads
+  cost about 3% more than before without a switchback in the data, and up to about 7% more with one. Exposures and
+  the publish payload carry no new fields. Payloads without switchbacks take the same paths as before. See the
+  README's *Switchback Experiments*.
+  Set cluster attributes as strings or integers: a float attribute is published as JSON (`3.0` as `3`), so the
+  collector, which resolves the cluster again from the published attributes, could key it where the SDK did not.
 - **Holdouts.** `ContextData::$holdouts` carries the collector's `holdouts` and `Experiment::$holdoutIds` (and
   `$holdoutType`) the ids that cover each experiment, as in the JavaScript and Java SDKs. A unit held out by any of
   an experiment's holdouts gets control (variant 0, not assigned) without an exposure of its own, ahead of the

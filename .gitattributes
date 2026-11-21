@@ -5,3 +5,7 @@
 /.gitattributes    export-ignore
 /.gitignore        export-ignore
 /docs              export-ignore
+
+# Vendored platform fixtures are compared byte for byte (git blob and sha256): never convert line endings.
+/tests/Fixtures/switchback/*.json -text
+/tests/Fixtures/switchback-java/*.json -text
