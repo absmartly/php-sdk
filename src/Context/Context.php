@@ -1357,7 +1357,6 @@ class Context {
 			// Data that never had holdouts or switchbacks keeps main's loop: nothing is suppressed and no exposure has
 			// holdout arms or a switchback slot. If a logger refreshes in the first holdout coverage or switchback, the
 			// unvisited candidates (only those) take the walk below, carrying any error that logger threw.
-			$handedOff = false;
 			foreach ($experiments as $i => $experimentVariables) {
 				$assignment = $this->getAssignment($experimentVariables->data->name);
 
@@ -1385,12 +1384,11 @@ class Context {
 
 				if ($this->hasHoldouts || $this->hasSwitchbacks) {
 					$experiments = array_slice($experiments, $i + 1);
-					$handedOff = true;
 					break;
 				}
 			}
 
-			if (!$handedOff) {
+			if (!$this->hasHoldouts && !$this->hasSwitchbacks) {
 				return $default;
 			}
 		}
@@ -1402,6 +1400,12 @@ class Context {
 		// the first logger error is re-thrown once the winner is found.
 
 		foreach ($experiments as $experimentVariables) {
+			if (!isset($this->index[$experimentVariables->data->name])
+				&& !array_key_exists($experimentVariables->data->name, $this->overrides)) {
+				// A logger's refresh removed this candidate mid-walk: a cached assignment for it must not supply a value
+				// or a holdout exposure. An override still applies, as on main and in JS.
+				continue;
+			}
 			try {
 				$assignment = $this->getAssignment($experimentVariables->data->name);
 			}
