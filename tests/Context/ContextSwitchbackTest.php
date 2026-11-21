@@ -161,7 +161,6 @@ class ContextSwitchbackTest extends TestCase {
 			self::assertSame([], $this->eventHandler->submitted);
 		}
 
-		// In-range hour-aligned anchors, including 0 and the last hour before the bound, serve.
 		foreach ([0, self::$ANCHOR, $maxAnchor - $hour] as $startAt) {
 			$experiment = self::switchback(2);
 			$experiment->switchbackStartAt = $startAt;
@@ -260,7 +259,6 @@ class ContextSwitchbackTest extends TestCase {
 		}
 		self::assertSame(0, $context->getPendingCount());
 
-		// Setting a linked unit later makes the experiment apply.
 		$context->setUnit(self::$UNIT_TYPE, self::$UID);
 		self::assertSame(self::$EXPECTED_2_ARMS[2], $context->getTreatment('exp_sb'));
 		self::assertSame([self::sbExposure(self::$EXPECTED_2_ARMS[2], self::$ANCHOR + 2 * self::$HOUR)], $this->publishExposures($context));
@@ -1471,7 +1469,6 @@ class ContextSwitchbackTest extends TestCase {
 		self::assertSame(self::$EXPECTED_2_ARMS[0], $context->getTreatment('exp_sb'));
 		self::assertSame(4, $context->getPendingCount());
 
-		// An unchanged identity keeps the epoch.
 		$this->refreshTo($context, self::switchback(2));
 		$context->getTreatment('exp_sb');
 		self::assertSame(4, $context->getPendingCount());
@@ -1909,14 +1906,15 @@ class ContextSwitchbackTest extends TestCase {
 		$context->publish();
 		self::assertSame(0, $context->getPendingCount());
 		self::assertSame([[[self::$UNIT_TYPE], ['exp_sb'], 0]], $this->publishedBatches());
-		self::assertSame([self::$CLUSTER_PATH, 'user_store'],
-			array_column($this->eventHandler->submitted[0]->attributes, 'name'));
+		self::assertSame([[self::$CLUSTER_PATH, self::$CLUSTER_KEY], ['user_store', 'Faro']],
+			array_map(static function ($attribute) {
+				return [$attribute->name, $attribute->value];
+			}, $this->eventHandler->submitted[0]->attributes));
 		self::assertSame(1, $this->publishEventCount());
 	}
 
 	/** Exposures read with different units go out in one batch per unit set, in queue order. */
 	public function testEachEarlierUnitSetGetsItsOwnBatch(): void {
-		$context = $this->contextWithAnEarlierUnitExposure();
 		$other = self::switchback(2, null, 2, 'exp_other');
 		$other->switchbackClusters = self::clusters(self::$UNIT_TYPE, self::$CLUSTER_PATH);
 		$context = $this->createContext(self::dataOf(
@@ -2163,11 +2161,17 @@ class ContextSwitchbackTest extends TestCase {
 		], $this->publishedBatches());
 	}
 
-	/** A split rule is revalidated on the serving unit, not the declared unitType the context may not have. */
+	/**
+	 * A split rule is revalidated on the serving unit, not the declared unitType the context may not have, and on an
+	 * attribute change: here one that makes an earlier conditional 0/100 split win re-exposes under its arm.
+	 */
 	public function testASplitRuleIsRevalidatedOnTheServingUnit(): void {
 		$experiment = self::switchback(2);
 		$experiment->unitType = 'user_id';
-		$experiment->assignmentRules = '{"rules":[{"type":"split","environments":[],"percentages":"50/50"}]}';
+		$experiment->assignmentRules = '{"rules":[{"type":"split","environments":[],'
+			. '"conditions":{"and":[{"eq":[{"var":"tier"},{"value":"x"}]}]},"percentages":"0/100"},'
+			. '{"type":"split","environments":[],"percentages":"50/50"}]}';
+		$switched = 0;
 		for ($u = 0; $u < 16; ++$u) {
 			$uid = 'store-' . $u;
 			$expected = (new VariantAssigner($uid))->assign([0.5, 0.5], self::$SEED_HI, self::$SEED_LO);
@@ -2176,6 +2180,83 @@ class ContextSwitchbackTest extends TestCase {
 			$context->setAttribute('unrelated', true);
 			self::assertSame($expected, $context->getTreatment('exp_sb'), $uid);
 			self::assertSame(1, $context->getPendingCount(), $uid);
+			$context->setAttribute('tier', 'x');
+			self::assertSame(1, $context->getTreatment('exp_sb'), $uid);
+			self::assertSame($expected === 1 ? 1 : 2, $context->getPendingCount(), $uid);
+			$switched += $expected === 0 ? 1 : 0;
 		}
+		self::assertGreaterThan(0, $switched);
+	}
+
+	/**
+	 * The slot keeps the units the cluster was resolved with, even when a cluster attribute's serializer sets a unit
+	 * during the resolution: the exposure is published with those units, so the Collector serves the same cluster.
+	 */
+	public function testAUnitSetWhileResolvingTheClusterIsNotPublishedWithTheExposure(): void {
+		$experiment = self::switchback(2);
+		$experiment->switchbackClusters = self::clusters('user_id', 'user_store', self::$UNIT_TYPE, 'geo/city');
+		$context = $this->createContext(self::dataOf($experiment), null, ['user_store' => 'Faro']);
+		$geo = new class($context) implements \JsonSerializable {
+			private Context $context;
+
+			public function __construct(Context $context) {
+				$this->context = $context;
+			}
+
+			public function jsonSerialize(): array {
+				$this->context->setUnit('user_id', 'u1');
+				return ['city' => 'store-42'];
+			}
+		};
+		$context->setAttribute('geo', $geo);
+		$this->now = self::$ANCHOR + 10;
+		self::assertSame(self::$EXPECTED_2_ARMS[0], $context->getTreatment('exp_sb'));
+		self::assertSame('u1', $context->getUnit('user_id'));
+		$this->failFirst(1);
+		@$context->publish();
+		self::assertSame([], $this->publishedBatches());
+		$context->publish();
+		self::assertSame(0, $context->getPendingCount());
+		self::assertSame([[[self::$UNIT_TYPE], ['exp_sb'], 0]], $this->publishedBatches());
+	}
+
+	/** A handler that publishes during an early batch does not send that batch's exposure again; its goal goes out. */
+	public function testANestedPublishDoesNotResendTheEarlierBatchInFlight(): void {
+		$context = $this->contextWithAnEarlierUnitExposure();
+		$calls = 0;
+		$this->eventHandler->prerun = static function () use (&$calls, $context) {
+			if (++$calls === 1) {
+				$context->track('goal');
+				$context->publish();
+				$context->publish();
+			}
+		};
+		$context->publish();
+		self::assertSame(0, $context->getPendingCount());
+		self::assertSame([
+			[[self::$UNIT_TYPE, 'user_id'], [], 1],
+			[[self::$UNIT_TYPE], ['exp_sb'], 0],
+		], $this->publishedBatches());
+	}
+
+	/** An early batch that fails after a nested publish stays queued and is retried once, with its units. */
+	public function testAnEarlierBatchFailingAfterANestedPublishIsRetried(): void {
+		$context = $this->contextWithAnEarlierUnitExposure();
+		$calls = 0;
+		$this->eventHandler->prerun = static function () use (&$calls, $context) {
+			if (++$calls === 1) {
+				$context->track('goal');
+				$context->publish();
+				throw new \RuntimeException('collector down');
+			}
+		};
+		@$context->publish();
+		self::assertSame(1, $context->getPendingCount());
+		$context->publish();
+		self::assertSame(0, $context->getPendingCount());
+		self::assertSame([
+			[[self::$UNIT_TYPE, 'user_id'], [], 1],
+			[[self::$UNIT_TYPE], ['exp_sb'], 0],
+		], $this->publishedBatches());
 	}
 }

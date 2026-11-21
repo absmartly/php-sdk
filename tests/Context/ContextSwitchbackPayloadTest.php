@@ -56,7 +56,6 @@ class ContextSwitchbackPayloadTest extends TestCase {
 	public function testExperimentReadsTheSwitchbackFields(): void {
 		$experiment = new Experiment(self::fixture('switchback_context.json')->experiments[0]);
 		self::assertSame('switchback', $experiment->randomizationType);
-		// Declared order, not sorted: store_id before device_id.
 		self::assertSame(['store_id' => 'store/key', 'device_id' => 'geo/city'], $experiment->switchbackClusters);
 		self::assertSame(['store_id', 'device_id'], array_keys($experiment->switchbackClusters));
 		self::assertSame(['porto', 'lisbon'], $experiment->switchbackClusterValues);

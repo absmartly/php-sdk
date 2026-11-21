@@ -359,7 +359,8 @@ $treatment = $context->getTreatment('exp_delivery_fee'); // this period's varian
 - The collector also resolves the serving unit again from the published units. A switchback exposure queued before a
   unit was added with `setUnit()` is published first, in its own batch with the units it was served with, so the new
   unit cannot drop it or move it to another unit; the other events follow with the current units. That `publish()`
-  then calls the event handler, and logs `Publish`, once per batch.
+  then calls the event handler, and logs `Publish`, once per batch. A `publish()` from inside the handler while such a
+  batch is being sent leaves that batch's exposures to it, so they are never sent twice.
 
 ### Semantic Version Conditions
 

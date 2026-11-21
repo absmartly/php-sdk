@@ -83,6 +83,8 @@ class Context {
 	 * re-queue it. Kept separate from the Exposure so it never reaches the published payload.
 	 */
 	private array $exposureAssignments = [];
+	/** The exposures of the early switchback batch being sent, by object id; a nested publish leaves them queued. */
+	private array $inFlightExposures = [];
 	private array $achievements = [];
 
 	private array $attributes = [];
@@ -701,7 +703,6 @@ class Context {
 			return null;
 		}
 
-		// A switchback's split rule randomizes over its serving unit.
 		$unitType = $unitType ?? $experiment->unitType;
 		$uid = $isUnitPinnedMissing ? null : ($this->units[$unitType] ?? null);
 		if ($uid === null) {
@@ -937,8 +938,9 @@ class Context {
 			$slot->units = $cached->switchback->units;
 		}
 		else {
-			$serving = $this->resolveSwitchbackServing($data, $sources, $now);
+			// Taken before resolving: a cluster attribute's serializer may set a unit the resolution did not see.
 			$slot->units = $this->units;
+			$serving = $this->resolveSwitchbackServing($data, $sources, $now);
 		}
 		$slot->serving = $serving;
 
@@ -1733,6 +1735,9 @@ class Context {
 		}
 
 		$event = $this->buildPublishEvent();
+		if ($this->inFlightExposures !== [] && $event->exposures === [] && $event->goals === []) {
+			return;
+		}
 
 		try {
 			$this->eventHandler->publish($event);
@@ -1744,10 +1749,12 @@ class Context {
 
 		// The collector has accepted the batch: clear it before notifying the event logger so a throwing logger
 		// can never cause these events to be retained and sent again.
+		$inFlight = $this->inFlightQueue();
 		$this->exposures = [];
 		$this->exposureAssignments = [];
 		$this->achievements = [];
 		$this->pendingCount = 0;
+		$this->keepInFlightExposures($inFlight);
 
 		$this->logPublished($event);
 	}
@@ -1846,9 +1853,35 @@ class Context {
 		$event->setUnits($this->units);
 		$event->setAttributes($this->attributes);
 		$event->exposures = $this->exposures;
+		if ($this->inFlightExposures !== []) {
+			$event->exposures = array_values(array_filter($this->exposures, function ($exposure) {
+				return !isset($this->inFlightExposures[spl_object_id($exposure)]);
+			}));
+		}
 		$event->goals = $this->achievements;
 
 		return $event;
+	}
+
+	/** The queued exposures (with their assignments) of the early batch being sent, which a nested publish skips. */
+	private function inFlightQueue(): array {
+		$queue = [];
+		if ($this->inFlightExposures !== []) {
+			foreach ($this->exposures as $i => $exposure) {
+				if (isset($this->inFlightExposures[spl_object_id($exposure)])) {
+					$queue[] = [$exposure, $this->exposureAssignments[$i]];
+				}
+			}
+		}
+		return $queue;
+	}
+
+	private function keepInFlightExposures(array $queue): void {
+		foreach ($queue as [$exposure, $assignment]) {
+			$this->exposures[] = $exposure;
+			$this->exposureAssignments[] = $assignment;
+			++$this->pendingCount;
+		}
 	}
 
 	/**
@@ -1863,7 +1896,7 @@ class Context {
 		while (($units = $this->earlierSwitchbackUnits()) !== null) {
 			$exposures = [];
 			foreach ($this->exposureAssignments as $i => $assignment) {
-				if (self::publishedEarlier($assignment) && $assignment->switchback->units === $units) {
+				if ($this->publishedEarlier($i) && $assignment->switchback->units === $units) {
 					$exposures[spl_object_id($this->exposures[$i])] = $this->exposures[$i];
 				}
 			}
@@ -1876,12 +1909,17 @@ class Context {
 			$event->setAttributes($this->attributes);
 			$event->exposures = array_values($exposures);
 
+			$outer = $this->inFlightExposures;
+			$this->inFlightExposures += $exposures;
 			try {
 				$this->eventHandler->publish($event);
 			}
 			catch (Exception $exception) {
 				$this->publishFailed($exception, $rethrow);
 				return false;
+			}
+			finally {
+				$this->inFlightExposures = $outer;
 			}
 
 			foreach ($this->exposures as $i => $exposure) {
@@ -1901,17 +1939,22 @@ class Context {
 
 	/** The served units of the first queued exposure that needs an earlier batch, or null when none does. */
 	private function earlierSwitchbackUnits(): ?array {
-		foreach ($this->exposureAssignments as $assignment) {
-			if (self::publishedEarlier($assignment) && $assignment->switchback->units !== $this->units) {
+		foreach ($this->exposureAssignments as $i => $assignment) {
+			if ($this->publishedEarlier($i) && $assignment->switchback->units !== $this->units) {
 				return $assignment->switchback->units;
 			}
 		}
 		return null;
 	}
 
-	/** An absent serving had no linked unit to protect: a unit added since is what lets the Collector record it. */
-	private static function publishedEarlier(Assignment $assignment): bool {
-		return $assignment->switchback !== null && $assignment->switchback->serving->status !== SwitchbackServing::ABSENT;
+	/**
+	 * Whether queued exposure $i goes in an early batch: an absent serving had no linked unit to protect (a unit added
+	 * since is what lets the Collector record it), and one already being sent by an outer publish is not sent again.
+	 */
+	private function publishedEarlier(int $i): bool {
+		$assignment = $this->exposureAssignments[$i];
+		return $assignment->switchback !== null && $assignment->switchback->serving->status !== SwitchbackServing::ABSENT
+			&& !isset($this->inFlightExposures[spl_object_id($this->exposures[$i])]);
 	}
 
 	/**
