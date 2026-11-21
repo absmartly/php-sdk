@@ -152,8 +152,8 @@
   any re-queue: a change within a period is not supported, the cached variant is kept and the change takes effect
   from the next period (the same constraint as every SDK's switchbacks). A switchback exposure queued before a unit
   was added is published first, in its own batch with the units it was served with, since the collector resolves the
-  serving unit again from a publish's units; that `publish()` calls the event handler once per batch. Data with a
-  switchback costs about 3% more per cached read of any experiment; data without one takes the previous paths. Exposures and
+  serving unit again from a publish's units; that `publish()` calls the event handler once per batch. Cached reads
+  cost about 3% more than before without a switchback in the data, and up to about 7% more with one. Exposures and
   the publish payload carry no new fields. Payloads without switchbacks take the same paths as before. See the
   README's *Switchback Experiments*.
   Set cluster attributes as strings or integers: a float attribute is published as JSON (`3.0` as `3`), so the
