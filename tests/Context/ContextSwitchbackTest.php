@@ -2993,4 +2993,134 @@ class ContextSwitchbackTest extends TestCase {
 		self::assertTrue($context->isClosed());
 		self::assertSame([[[self::$UNIT_TYPE, 'user_id'], [], 1], [[self::$UNIT_TYPE], ['exp_sb'], 0]], $this->publishedBatches());
 	}
+
+	/** A Publish logger that tracks on every send cannot keep close() publishing forever: the late goal stays queued. */
+	public function testCloseReturnsWhenAPublishLoggerTracksOnEverySend(): void {
+		$context = $this->contextWithAnEarlierUnitExposure();
+		$this->setLogger($context, self::onContextEvent(static function ($context, $event) {
+			if ($event === 'Publish' && !$context->isClosed()) {
+				$context->track('again');
+			}
+		}));
+		$context->close();
+		self::assertCount(3, $this->eventHandler->submitted);
+		self::assertFalse($context->isClosed());
+		self::assertSame(1, $context->getPendingCount());
+	}
+
+	/** On switchback data, as on unit data, a failed close() followed by a publish() leaves the context open. */
+	public function testAPublishAfterAFailedCloseLeavesTheContextOpen(): void {
+		$context = $this->contextWithAnEarlierUnitExposure();
+		$this->failFirst(1);
+		try {
+			@$context->close();
+			self::fail('the close failure is re-thrown');
+		}
+		catch (\RuntimeException $exception) {
+			self::assertSame('collector down', $exception->getMessage());
+		}
+		$context->publish();
+		self::assertFalse($context->isClosed());
+		self::assertSame(0, $context->getPendingCount());
+		$context->track('later');
+		self::assertSame(1, $context->getPendingCount());
+		self::assertSame(0, $this->closeEventCount());
+	}
+
+	/** A goal a Publish logger tracks and publishes during a switchback publish is sent by that publish. */
+	public function testAGoalPublishedFromAPublishLoggerOnSwitchbackDataIsSent(): void {
+		$context = $this->contextWithAnEarlierUnitExposure();
+		$this->setLogger($context, self::publishCallback(static function (Context $context) {
+			$context->track('from_logger');
+			$context->publish();
+		}));
+		$context->publish();
+		self::assertSame(0, $context->getPendingCount());
+		self::assertSame([[[self::$UNIT_TYPE], ['exp_sb'], 0], [[self::$UNIT_TYPE, 'user_id'], [], 1]], $this->publishedBatches());
+	}
+
+	/** A nested read of the same slot hands its assignment to the outer read, which stamps the exposure with its time. */
+	public function testANestedPeekOfTheSameSlotLeavesTheOuterReadsTimestamp(): void {
+		$experiment = self::switchback(2);
+		$experiment->switchbackClusters = self::clusters(self::$UNIT_TYPE, self::$CLUSTER_PATH, 'device_id', 'geo/city');
+		$context = $this->createContext(self::dataOf($experiment), [self::$UNIT_TYPE => self::$UID, 'device_id' => 'd1']);
+		$geo = new class($context, $this) implements \JsonSerializable {
+			private Context $context;
+			private $test;
+			public int $reads = 0;
+			public function __construct(Context $context, $test) { $this->context = $context; $this->test = $test; }
+			public function jsonSerialize(): array {
+				if (++$this->reads === 1) {
+					// A later reading in the same period; the outer read keeps its own.
+					$this->test->now += 5;
+					$this->context->peekTreatment('exp_sb');
+					$this->test->now -= 5;
+				}
+				return ['city' => 'store-42'];
+			}
+		};
+		$context->setAttribute('geo', $geo);
+		$this->now = self::$ANCHOR + 10;
+		$context->getTreatment('exp_sb');
+		self::assertSame(1, $geo->reads);
+		self::assertSame([self::$ANCHOR + 10], array_column($this->publishExposures($context), 4));
+	}
+
+	/**
+	 * A nested refresh and read inside the resolution install a slot of the new generation: the outer read, on its own
+	 * snapshot, returns its own arm rather than taking that slot.
+	 */
+	public function testANestedSlotOfARefreshedGenerationIsNotReturnedToTheOuterRead(): void {
+		$experiment = self::switchback(2);
+		$experiment->switchbackClusters = self::clusters(self::$UNIT_TYPE, self::$CLUSTER_PATH, 'device_id', 'geo/city');
+		$experiment->assignmentRules = self::ASSIGN_VARIANT_1;
+		$refreshed = self::switchback(2, null, 9);
+		$refreshed->assignmentRules = '{"rules":[{"type":"assign","environments":[],"variant":0}]}';
+		$context = $this->createContext(self::dataOf($experiment), [self::$UNIT_TYPE => self::$UID, 'device_id' => 'd1']);
+		$this->dataProvider->next = self::dataOf($refreshed);
+		$geo = new class($context) implements \JsonSerializable {
+			private Context $context;
+			private bool $done = false;
+			public $nested = null;
+			public function __construct(Context $context) { $this->context = $context; }
+			public function jsonSerialize(): array {
+				if (!$this->done) {
+					$this->done = true;
+					$this->context->refresh();
+					$this->nested = $this->context->peekTreatment('exp_sb');
+				}
+				return ['city' => 'store-42'];
+			}
+		};
+		$context->setAttribute('geo', $geo);
+		$this->now = self::$ANCHOR + 10;
+		self::assertSame(1, $context->peekTreatment('exp_sb'));
+		self::assertSame(0, $geo->nested);
+		self::assertSame(0, $context->peekTreatment('exp_sb'));
+	}
+
+	/**
+	 * A handler that refreshes in the first switchback during a unit-only send, publishes and tracks again keeps the goal
+	 * it tracked: the accepted send removes only what it submitted.
+	 */
+	public function testAGoalTrackedAfterAHandlerRefreshesInTheFirstSwitchbackIsKept(): void {
+		$context = $this->createContext(self::dataOf(self::unitExperiment()));
+		$context->track('first');
+		$this->dataProvider->next = self::dataOf(self::unitExperiment(), self::switchback(2, null, 4, 'exp_sb'));
+		$calls = 0;
+		$this->eventHandler->prerun = static function () use ($context, &$calls) {
+			if (++$calls === 1) {
+				$context->refresh();
+				$context->publish();
+				$context->track('second');
+			}
+		};
+		$context->publish();
+		self::assertSame(1, $context->getPendingCount());
+		$context->publish();
+		self::assertSame(0, $context->getPendingCount());
+		self::assertContains(['second'], array_map(static function ($event) {
+			return array_column($event->goals ?? [], 'name');
+		}, $this->eventHandler->submitted));
+	}
 }

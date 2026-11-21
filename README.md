@@ -362,8 +362,10 @@ $treatment = $context->getTreatment('exp_delivery_fee'); // this period's varian
   then calls the event handler, and logs `Publish`, once per batch. A `publish()` from inside the handler while such a
   batch is being sent leaves that batch's exposures to it, so they are never sent twice. A `close()` from inside the
   handler then requests closure but leaves the context open, since the batch being sent may still fail. The active
-  publisher drains accepted work, including work queued by callbacks during the last send, before closing. After a
-  failure, the next `publish()` or `close()` retries the drain. `Close` runs with the context sealed: it cannot queue
+  publisher drains accepted work, including work queued by callbacks during the last send, before closing. Work a
+  callback queues during that extra pass stays queued for the next `publish()` or `close()`, so a callback that queues
+  on every send cannot keep a publish running; a `close()` that leaves work queued returns with the context open. After
+  a failure, the next `publish()` or `close()` retries the drain. `Close` runs with the context sealed: it cannot queue
   more work, and a throwing Close logger leaves the request retryable without resending accepted batches.
 
 ### Semantic Version Conditions

@@ -85,8 +85,9 @@ class Context {
 	private array $exposureAssignments = [];
 	/** The exposures of the early switchback batch being sent, by object id; a nested publish leaves them queued. */
 	private array $inFlightExposures = [];
-	/** A close() from the handler during an early batch, finished by the outer publish once nothing is left queued. */
+	/** A close() requested from a callback during a switchback publish, completed by that publish (or a later one). */
 	private bool $closeDeferred = false;
+	/** A switchback publish is running: nested publish()/close() calls leave the drain and its completion to it. */
 	private bool $switchbackPublishing = false;
 	private bool $mainBatchPublishing = false;
 	private bool $switchbackPublishFailed = false;
@@ -145,6 +146,8 @@ class Context {
 
 	private const SWITCHBACK_RETAINED_PERIODS = 2;
 	private const SWITCHBACK_KEY_SEPARATOR = "\x1f";
+	/** The publish passes of one switchback publish: its queue, then the work callbacks queued during it. */
+	private const SWITCHBACK_PUBLISH_PASSES = 2;
 
 	/**
 	 * Upper bound on the number of exposures and goals retained after a failed publish. When a long-lived worker
@@ -1790,11 +1793,15 @@ class Context {
 			$this->flushEvents(false);
 			return;
 		}
-		$this->flushSwitchbackEvents(false);
+		$this->flushSwitchbackEvents(false, false);
 	}
 
-	/** A callback may queue work or request close, but the active publisher owns the drain and its outcome. */
-	private function flushSwitchbackEvents(bool $rethrow): void {
+	/**
+	 * A callback may queue work or request close, but the active publisher owns the drain and its outcome. Work the
+	 * callbacks queue during a send gets one more pass; anything queued after that stays for the next publish, and a
+	 * close() that leaves work queued returns with the context open, as a failed one does.
+	 */
+	private function flushSwitchbackEvents(bool $rethrow, bool $closing): void {
 		if ($this->switchbackPublishing) {
 			if ($this->inFlightExposures !== [] && !$this->mainBatchPublishing) {
 				$this->flushEvents($rethrow);
@@ -1803,14 +1810,14 @@ class Context {
 		}
 		$this->switchbackPublishing = true;
 		try {
-			do {
+			for ($pass = 0; $pass < self::SWITCHBACK_PUBLISH_PASSES && $this->pendingCount !== 0; ++$pass) {
 				$this->switchbackPublishFailed = false;
 				$this->flushEvents($rethrow);
 				if ($this->switchbackPublishFailed) {
 					return;
 				}
-			} while ($this->closeDeferred && $this->pendingCount !== 0);
-			if ($this->closeDeferred && $this->pendingCount === 0 && !$this->closed) {
+			}
+			if (($closing || $this->closeDeferred) && $this->pendingCount === 0 && !$this->closed) {
 				// Seal before notifying Close: callbacks cannot accept work that would have no publisher.
 				$this->closed = true;
 				try {
@@ -1884,7 +1891,8 @@ class Context {
 		}
 
 		// Remove only the submitted snapshot: callbacks may have queued more work during this send.
-		if ($this->hasSwitchbacks) {
+		if ($this->hasSwitchbacks && (!$this->switchbackPublishing
+			|| !self::sameQueue($event->exposures, $this->exposures) || !self::sameQueue($event->goals, $this->achievements))) {
 			$sent = [];
 			foreach ($event->exposures as $exposure) {
 				$sent[spl_object_id($exposure)] = true;
@@ -1909,6 +1917,14 @@ class Context {
 		}
 
 		$this->logPublished($event);
+	}
+
+	/**
+	 * Whether the queue still holds exactly the sent batch. During a switchback publish's main send a nested publish
+	 * sends nothing (that publish owns the drain), so the queue can only have grown: an equal count means it did not.
+	 */
+	private static function sameQueue(array $sent, array $queue): bool {
+		return count($sent) === count($queue);
 	}
 
 	/** Keeps the queued events for a retry, capped, and re-throws when $rethrow is true (close()). */
@@ -2227,10 +2243,13 @@ class Context {
 		}
 
 		if ($this->hasSwitchbacks) {
-			$this->closeDeferred = true;
+			if ($this->switchbackPublishing) {
+				// From a callback: the running publish completes the close once its work is drained.
+				$this->closeDeferred = true;
+			}
 			$this->finalizing = true;
 			try {
-				$this->flushSwitchbackEvents(true);
+				$this->flushSwitchbackEvents(true, true);
 			}
 			finally {
 				$this->finalizing = false;
