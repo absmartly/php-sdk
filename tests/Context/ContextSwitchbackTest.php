@@ -2707,6 +2707,8 @@ class ContextSwitchbackTest extends TestCase {
 		self::assertTrue($context->isClosed());
 		self::assertSame(1, $this->closeEventCount());
 		self::assertSame(0, $context->getPendingCount());
+		$context->flush();
+		self::assertSame(1, $this->closeEventCount());
 	}
 
 	/** After a nested close() whose outer publish() fails, the next publish() that leaves nothing queued closes it. */
