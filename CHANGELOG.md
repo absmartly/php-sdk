@@ -84,7 +84,7 @@
   with a holdout keeps the previous exception and queueing behaviour.
 - If an event logger refreshes the context during `getVariableValue()`, the rest of the lookup uses the refreshed
   data. An experiment the refresh removed is skipped unless it is overridden, even when an earlier peek cached its
-  held-out assignment, so it supplies no control value and no holdout exposure. Unlike JS, which still serves the
+  held-out assignment, so it supplies no control value and no holdout exposure, unlike JS, which still serves the
   cached assignment.
 - The `timeout` option stays the connect timeout (`CURLOPT_CONNECTTIMEOUT_MS`) as in v1.0.3, bounding only
   connection establishment, not the whole request. An optional total budget for the entire request (including
