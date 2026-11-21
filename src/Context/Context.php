@@ -992,7 +992,8 @@ class Context {
 	 * Otherwise it falls through to the next experiment, and finally to $default.
 	 */
 	private function resolveVariableValue(string $key, $default, bool $exposeAssignments) {
-		$experiments = $this->indexVariables[$key] ?? [];
+		$indexVariables = $this->indexVariables;
+		$experiments = $indexVariables[$key] ?? [];
 		$error = null;
 		if (!$this->hasHoldouts) {
 			// Data that never had holdouts keeps main's loop: nothing is suppressed and no exposure has holdout arms.
@@ -1040,11 +1041,20 @@ class Context {
 		// A throwing logger must not stop the walk: later candidates and their holdouts are still exposed (Java), and
 		// the first logger error is re-thrown once the winner is found. Data without holdouts took main's loop above.
 
+		// Set once a logger refreshes mid-walk: the names that still define $key in the live data.
+		$liveCandidates = null;
 		foreach ($experiments as $experimentVariables) {
-			if (!isset($this->index[$experimentVariables->data->name])
-				&& !array_key_exists($experimentVariables->data->name, $this->overrides)) {
-				// A logger's refresh removed this candidate mid-walk: a cached assignment for it must not supply a value
-				// or a holdout exposure. An override still applies, as on main and in JS.
+			$name = $experimentVariables->data->name;
+			if ($this->indexVariables !== $indexVariables) {
+				$indexVariables = $this->indexVariables;
+				$liveCandidates = [];
+				foreach ($indexVariables[$key] ?? [] as $live) {
+					$liveCandidates[$live->data->name] = true;
+				}
+			}
+			if ($liveCandidates !== null && !isset($liveCandidates[$name]) && !array_key_exists($name, $this->overrides)) {
+				// A candidate the refresh removed, or that no longer defines $key, must not supply a value or a holdout
+				// exposure. An override still applies, as on main and in JS.
 				continue;
 			}
 			try {

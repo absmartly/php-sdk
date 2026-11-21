@@ -1542,6 +1542,32 @@ class ContextHoldoutTest extends TestCase {
 			self::holdoutExposure(11, 'holdout_a', 0));
 	}
 
+	// A candidate a mid-walk refresh keeps but strips of the key takes no part in the rest of the walk: it neither
+	// claims the held-out fallback nor queues its holdout exposure, so a later candidate that still defines the key
+	// supplies the value.
+	public function testCandidateThatLosesTheKeyInAMidWalkRefreshIsSkipped(): void {
+		$logger = self::refreshingLogger(1);
+		[$first, $second] = self::closeCandidates('refresh_lost');
+		$second->variants[0]->config = '{"refresh_lost":"b-control"}';
+		$third = self::coveredBy(self::experiment(3, 'exp_close_third_refresh_lost'), 12);
+		$third->variants[0]->config = '{"refresh_lost":"live C"}';
+		$holdouts = [self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED), self::holdout(12, 'holdout_c', self::HOLDOUT_A_SEED)];
+		$context = $this->createContext(self::data($holdouts, $first, self::coveredBy($second, 11), $third),
+			[self::UNIT_TYPE => self::UID], [], [], $logger);
+		[$first, $second] = self::closeCandidates('refresh_lost');
+		$second->iteration = 2;
+		$second->variants[0]->config = '{"other":"b-control"}';
+		$second->variants[1]->config = '{"other":"b-treatment"}';
+		$third = self::coveredBy(self::experiment(3, 'exp_close_third_refresh_lost'), 12);
+		$third->variants[0]->config = '{"refresh_lost":"live C"}';
+		$this->dataProvider->next = self::data($holdouts, $first, self::coveredBy($second, 11), $third);
+		$logger->next = $this->dataProvider->next;
+
+		self::assertSame('live C', $context->getVariableValue('refresh_lost', 'default'));
+		$this->assertPublished($context, self::exposure(1, 'exp_close_first_refresh_lost', self::NORMAL_VARIANT),
+			self::holdoutExposure(12, 'holdout_c', 0));
+	}
+
 	// A candidate the refresh removed takes no part in the rest of the walk, even when a peek cached its suppressed
 	// assignment: it neither supplies its control value nor queues its holdout exposure.
 	public function testCandidateRemovedByAMidWalkRefreshIsSkippedEvenWhenItsSuppressedAssignmentIsCached(): void {

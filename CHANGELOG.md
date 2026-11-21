@@ -83,9 +83,9 @@
   exposures, since a closed context can't publish them. A context whose data has never covered an experiment
   with a holdout keeps the previous exception and queueing behaviour.
 - If an event logger refreshes the context during `getVariableValue()`, the rest of the lookup uses the refreshed
-  data. An experiment the refresh removed is skipped unless it is overridden, even when an earlier peek cached its
-  held-out assignment, so it supplies no control value and no holdout exposure, unlike JS, which still serves the
-  cached assignment.
+  data. An experiment the refresh removed, or that no longer defines the key, is skipped unless it is overridden,
+  even when an earlier peek cached its held-out assignment, so it supplies no control value and no holdout
+  exposure, unlike JS, which still serves the cached assignment.
 - The `timeout` option stays the connect timeout (`CURLOPT_CONNECTTIMEOUT_MS`) as in v1.0.3, bounding only
   connection establishment, not the whole request. An optional total budget for the entire request (including
   retries and back-off) is available opt-in via `HTTPClient::$totalTimeout`/`ReactHttpClient::$totalTimeout`
