@@ -719,18 +719,32 @@ class ContextHoldoutTest extends TestCase {
 	}
 
 	public function testTriggerApplicableHoldoutExposuresNeverLiveResolvesAPinnedNullEntryForAnAlreadyExposedAssignment(): void {
-		$experiment = self::coveredBy(self::experiment(1, 'exp_a_mutant_pinned_null', 'user_id', 1), 11);
+		$experiment = self::coveredBy(self::experiment(1, 'exp_a_mutant_pinned_null', 'user_id', 1), 12);
 		$experiment->variants[1]->config = '{"my_var":"value_from_variant"}';
-		$context = $this->createContext(self::data([self::holdout(11, 'holdout_a_mutant_pinned_null', self::HOLDOUT_A_SEED, 'user_id')],
-			$experiment), []);
+		$context = $this->createContext(self::data([
+			self::holdout(11, 'holdout_dropped_arm', self::HOLDOUT_B_SEED),
+			self::holdout(12, 'holdout_a_mutant_pinned_null', self::HOLDOUT_A_SEED, 'user_id'),
+		], $experiment, self::coveredBy(self::experiment(2, 'exp_dropped_arm'), 11)));
 
+		self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_dropped_arm'));
 		self::assertSame(1, $context->getTreatment('exp_a_mutant_pinned_null'));
+		self::assertSame(3, $context->getPendingCount());
+
+		// The cap drops exp_dropped_arm and its holdout arm, so exposed reads take the retry path from here on.
+		$context->maxRetainedEvents = 1;
+		$this->eventHandler->prerun = static function (): void {
+			throw new \RuntimeException('collector down');
+		};
+		$context->publish();
+		$this->eventHandler->prerun = null;
 		self::assertSame(1, $context->getPendingCount());
 
 		$context->setUnit('user_id', self::UID);
 
+		self::assertSame(1, $context->getTreatment('exp_a_mutant_pinned_null'));
 		self::assertSame('value_from_variant', $context->getVariableValue('my_var', 'default'));
 		self::assertSame(1, $context->getPendingCount());
+		$this->assertPublished($context, self::exposure(1, 'exp_a_mutant_pinned_null', 1, true, false, true, false, false, false, 'user_id'));
 	}
 
 	public function testSetUnitEvictsAssignmentWithMultipleHoldoutsDeclaringDifferentUnitTypes(): void {
@@ -1457,6 +1471,137 @@ class ContextHoldoutTest extends TestCase {
 		self::assertSame(1, $context->getPendingCount());
 	}
 
+	// An exposure logger that refreshes mid-walk and installs the first coverage hands the unvisited candidates to the
+	// holdout-aware path: the later, now held-out candidate gets control and its holdout exposure, not its own.
+	public function testRefreshThatInstallsFirstCoverageMidWalkUsesTheHoldoutPathForLaterCandidates(): void {
+		$logger = new class extends MockContextEventLoggerProxy {
+			public ?ContextData $next = null;
+
+			public function handleEvent(Context $context, ContextEventLoggerEvent $event): void {
+				parent::handleEvent($context, $event);
+				if ($this->next !== null && $event->getEvent() === ContextEventLoggerEvent::Exposure && $event->getData()->id === 1) {
+					$this->next = null;
+					$context->refresh();
+				}
+			}
+		};
+		[$first, $second] = self::closeCandidates('refresh_epoch');
+		$context = $this->createContext(self::data([], $first, $second), [self::UNIT_TYPE => self::UID], [], [], $logger);
+		[$first, $second] = self::closeCandidates('refresh_epoch');
+		$second->variants[0]->config = '{"refresh_epoch":"control"}';
+		$this->dataProvider->next = self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)], $first,
+			self::coveredBy($second, 11));
+		$logger->next = $this->dataProvider->next;
+
+		self::assertSame('control', $context->getVariableValue('refresh_epoch', 'default'));
+		self::assertSame(0, $context->getTreatment('exp_close_second_refresh_epoch'));
+		$this->assertPublished($context, self::exposure(1, 'exp_close_first_refresh_epoch', self::NORMAL_VARIANT),
+			self::holdoutExposure(11, 'holdout_a', 0));
+	}
+
+	/** A logger that refreshes to $next on experiment $id's exposure, then throws if $throw. */
+	private static function refreshingLogger(int $id, bool $throw = false): MockContextEventLoggerProxy {
+		return new class($id, $throw) extends MockContextEventLoggerProxy {
+			public ?ContextData $next = null;
+			private int $id;
+			private bool $throw;
+
+			public function __construct(int $id, bool $throw) {
+				$this->id = $id;
+				$this->throw = $throw;
+			}
+
+			public function handleEvent(Context $context, ContextEventLoggerEvent $event): void {
+				parent::handleEvent($context, $event);
+				if ($this->next !== null && $event->getEvent() === ContextEventLoggerEvent::Exposure && $event->getData()->id === $this->id) {
+					$this->next = null;
+					$context->refresh();
+					if ($this->throw) {
+						throw new \RuntimeException('boom');
+					}
+				}
+			}
+		};
+	}
+
+	// When the first coverage arrives during the last candidate's exposure, visited candidates are not re-read: the
+	// read returns the caller default and publishes only the two ordinary exposures, as in JS.
+	public function testRefreshThatInstallsCoverageOnTheLastCandidateDoesNotRereadVisitedOnes(): void {
+		$logger = self::refreshingLogger(2);
+		[$first, $second] = self::closeCandidates('refresh_last');
+		$second->variants[1]->config = '{"unrelated":"y"}';
+		$second->variants[0]->config = '{"refresh_last":"from_second_control"}';
+		$context = $this->createContext(self::data([], $first, $second), [self::UNIT_TYPE => self::UID], [], [], $logger);
+		[$first, $second] = self::closeCandidates('refresh_last');
+		$second->variants[1]->config = '{"unrelated":"y"}';
+		$second->variants[0]->config = '{"refresh_last":"from_second_control"}';
+		$this->dataProvider->next = self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)],
+			self::coveredBy($first, 11), $second);
+		$logger->next = $this->dataProvider->next;
+
+		self::assertSame('default', $context->getVariableValue('refresh_last', 'default'));
+		$this->assertPublished($context, self::exposure(1, 'exp_close_first_refresh_last', self::NORMAL_VARIANT),
+			self::exposure(2, 'exp_close_second_refresh_last', self::NORMAL_VARIANT));
+	}
+
+	// The candidate whose exposure triggered the refresh is not re-read even if the new data covers it: it keeps the
+	// ordinary exposure already queued, and only later candidates use the new coverage.
+	public function testRefreshThatCoversTheTriggeringCandidateDoesNotRereadIt(): void {
+		$logger = self::refreshingLogger(1);
+		[$first, $second] = self::closeCandidates('refresh_self');
+		$context = $this->createContext(self::data([], $first, $second), [self::UNIT_TYPE => self::UID], [], [], $logger);
+		[$first, $second] = self::closeCandidates('refresh_self');
+		$this->dataProvider->next = self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)],
+			self::coveredBy($first, 11), $second);
+		$logger->next = $this->dataProvider->next;
+
+		self::assertSame('from_second', $context->getVariableValue('refresh_self', 'default'));
+		$this->assertPublished($context, self::exposure(1, 'exp_close_first_refresh_self', self::NORMAL_VARIANT),
+			self::exposure(2, 'exp_close_second_refresh_self', self::NORMAL_VARIANT));
+	}
+
+	// A winner whose logger refreshes into coverage and then throws still sends that error to the caller, as on main.
+	public function testWinnerLoggerThatRefreshesIntoCoverageThenThrowsReachesTheCaller(): void {
+		$logger = self::refreshingLogger(1, true);
+		$winner = self::experiment(1, 'exp_refresh_winner');
+		$winner->variants[1]->config = '{"refresh_winner":"from_winner"}';
+		$context = $this->createContext(self::data([], $winner), [self::UNIT_TYPE => self::UID], [], [], $logger);
+		$this->dataProvider->next = self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)],
+			self::experiment(1, 'exp_refresh_winner'), self::coveredBy(self::experiment(2, 'exp_refresh_other'), 11));
+		$logger->next = $this->dataProvider->next;
+
+		try {
+			$context->getVariableValue('refresh_winner', 'default');
+			self::fail('the logger error must reach the caller');
+		}
+		catch (\RuntimeException $exception) {
+			self::assertSame('boom', $exception->getMessage());
+		}
+	}
+
+	// A logger that refreshes into the first coverage and then throws hands its error to the holdout walk: the later
+	// held-out candidate's holdout exposure is still queued and the error is re-thrown afterwards.
+	public function testRefreshIntoCoverageThenThrowStillQueuesLaterHoldoutExposures(): void {
+		$logger = self::refreshingLogger(1, true);
+		[$first, $second] = self::closeCandidates('refresh_throw');
+		$context = $this->createContext(self::data([], $first, $second), [self::UNIT_TYPE => self::UID], [], [], $logger);
+		[$first, $second] = self::closeCandidates('refresh_throw');
+		$this->dataProvider->next = self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)], $first,
+			self::coveredBy($second, 11));
+		$logger->next = $this->dataProvider->next;
+
+		try {
+			$context->getVariableValue('refresh_throw', 'default');
+			self::fail('the logger error must reach the caller');
+		}
+		catch (\RuntimeException $exception) {
+			self::assertSame('boom', $exception->getMessage());
+		}
+
+		$this->assertPublished($context, self::exposure(1, 'exp_close_first_refresh_throw', self::NORMAL_VARIANT),
+			self::holdoutExposure(11, 'holdout_a', 0));
+	}
+
 	public function testCoveredTreatmentLoggerThatClosesTheContextQueuesNoHoldoutExposure(): void {
 		$context = $this->createCoveredContextWhoseExposureLoggerCloses(
 			self::coveredBy(self::experiment(1, 'exp_close_covered_treatment'), 11));
@@ -1638,15 +1783,14 @@ class ContextHoldoutTest extends TestCase {
 
 	public function testVariablePathHoldoutExposureIsPublishedWithoutAnyOtherEvent(): void {
 		$suppressed = self::coveredBy(self::experiment(1, 'exp_var_flush_suppressed'), 11);
+		$suppressed->variants[0]->config = '{"flush_key":"control"}';
 		$suppressed->variants[1]->config = '{"flush_key":"from_suppressed"}';
-		$assigned = self::experiment(2, 'exp_var_flush_assigned');
-		$assigned->variants[1]->config = '{"flush_key":"from_assigned"}';
-		$context = $this->createContext(self::data([self::holdout(11, 'holdout_flush', self::HOLDOUT_A_SEED)], $suppressed, $assigned));
+		$context = $this->createContext(self::data([self::holdout(11, 'holdout_flush', self::HOLDOUT_A_SEED)], $suppressed));
 
-		self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_var_flush_assigned'));
-		self::assertSame('from_assigned', $context->getVariableValue('flush_key', 'default'));
-		$this->assertPublished($context, self::exposure(2, 'exp_var_flush_assigned', self::NORMAL_VARIANT),
-			self::holdoutExposure(11, 'holdout_flush', 0));
+		self::assertSame(0, $context->getPendingCount());
+		self::assertSame('control', $context->getVariableValue('flush_key', 'default'));
+		self::assertSame(1, $context->getPendingCount());
+		$this->assertPublished($context, self::holdoutExposure(11, 'holdout_flush', 0));
 	}
 
 	public function testSetDataDoesNotMutateCallerSuppliedHoldoutIdsArray(): void {

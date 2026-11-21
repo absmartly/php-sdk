@@ -2334,4 +2334,73 @@ class ContextSwitchbackTest extends TestCase {
 		self::assertSame([[0]], $this->eventHandler->exposureKeys);
 		self::assertSame([[[self::$UNIT_TYPE], ['exp_other'], 0]], $this->publishedBatches());
 	}
+
+	/**
+	 * A logger that refreshes the first switchback in mid-walk hands the unvisited candidates to the switchback-aware
+	 * walk, so a candidate that is now a strict-mismatched switchback records nothing.
+	 */
+	public function testAVariableWalkHandsOffWhenALoggerInstallsTheFirstSwitchback(): void {
+		$first = self::unitExperiment(2, 1, 'exp_a');
+		$first->unitType = 'user_id';
+		$first->variants = [(object) ['name' => 'A', 'config' => '{"k":1}'], (object) ['name' => 'B', 'config' => '{"k":2}']];
+		$second = self::unitExperiment(2, 2, 'exp_b');
+		$second->variants = $first->variants;
+		$second->audience = self::STRICT_GOLD_AUDIENCE;
+		$second->audienceStrict = true;
+		$switchback = self::switchback(2, null, 2, 'exp_b');
+		$switchback->variants = $first->variants;
+		$switchback->audience = self::STRICT_GOLD_AUDIENCE;
+		$switchback->audienceStrict = true;
+		$context = $this->createContext(self::dataOf($first, $second));
+		$this->now = self::$ANCHOR + 10;
+		$this->dataProvider->next = self::dataOf($first, $switchback);
+		$this->setLogger($context, new class implements \ABSmartly\SDK\Context\ContextEventLogger {
+			private bool $refreshed = false;
+
+			public function handleEvent(Context $context, \ABSmartly\SDK\Context\ContextEventLoggerEvent $event): void {
+				if ($event->getEvent() === \ABSmartly\SDK\Context\ContextEventLoggerEvent::Exposure && !$this->refreshed) {
+					$this->refreshed = true;
+					$context->refresh();
+				}
+			}
+		});
+		self::assertSame(-1, $context->getVariableValue('k', -1));
+		self::assertSame(1, $context->getPendingCount());
+	}
+
+	/**
+	 * A logger that refreshes the first switchback in and then throws hands its error to the switchback-aware walk: the
+	 * later switchback is still exposed before the error is re-thrown.
+	 */
+	public function testAThrowingLoggerThatInstallsTheFirstSwitchbackStillExposesItBeforeRethrowing(): void {
+		$first = self::unitExperiment(2, 1, 'exp_a');
+		$first->unitType = 'user_id';
+		$first->variants = [(object) ['name' => 'A', 'config' => '{"k":1}'], (object) ['name' => 'B', 'config' => '{"k":2}']];
+		$second = self::unitExperiment(2, 2, 'exp_b');
+		$second->variants = $first->variants;
+		$switchback = self::switchback(2, null, 2, 'exp_b');
+		$switchback->variants = $first->variants;
+		$context = $this->createContext(self::dataOf($first, $second));
+		$this->now = self::$ANCHOR + 10;
+		$this->dataProvider->next = self::dataOf($first, $switchback);
+		$this->setLogger($context, new class implements \ABSmartly\SDK\Context\ContextEventLogger {
+			private bool $refreshed = false;
+
+			public function handleEvent(Context $context, \ABSmartly\SDK\Context\ContextEventLoggerEvent $event): void {
+				if ($event->getEvent() === \ABSmartly\SDK\Context\ContextEventLoggerEvent::Exposure && !$this->refreshed) {
+					$this->refreshed = true;
+					$context->refresh();
+					throw new \RuntimeException('logger failed');
+				}
+			}
+		});
+		try {
+			$context->getVariableValue('k', -1);
+			self::fail('the logger error is re-thrown');
+		}
+		catch (\RuntimeException $exception) {
+			self::assertSame('logger failed', $exception->getMessage());
+		}
+		self::assertSame(2, $context->getPendingCount());
+	}
 }

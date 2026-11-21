@@ -1347,24 +1347,47 @@ class Context {
 	 */
 	private function resolveVariableValue(string $key, $default, bool $exposeAssignments) {
 		$experiments = $this->indexVariables[$key] ?? [];
+		$error = null;
 		if (!$this->hasHoldouts && !$this->hasSwitchbacks) {
-			// Data that never had holdouts keeps main's loop: nothing is suppressed and no exposure has holdout arms.
-			foreach ($experiments as $experimentVariables) {
+			// Data that never had holdouts or switchbacks keeps main's loop: nothing is suppressed and no exposure has
+			// holdout arms or a switchback slot. If a logger refreshes in the first holdout coverage or switchback, the
+			// unvisited candidates (only those) take the walk below, carrying any error that logger threw.
+			$handedOff = false;
+			foreach ($experiments as $i => $experimentVariables) {
 				$assignment = $this->getAssignment($experimentVariables->data->name);
 
 				if ($assignment->variables !== null) {
 					if ($exposeAssignments && empty($assignment->exposed)) {
-						$this->queueExposure($assignment);
+						try {
+							$this->queueExposure($assignment);
+						}
+						catch (Throwable $exception) {
+							if (!$this->hasHoldouts && !$this->hasSwitchbacks) {
+								throw $exception;
+							}
+							$error = $exception;
+						}
 					}
 
 					if (property_exists($assignment->variables, $key)
 						&& ($assignment->assigned || $assignment->overridden || $assignment->ruleOverride)) {
+						if ($error !== null) {
+							throw $error;
+						}
 						return $assignment->variables->{$key};
 					}
 				}
+
+				if ($this->hasHoldouts || $this->hasSwitchbacks) {
+					$experiments = array_slice($experiments, $i + 1);
+					$handedOff = true;
+					break;
+				}
 			}
 
-			return $default;
+			if (!$handedOff) {
+				return $default;
+			}
 		}
 
 		// A held-out unit reads the control value, not $default, when nothing else wins. The first suppressed
@@ -1373,7 +1396,6 @@ class Context {
 		// A throwing logger must not stop the walk: later candidates and their holdouts are still exposed (Java), and
 		// the first logger error is re-thrown once the winner is found. Data without holdouts or switchbacks took
 		// main's loop above.
-		$error = null;
 
 		foreach ($experiments as $experimentVariables) {
 			try {

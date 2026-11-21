@@ -494,7 +494,7 @@ The data parameter depends on the type of event. Currently, the SDK logs the fol
 | `Ready`    | `Context` turns ready                                       | `ContextData` object used to initialize the context         |
 | `Refresh`  | `Context->refresh()` method succeeds                        | `ContextData` used to refresh the context                   |
 | `Publish`  | `Context->publish()` method succeeds                        | `PublishEvent` data sent to the A/B Smartly event collector |
-| `Exposure` | `Context->getTreatment()` method succeeds on first exposure | `Exposure` data enqueued for publishing                     |
+| `Exposure` | An exposure is queued (first `getTreatment()`/`getVariableValue()`) | `Exposure` data enqueued; sent to the collector on publish  |
 | `Goal`     | `Context->track()` method succeeds                          | `GoalAchievement` goal data enqueued for publishing         |
 | `Close`    | `Context->close()` method succeeds the first time           | `null`                                                      |
 

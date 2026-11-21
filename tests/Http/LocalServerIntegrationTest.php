@@ -18,6 +18,8 @@ class LocalServerIntegrationTest extends TestCase {
 	private $serverProcess;
 	private array $pipes = [];
 	private string $logFile;
+	/** The GET /context body; left empty, the router serves no experiments. */
+	private string $contextFile;
 	private int $port;
 
 	private function findFreePort(): int {
@@ -32,6 +34,8 @@ class LocalServerIntegrationTest extends TestCase {
 	protected function setUp(): void {
 		$this->logFile = tempnam(sys_get_temp_dir(), 'absmartly_reqs_');
 		file_put_contents($this->logFile, '');
+		$this->contextFile = tempnam(sys_get_temp_dir(), 'absmartly_context_');
+		file_put_contents($this->contextFile, '');
 
 		$router = __DIR__ . '/local_server_router.php';
 		$this->port = $this->findFreePort();
@@ -45,7 +49,7 @@ class LocalServerIntegrationTest extends TestCase {
 		// Array form avoids a cmd.exe wrapper on Windows; getenv() (not $_ENV, often
 		// empty) keeps SystemRoot etc., without which the server can't open sockets.
 		$cmd = [PHP_BINARY, '-S', "127.0.0.1:{$this->port}", $router];
-		$env = ['ABSMARTLY_TEST_LOG' => $this->logFile] + getenv();
+		$env = ['ABSMARTLY_TEST_LOG' => $this->logFile, 'ABSMARTLY_TEST_CONTEXT' => $this->contextFile] + getenv();
 		$this->serverProcess = proc_open($cmd, $descriptors, $this->pipes, null, $env);
 		self::assertIsResource($this->serverProcess, 'failed to start PHP built-in server');
 
@@ -73,6 +77,9 @@ class LocalServerIntegrationTest extends TestCase {
 		}
 		if (isset($this->logFile) && is_file($this->logFile)) {
 			unlink($this->logFile);
+		}
+		if (isset($this->contextFile) && is_file($this->contextFile)) {
+			unlink($this->contextFile);
 		}
 	}
 
@@ -140,6 +147,29 @@ class LocalServerIntegrationTest extends TestCase {
 		self::assertArrayHasKey('goals', $body);
 		self::assertNotEmpty($body['goals']);
 		self::assertSame('payment', $body['goals'][0]['name']);
+
+		$sdk->close();
+	}
+
+	// A held-out unit reads control and the collector receives the holdout's exposure in place of the experiment's.
+	public function testRealGetAndPutContextPublishesTheHoldoutExposureOfAHeldOutUnit(): void {
+		file_put_contents($this->contextFile, (string) file_get_contents(__DIR__ . '/../Fixtures/json/holdouts_context.json'));
+		$clientConfig = new ClientConfig("http://127.0.0.1:{$this->port}", 'test-api-key', 'website', 'dev');
+		$sdk = new SDK(new Config(new Client($clientConfig, new ReactHttpClient())));
+
+		$contextConfig = new ContextConfig();
+		$contextConfig->setUnit('session_id', 'e791e240fcd3df7d238cfc285f475e8152fcc0ec');
+		$context = $sdk->createContext($contextConfig);
+		self::assertTrue($context->isReady());
+
+		self::assertSame(0, $context->getTreatment('exp_test_holdout'));
+		$context->publish();
+
+		$puts = array_values(array_filter($this->recordedRequests(), static fn($r) => $r['method'] === 'PUT'));
+		self::assertCount(1, $puts, 'expected one PUT /context');
+		$body = json_decode($puts[0]['body'], true, 512, JSON_THROW_ON_ERROR);
+		self::assertSame([[11, 'holdout_a', 'session_id', 0]], array_map(
+			static fn($e) => [$e['id'], $e['name'], $e['unit'], $e['variant']], $body['exposures'] ?? []));
 
 		$sdk->close();
 	}
