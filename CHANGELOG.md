@@ -78,9 +78,10 @@
 - Ready and Refresh event logger data now includes an additive `holdouts: []` field even when no holdouts exist.
 - With holdouts in the data, an exposure logger error during `getVariableValue()` no longer stops the walk over
   the experiments defining the key: later ones are still exposed and the first error is re-thrown afterwards,
-  as in the Java SDK. If that logger closes the context, the walk stops and no further exposures (including the
-  experiment's holdout exposures) are queued, since a closed context can't publish them. A context whose data has
-  never covered an experiment with a holdout keeps the previous exception and queueing behaviour.
+  as in the Java SDK. Once an event logger closes the context mid-read, whether or not it then throws, nothing
+  more is queued from that read (`getTreatment()` or `getVariableValue()`), including the experiment's holdout
+  exposures, since a closed context can't publish them. A context whose data has never covered an experiment
+  with a holdout keeps the previous exception and queueing behaviour.
 - The `timeout` option stays the connect timeout (`CURLOPT_CONNECTTIMEOUT_MS`) as in v1.0.3, bounding only
   connection establishment, not the whole request. An optional total budget for the entire request (including
   retries and back-off) is available opt-in via `HTTPClient::$totalTimeout`/`ReactHttpClient::$totalTimeout`

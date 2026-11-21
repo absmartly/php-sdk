@@ -1381,6 +1381,56 @@ class ContextHoldoutTest extends TestCase {
 		];
 	}
 
+	/** A logger that closes the context, then returns, on the first exposure of experiment 1. */
+	private static function closingLogger(): MockContextEventLoggerProxy {
+		return new class extends MockContextEventLoggerProxy {
+			public bool $closed = false;
+
+			public function handleEvent(Context $context, ContextEventLoggerEvent $event): void {
+				parent::handleEvent($context, $event);
+				if (!$this->closed && $event->getEvent() === ContextEventLoggerEvent::Exposure && $event->getData()->id === 1) {
+					$this->closed = true;
+					$context->close();
+				}
+			}
+		};
+	}
+
+	/** Experiment 1, whose UID variant lacks $key, then experiment 2, which assigns it. */
+	private static function closeCandidates(string $key): array {
+		$first = self::experiment(1, 'exp_close_first_' . $key);
+		$first->variants[1]->config = '{"unrelated":"x"}';
+		$first->variants[0]->config = json_encode([$key => 'control']);
+		$second = self::experiment(2, 'exp_close_second_' . $key);
+		$second->variants[1]->config = json_encode([$key => 'from_second']);
+		return [$first, $second];
+	}
+
+	// Holdouts that cover no experiment leave main's queueing too: the later candidate is still queued after a close.
+	public function testHoldoutCoveringNothingLoggerThatClosesTheContextKeepsMainQueueing(): void {
+		[$first, $second] = self::closeCandidates('close_uncovered');
+		$context = $this->createContext(self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)], $first, $second),
+			[self::UNIT_TYPE => self::UID], [], [], self::closingLogger());
+
+		self::assertSame('from_second', $context->getVariableValue('close_uncovered', 'default'));
+		self::assertTrue($context->isClosed());
+		self::assertSame(1, $context->getPendingCount());
+	}
+
+	// Once the data has covered an experiment, a refresh to data without holdouts keeps refusing post-close exposures.
+	public function testCoverageHistoryKeepsRefusingExposuresAfterCloseOnceDataHadHoldouts(): void {
+		[$first, $second] = self::closeCandidates('close_history');
+		$context = $this->createContext(self::data([self::holdout(11, 'holdout_b', self::HOLDOUT_B_SEED)],
+			self::coveredBy(self::experiment(3, 'exp_close_covered'), 11)), [self::UNIT_TYPE => self::UID], [], [],
+			self::closingLogger());
+		$this->dataProvider->next = self::data([], $first, $second);
+		$context->refresh();
+
+		self::assertSame('from_second', $context->getVariableValue('close_history', 'default'));
+		self::assertTrue($context->isClosed());
+		self::assertSame(0, $context->getPendingCount());
+	}
+
 	// Without holdouts a logger that closes the context and returns keeps main's (and JS's) queueing: the later
 	// candidate's exposure is still queued after the close.
 	public function testNoHoldoutLoggerThatClosesTheContextKeepsMainQueueing(): void {
