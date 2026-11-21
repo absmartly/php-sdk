@@ -1950,7 +1950,7 @@ class ContextSwitchbackTest extends TestCase {
 		self::assertSame([[[self::$UNIT_TYPE], ['exp_sb'], 0]], $this->publishedBatches());
 	}
 
-	/** An earlier batch's failure applies the retained-event cap, as the main batch's does. */
+	/** An earlier batch's failure applies the retained-event cap, as the main batch's does: its oldest exposure goes first. */
 	public function testAFailedEarlierBatchAppliesTheRetainedEventCap(): void {
 		$context = $this->contextWithAnEarlierUnitExposure();
 		$context->maxRetainedEvents = 1;
@@ -1959,6 +1959,8 @@ class ContextSwitchbackTest extends TestCase {
 		$this->failFirst(1);
 		@$context->publish();
 		self::assertSame(1, $context->getPendingCount());
+		$context->publish();
+		self::assertSame([[[self::$UNIT_TYPE, 'user_id'], [], 1]], $this->publishedBatches());
 	}
 
 	/** close() re-throws an earlier batch's failure and stays open with the events queued. */
@@ -2258,5 +2260,65 @@ class ContextSwitchbackTest extends TestCase {
 			[[self::$UNIT_TYPE, 'user_id'], [], 1],
 			[[self::$UNIT_TYPE], ['exp_sb'], 0],
 		], $this->publishedBatches());
+	}
+
+	/**
+	 * A nested publish that fails and hits the retained-event cap drops other events, not the early batch being sent:
+	 * the outer send still owns it, so once it is accepted a later read does not queue it again.
+	 */
+	public function testTheRetainedEventCapKeepsAnEarlierBatchInFlight(): void {
+		$context = $this->contextWithAnEarlierUnitExposure();
+		$context->maxRetainedEvents = 1;
+		$calls = 0;
+		$this->eventHandler->prerun = static function () use (&$calls, $context) {
+			if (++$calls === 2) {
+				throw new \RuntimeException('collector down');
+			}
+			if ($calls === 1) {
+				$context->track('goal');
+				$context->track('goal');
+				@$context->publish();
+			}
+		};
+		@$context->publish();
+		self::assertSame(0, $context->getPendingCount());
+		$context->getTreatment('exp_sb');
+		self::assertSame(0, $context->getPendingCount());
+		$context->publish();
+		self::assertSame([[[self::$UNIT_TYPE], ['exp_sb'], 0]], $this->publishedBatches());
+	}
+
+	/** A refresh that only changes a switchback's id starts a new epoch, so the next read exposes under the new id. */
+	public function testARefreshChangingTheIdExposesUnderTheNewId(): void {
+		$context = $this->createContext(self::dataOf(self::switchback(3)));
+		$this->now = self::$ANCHOR + 10;
+		$context->getTreatment('exp_sb');
+		$this->refreshTo($context, self::switchback(3, null, 9));
+		$context->getTreatment('exp_sb');
+		self::assertSame([1, 9], array_column($this->publishExposures($context), 0));
+	}
+
+	/** A rule-won slot never read the custom assignment, so a later setCustomAssignment() keeps it and its exposure. */
+	public function testARuleWonSlotIgnoresALaterCustomAssignment(): void {
+		$experiment = self::switchback(3);
+		$experiment->assignmentRules = self::ASSIGN_VARIANT_1;
+		$context = $this->createContext(self::dataOf($experiment));
+		$this->now = self::$ANCHOR + 10;
+		self::assertSame(1, $context->getTreatment('exp_sb'));
+		$context->setCustomAssignment('exp_sb', 2);
+		self::assertSame(1, $context->getTreatment('exp_sb'));
+		self::assertSame(1, $context->getPendingCount());
+	}
+
+	/** A refresh that only changes the iteration gives the switchback a new generation. */
+	public function testARefreshChangingTheIterationStartsANewGeneration(): void {
+		$context = $this->createContext(self::dataOf(self::switchback(2)));
+		$before = self::privateValue($context, 'switchbackSources')['exp_sb']->generation;
+		$this->refreshTo($context, self::switchback(2));
+		self::assertSame($before, self::privateValue($context, 'switchbackSources')['exp_sb']->generation);
+		$next = self::switchback(2);
+		$next->iteration = 2;
+		$this->refreshTo($context, $next);
+		self::assertNotSame($before, self::privateValue($context, 'switchbackSources')['exp_sb']->generation);
 	}
 }

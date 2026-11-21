@@ -1841,7 +1841,7 @@ class Context {
 
 	/**
 	 * Drops the oldest retained exposures and goals so the queue never exceeds $maxRetainedEvents, logging an Error
-	 * event for each batch dropped. Exposures are dropped before goals.
+	 * event for each batch dropped. Exposures are dropped before goals; those of an early batch being sent are not.
 	 */
 	private function capRetainedEvents(): void {
 		if ($this->maxRetainedEvents <= 0) {
@@ -1855,11 +1855,21 @@ class Context {
 
 		$toDrop = $total - $this->maxRetainedEvents;
 
-		$droppedExposures = min($toDrop, count($this->exposures));
+		$droppedAssignments = [];
+		foreach ($this->exposures as $i => $exposure) {
+			if (count($droppedAssignments) === $toDrop) {
+				break;
+			}
+			// The early batch an outer publish is sending is kept: it may still be accepted.
+			if (!isset($this->inFlightExposures[spl_object_id($exposure)])) {
+				$droppedAssignments[] = $this->exposureAssignments[$i];
+				unset($this->exposures[$i], $this->exposureAssignments[$i]);
+			}
+		}
+		$droppedExposures = count($droppedAssignments);
 		if ($droppedExposures > 0) {
-			$droppedAssignments = array_slice($this->exposureAssignments, 0, $droppedExposures);
-			$this->exposures = array_slice($this->exposures, $droppedExposures);
-			$this->exposureAssignments = array_slice($this->exposureAssignments, $droppedExposures);
+			$this->exposures = array_values($this->exposures);
+			$this->exposureAssignments = array_values($this->exposureAssignments);
 			$toDrop -= $droppedExposures;
 
 			// Clearing an unsent exposure means a later read must be able to re-queue it, so reset the matching
@@ -1964,6 +1974,7 @@ class Context {
 				$this->eventHandler->publish($event);
 			}
 			catch (Exception $exception) {
+				$this->inFlightExposures = $outer;
 				$this->publishFailed($exception, $rethrow);
 				return false;
 			}
