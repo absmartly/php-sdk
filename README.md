@@ -361,8 +361,9 @@ $treatment = $context->getTreatment('exp_delivery_fee'); // this period's varian
   unit cannot drop it or move it to another unit; the other events follow with the current units. That `publish()`
   then calls the event handler, and logs `Publish`, once per batch. A `publish()` from inside the handler while such a
   batch is being sent leaves that batch's exposures to it, so they are never sent twice. A `close()` from inside the
-  handler then publishes the other events but leaves the context open: the batch being sent may still fail, so the
-  outer caller's `close()` (or a later one, after a failure) is what closes the context.
+  handler then publishes the other events but leaves the context open, since the batch being sent may still fail. The
+  outer `close()` closes it; an outer `publish()` closes it once nothing is left queued, or after a failure, the next
+  `publish()` or `close()` that leaves nothing queued does.
 
 ### Semantic Version Conditions
 

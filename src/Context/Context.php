@@ -85,6 +85,8 @@ class Context {
 	private array $exposureAssignments = [];
 	/** The exposures of the early switchback batch being sent, by object id; a nested publish leaves them queued. */
 	private array $inFlightExposures = [];
+	/** A close() from the handler during an early batch, finished by the outer publish once nothing is left queued. */
+	private bool $closeDeferred = false;
 	private array $achievements = [];
 
 	private array $attributes = [];
@@ -954,9 +956,9 @@ class Context {
 		}
 
 		$assignment->attrsSeq = $this->attrsSeq;
-		// A refresh from a callback in the resolution replaced these sources: this read finishes on its snapshot, but
-		// its slot must not take the place of the refreshed experiment's.
-		if (($this->switchbackSources[$experimentName] ?? null) === $sources) {
+		// A refresh from a callback in the resolution started a new epoch: this read finishes on its snapshot, but its
+		// slot must not take the place of the refreshed experiment's.
+		if (($this->switchbackSources[$experimentName]->generation ?? null) === $sources->generation) {
 			$this->assignmentCache[$cacheKey] = $assignment;
 			$this->retainSwitchbackPeriod($experimentName, $sources->generation, $period);
 		}
@@ -1767,6 +1769,11 @@ class Context {
 
 	public function flush(): void {
 		$this->flushEvents(false);
+		if ($this->closeDeferred && $this->inFlightExposures === [] && $this->pendingCount === 0) {
+			$this->closeDeferred = false;
+			$this->logEvent(ContextEventLoggerEvent::Close, null);
+			$this->closed = true;
+		}
 	}
 
 	/**
@@ -2144,7 +2151,8 @@ class Context {
 	 * left open (isClosed() stays false) with its events still queued, so calling close() again retries publishing
 	 * them. The Close event is emitted only once the close succeeds. Called from the event handler while it sends an
 	 * early switchback batch, close() publishes the other queued events but leaves the context open, since that batch
-	 * may still fail and must stay retryable: the caller closes it once the outer publish returns.
+	 * may still fail and must stay retryable: an outer close() finishes it, and an outer publish() does once it leaves
+	 * nothing queued (after a failure, the next publish() or close() that does).
 	 */
 	public function close(): void {
 		if ($this->isClosed()) {
@@ -2161,8 +2169,10 @@ class Context {
 			$this->finalizing = false;
 		}
 		if ($this->inFlightExposures !== []) {
+			$this->closeDeferred = true;
 			return;
 		}
+		$this->closeDeferred = false;
 
 		$this->logEvent(ContextEventLoggerEvent::Close, null);
 		$this->closed = true;

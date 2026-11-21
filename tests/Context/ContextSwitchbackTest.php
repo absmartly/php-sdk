@@ -2308,11 +2308,12 @@ class ContextSwitchbackTest extends TestCase {
 		}
 		finally {
 			ini_set('error_log', $previous === false ? '' : $previous);
+			$logged = file_get_contents($log);
+			unlink($log);
 		}
 		// The failed nested send held only the goal; the early exposure was not part of it.
-		self::assertStringContainsString('Failed to publish 0 exposures and 1 goals', file_get_contents($log));
-		self::assertStringNotContainsString('Retained event queue exceeded', file_get_contents($log));
-		unlink($log);
+		self::assertStringContainsString('Failed to publish 0 exposures and 1 goals', $logged);
+		self::assertStringNotContainsString('Retained event queue exceeded', $logged);
 		self::assertSame(0, $context->getPendingCount());
 		self::assertSame([
 			[[self::$UNIT_TYPE], ['exp_sb'], 0],
@@ -2630,6 +2631,8 @@ class ContextSwitchbackTest extends TestCase {
 			[[self::$UNIT_TYPE, 'user_id'], [], 1],
 			[[self::$UNIT_TYPE], ['exp_sb'], 0],
 		], $this->publishedBatches());
+		// The outer close() settled the nested one: a later flush() logs no second Close.
+		$context->flush();
 		self::assertSame(1, $this->closeEventCount());
 	}
 
@@ -2659,5 +2662,69 @@ class ContextSwitchbackTest extends TestCase {
 				}
 			}
 		};
+	}
+
+	/** A refresh with unchanged data during the cluster resolution keeps the slot, so the period is exposed once. */
+	public function testAnUnchangedRefreshDuringResolutionKeepsThePeriodsSingleExposure(): void {
+		$experiment = self::switchback(2);
+		$experiment->switchbackClusters = self::clusters(self::$UNIT_TYPE, 'geo/city');
+		$context = $this->createContext(self::dataOf($experiment), null, []);
+		$this->dataProvider->next = self::dataOf($experiment);
+		$context->setAttribute('geo', new class($context) implements \JsonSerializable {
+			private Context $context;
+			private bool $refreshed = false;
+
+			public function __construct(Context $context) {
+				$this->context = $context;
+			}
+
+			public function jsonSerialize(): array {
+				if (!$this->refreshed) {
+					$this->refreshed = true;
+					$this->context->refresh();
+				}
+				return ['city' => 'store-42'];
+			}
+		});
+		$this->now = self::$ANCHOR + 10;
+		for ($i = 0; $i < 3; ++$i) {
+			self::assertSame(self::$EXPECTED_2_ARMS[0], $context->getTreatment('exp_sb'));
+		}
+		self::assertSame(1, $context->getPendingCount());
+	}
+
+	/** A nested close() during an outer publish() closes the context once that publish leaves nothing queued. */
+	public function testANestedCloseDuringAnOuterPublishClosesOnceItSucceeds(): void {
+		$context = $this->contextWithAnEarlierUnitExposure();
+		$calls = 0;
+		$this->eventHandler->prerun = static function () use (&$calls, $context) {
+			if (++$calls === 1) {
+				$context->close();
+				self::assertFalse($context->isClosed());
+			}
+		};
+		$context->publish();
+		self::assertTrue($context->isClosed());
+		self::assertSame(1, $this->closeEventCount());
+		self::assertSame(0, $context->getPendingCount());
+	}
+
+	/** After a nested close() whose outer publish() fails, the next publish() that leaves nothing queued closes it. */
+	public function testANestedCloseDuringAFailingOuterPublishClosesOnTheNextSuccessfulPublish(): void {
+		$context = $this->contextWithAnEarlierUnitExposure();
+		$calls = 0;
+		$this->eventHandler->prerun = static function () use (&$calls, $context) {
+			if (++$calls === 1) {
+				$context->close();
+				throw new \RuntimeException('early send failed');
+			}
+		};
+		@$context->publish();
+		self::assertFalse($context->isClosed());
+		self::assertSame(1, $context->getPendingCount());
+		$context->publish();
+		self::assertTrue($context->isClosed());
+		self::assertSame(1, $this->closeEventCount());
+		self::assertSame([[[self::$UNIT_TYPE], ['exp_sb'], 0]], $this->publishedBatches());
 	}
 }
