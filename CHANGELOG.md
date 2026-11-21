@@ -85,7 +85,7 @@
   as in the Java SDK. Once an event logger closes the context mid-read, whether or not it then throws, nothing
   more is queued from that read (`getTreatment()` or `getVariableValue()`), including the experiment's holdout
   exposures, since a closed context can't publish them. A context whose data has never covered an experiment
-  with a holdout keeps the previous exception and queueing behaviour.
+  with a holdout or a switchback keeps the previous exception and queueing behaviour.
 - The `timeout` option stays the connect timeout (`CURLOPT_CONNECTTIMEOUT_MS`) as in v1.0.3, bounding only
   connection establishment, not the whole request. An optional total budget for the entire request (including
   retries and back-off) is available opt-in via `HTTPClient::$totalTimeout`/`ReactHttpClient::$totalTimeout`
@@ -152,7 +152,8 @@
   any re-queue: a change within a period is not supported, the cached variant is kept and the change takes effect
   from the next period (the same constraint as every SDK's switchbacks). A switchback exposure queued before a unit
   was added is published first, in its own batch with the units it was served with, since the collector resolves the
-  serving unit again from a publish's units; that `publish()` calls the event handler once per batch. Exposures and
+  serving unit again from a publish's units; that `publish()` calls the event handler once per batch. Data with a
+  switchback costs about 3% more per cached read of any experiment; data without one takes the previous paths. Exposures and
   the publish payload carry no new fields. Payloads without switchbacks take the same paths as before. See the
   README's *Switchback Experiments*.
   Set cluster attributes as strings or integers: a float attribute is published as JSON (`3.0` as `3`), so the

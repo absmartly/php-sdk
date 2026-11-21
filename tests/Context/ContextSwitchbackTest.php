@@ -2321,4 +2321,17 @@ class ContextSwitchbackTest extends TestCase {
 		$this->refreshTo($context, $next);
 		self::assertNotSame($before, self::privateValue($context, 'switchbackSources')['exp_sb']->generation);
 	}
+
+	/** The retained-event cap leaves a list of exposures, so the next publish hands the handler one with no holes. */
+	public function testTheRetainedEventCapLeavesTheExposuresAList(): void {
+		$context = $this->createContext(self::dataOf(self::unitExperiment(), self::unitExperiment(2, 3, 'exp_other')));
+		$context->maxRetainedEvents = 1;
+		$context->getTreatment('exp_unit');
+		$context->getTreatment('exp_other');
+		$this->failFirst(1);
+		@$context->publish();
+		$context->publish();
+		self::assertSame([[0]], $this->eventHandler->exposureKeys);
+		self::assertSame([[[self::$UNIT_TYPE], ['exp_other'], 0]], $this->publishedBatches());
+	}
 }
