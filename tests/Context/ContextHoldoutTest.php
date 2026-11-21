@@ -1381,6 +1381,32 @@ class ContextHoldoutTest extends TestCase {
 		];
 	}
 
+	// Without holdouts a logger that closes the context and returns keeps main's (and JS's) queueing: the later
+	// candidate's exposure is still queued after the close.
+	public function testNoHoldoutLoggerThatClosesTheContextKeepsMainQueueing(): void {
+		$logger = new class extends MockContextEventLoggerProxy {
+			public bool $closed = false;
+
+			public function handleEvent(Context $context, ContextEventLoggerEvent $event): void {
+				parent::handleEvent($context, $event);
+				if (!$this->closed && $event->getEvent() === ContextEventLoggerEvent::Exposure && $event->getData()->id === 1) {
+					$this->closed = true;
+					$context->close();
+				}
+			}
+		};
+		$first = self::experiment(1, 'exp_no_holdout_close_first');
+		$first->variants[1]->config = '{"unrelated":"x"}';
+		$first->variants[0]->config = '{"close_key":"control"}';
+		$second = self::experiment(2, 'exp_no_holdout_close_second');
+		$second->variants[1]->config = '{"close_key":"from_second"}';
+		$context = $this->createContext(self::data([], $first, $second), [self::UNIT_TYPE => self::UID], [], [], $logger);
+
+		self::assertSame('from_second', $context->getVariableValue('close_key', 'default'));
+		self::assertTrue($context->isClosed());
+		self::assertSame(1, $context->getPendingCount());
+	}
+
 	public function testCoveredTreatmentLoggerThatClosesTheContextQueuesNoHoldoutExposure(): void {
 		$context = $this->createCoveredContextWhoseExposureLoggerCloses(
 			self::coveredBy(self::experiment(1, 'exp_close_covered_treatment'), 11));

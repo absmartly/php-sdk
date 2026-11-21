@@ -1177,8 +1177,9 @@ class Context {
 	}
 
 	private function queueExposure(Assignment $assignment): void {
-		// An event logger can close the context mid-read; anything queued after that could never be published.
-		if (!empty($assignment->exposed) || $this->closed) {
+		// With holdouts, a logger can close the context between an experiment's exposure and its holdouts'; nothing
+		// queued after that could be published. Without holdouts this keeps main's (and JS's) queueing.
+		if (!empty($assignment->exposed) || ($this->closed && $this->hasHoldouts)) {
 			return;
 		}
 
