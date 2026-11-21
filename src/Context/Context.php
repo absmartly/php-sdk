@@ -732,13 +732,11 @@ class Context {
 	private function getAssignment(string $experimentName): Assignment {
 		$experiment = $this->getExperiment($experimentName);
 
-		// Short-circuits for data that never had a switchback, so unit reads stay as cheap as before.
 		if ($this->hasSwitchbacks) {
 			if ($experiment !== null && isset($this->switchbackSources[$experimentName])) {
 				return $this->getSwitchbackAssignment($experimentName, $experiment, $this->switchbackSources[$experimentName]);
 			}
 			if (isset($this->switchbackEpochs[$experimentName])) {
-				// No longer a switchback (removed, or now a unit experiment): its slots are from another epoch.
 				$this->dropSwitchbackEpoch($experimentName);
 			}
 		}
@@ -956,8 +954,12 @@ class Context {
 		}
 
 		$assignment->attrsSeq = $this->attrsSeq;
-		$this->assignmentCache[$cacheKey] = $assignment;
-		$this->retainSwitchbackPeriod($experimentName, $sources->generation, $period);
+		// A refresh from a callback in the resolution replaced these sources: this read finishes on its snapshot, but
+		// its slot must not take the place of the refreshed experiment's.
+		if (($this->switchbackSources[$experimentName] ?? null) === $sources) {
+			$this->assignmentCache[$cacheKey] = $assignment;
+			$this->retainSwitchbackPeriod($experimentName, $sources->generation, $period);
+		}
 
 		return $assignment;
 	}
@@ -1274,7 +1276,8 @@ class Context {
 		if ($assignment->switchback !== null) {
 			// Stamped with the reading that resolved this call's period (java-sdk), since analysis derives the period from
 			// exposedAt. It is kept on the slot rather than the context, so a nested SDK call cannot change it.
-			if (!$assignment->switchback->silent) {
+			// A callback in the read (a logger, a cluster attribute's serializer) may have closed the context.
+			if (!$assignment->switchback->silent && !$this->closed) {
 				$this->queueExposure($assignment, $assignment->switchback->readAt);
 			}
 			return;
@@ -1394,8 +1397,7 @@ class Context {
 		// experiment is kept even if it lacks the key, so a later suppressed one can't win (JS).
 		$suppressedFallback = null;
 		// A throwing logger must not stop the walk: later candidates and their holdouts are still exposed (Java), and
-		// the first logger error is re-thrown once the winner is found. Data without holdouts or switchbacks took
-		// main's loop above.
+		// the first logger error is re-thrown once the winner is found.
 
 		foreach ($experiments as $experimentVariables) {
 			try {
@@ -1820,12 +1822,17 @@ class Context {
 
 		// The collector has accepted the batch: clear it before notifying the event logger so a throwing logger
 		// can never cause these events to be retained and sent again.
-		$inFlight = $this->inFlightQueue();
-		$this->exposures = [];
-		$this->exposureAssignments = [];
+		if ($this->inFlightExposures === []) {
+			$this->exposures = [];
+			$this->exposureAssignments = [];
+		}
+		else {
+			$this->removeExposures(function ($exposure) {
+				return !isset($this->inFlightExposures[spl_object_id($exposure)]);
+			});
+		}
 		$this->achievements = [];
-		$this->pendingCount = 0;
-		$this->keepInFlightExposures($inFlight);
+		$this->pendingCount = count($this->exposures);
 
 		$this->logPublished($event);
 	}
@@ -1834,7 +1841,7 @@ class Context {
 	private function publishFailed(Exception $exception, bool $rethrow): void {
 		error_log(sprintf(
 			'ABsmartly SDK Error: Failed to publish %d exposures and %d goals: %s. Events preserved for retry.',
-			count($this->exposures),
+			count($this->exposures) - count($this->inFlightExposures),
 			count($this->achievements),
 			$exception->getMessage()
 		));
@@ -1863,14 +1870,15 @@ class Context {
 
 	/**
 	 * Drops the oldest retained exposures and goals so the queue never exceeds $maxRetainedEvents, logging an Error
-	 * event for each batch dropped. Exposures are dropped before goals; those of an early batch being sent are not.
+	 * event for each batch dropped. Exposures are dropped before goals.
 	 */
 	private function capRetainedEvents(): void {
 		if ($this->maxRetainedEvents <= 0) {
 			return;
 		}
 
-		$total = count($this->exposures) + count($this->achievements);
+		// The early batch an outer publish is sending is not retained for retry, so it neither counts nor is dropped.
+		$total = count($this->exposures) - count($this->inFlightExposures) + count($this->achievements);
 		if ($total <= $this->maxRetainedEvents) {
 			return;
 		}
@@ -1882,7 +1890,6 @@ class Context {
 			if (count($droppedAssignments) === $toDrop) {
 				break;
 			}
-			// The early batch an outer publish is sending is kept: it may still be accepted.
 			if (!isset($this->inFlightExposures[spl_object_id($exposure)])) {
 				$droppedAssignments[] = $this->exposureAssignments[$i];
 				unset($this->exposures[$i], $this->exposureAssignments[$i]);
@@ -1944,25 +1951,15 @@ class Context {
 		return $event;
 	}
 
-	/** The queued exposures (with their assignments) of the early batch being sent, which a nested publish skips. */
-	private function inFlightQueue(): array {
-		$queue = [];
-		if ($this->inFlightExposures !== []) {
-			foreach ($this->exposures as $i => $exposure) {
-				if (isset($this->inFlightExposures[spl_object_id($exposure)])) {
-					$queue[] = [$exposure, $this->exposureAssignments[$i]];
-				}
+	/** Removes the queued exposures, with their assignments, for which $sent returns true, keeping the rest a list. */
+	private function removeExposures(callable $sent): void {
+		foreach ($this->exposures as $i => $exposure) {
+			if ($sent($exposure)) {
+				unset($this->exposures[$i], $this->exposureAssignments[$i]);
 			}
 		}
-		return $queue;
-	}
-
-	private function keepInFlightExposures(array $queue): void {
-		foreach ($queue as [$exposure, $assignment]) {
-			$this->exposures[] = $exposure;
-			$this->exposureAssignments[] = $assignment;
-			++$this->pendingCount;
-		}
+		$this->exposures = array_values($this->exposures);
+		$this->exposureAssignments = array_values($this->exposureAssignments);
 	}
 
 	/**
@@ -2004,14 +2001,11 @@ class Context {
 				$this->inFlightExposures = $outer;
 			}
 
-			foreach ($this->exposures as $i => $exposure) {
-				if (isset($exposures[spl_object_id($exposure)])) {
-					unset($this->exposures[$i], $this->exposureAssignments[$i]);
-					--$this->pendingCount;
-				}
-			}
-			$this->exposures = array_values($this->exposures);
-			$this->exposureAssignments = array_values($this->exposureAssignments);
+			$queued = count($this->exposures);
+			$this->removeExposures(static function ($exposure) use ($exposures) {
+				return isset($exposures[spl_object_id($exposure)]);
+			});
+			$this->pendingCount -= $queued - count($this->exposures);
 
 			$this->logPublished($event);
 		}
@@ -2100,6 +2094,7 @@ class Context {
 		$oldExperimentHoldouts = $this->experimentHoldouts;
 		$oldSwitchbackSources = $this->switchbackSources;
 		$oldHasHoldouts = $this->hasHoldouts;
+		$oldHasSwitchbacks = $this->hasSwitchbacks;
 		try {
 			$data = $this->dataProvider->getContextData();
 			$this->setData($data);
@@ -2116,6 +2111,7 @@ class Context {
 			$this->experimentHoldouts = $oldExperimentHoldouts;
 			$this->switchbackSources = $oldSwitchbackSources;
 			$this->hasHoldouts = $oldHasHoldouts;
+			$this->hasSwitchbacks = $oldHasSwitchbacks;
 			error_log(sprintf(
 				'ABsmartly SDK Error: Failed to refresh context, keeping existing data: %s in %s:%d',
 				$exception->getMessage(),
@@ -2146,7 +2142,9 @@ class Context {
 	/**
 	 * Publishes any queued events and closes the context. A failed final publish is re-thrown and the context is
 	 * left open (isClosed() stays false) with its events still queued, so calling close() again retries publishing
-	 * them. The Close event is emitted only once the close succeeds.
+	 * them. The Close event is emitted only once the close succeeds. Called from the event handler while it sends an
+	 * early switchback batch, close() publishes the other queued events but leaves the context open, since that batch
+	 * may still fail and must stay retryable: the caller closes it once the outer publish returns.
 	 */
 	public function close(): void {
 		if ($this->isClosed()) {
@@ -2161,6 +2159,9 @@ class Context {
 		}
 		finally {
 			$this->finalizing = false;
+		}
+		if ($this->inFlightExposures !== []) {
+			return;
 		}
 
 		$this->logEvent(ContextEventLoggerEvent::Close, null);

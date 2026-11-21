@@ -1897,10 +1897,6 @@ class ContextSwitchbackTest extends TestCase {
 		self::assertSame([[[self::$UNIT_TYPE], ['exp_sb'], 0]], $this->publishedBatches());
 	}
 
-	/**
-	 * With only an earlier exposure queued, one batch is sent: with the served units and the attributes the Collector
-	 * resolves the cluster from, and logged as a Publish.
-	 */
 	public function testAnEarlierBatchCarriesTheAttributesAndIsLogged(): void {
 		$context = $this->contextWithAnEarlierUnitExposure();
 		$context->publish();
@@ -2263,8 +2259,9 @@ class ContextSwitchbackTest extends TestCase {
 	}
 
 	/**
-	 * A nested publish that fails and hits the retained-event cap drops other events, not the early batch being sent:
-	 * the outer send still owns it, so once it is accepted a later read does not queue it again.
+	 * A nested publish that fails and hits the retained-event cap drops only events retained for retry: the early batch
+	 * being sent neither counts toward the cap nor is dropped, so the goal that fits is kept and sent by the outer
+	 * publish, and a later read does not queue the accepted batch again.
 	 */
 	public function testTheRetainedEventCapKeepsAnEarlierBatchInFlight(): void {
 		$context = $this->contextWithAnEarlierUnitExposure();
@@ -2275,8 +2272,8 @@ class ContextSwitchbackTest extends TestCase {
 				throw new \RuntimeException('collector down');
 			}
 			if ($calls === 1) {
-				$context->track('goal');
-				$context->track('goal');
+				$context->track('purchase');
+				$context->track('purchase');
 				@$context->publish();
 			}
 		};
@@ -2284,8 +2281,43 @@ class ContextSwitchbackTest extends TestCase {
 		self::assertSame(0, $context->getPendingCount());
 		$context->getTreatment('exp_sb');
 		self::assertSame(0, $context->getPendingCount());
-		$context->publish();
-		self::assertSame([[[self::$UNIT_TYPE], ['exp_sb'], 0]], $this->publishedBatches());
+		self::assertSame([
+			[[self::$UNIT_TYPE], ['exp_sb'], 0],
+			[[self::$UNIT_TYPE, 'user_id'], [], 1],
+		], $this->publishedBatches());
+	}
+
+	/** A goal-only nested publish that fails keeps its goal under a cap the early batch in flight would exceed. */
+	public function testAnEarlierBatchInFlightDoesNotEvictARetryableGoal(): void {
+		$context = $this->contextWithAnEarlierUnitExposure();
+		$context->maxRetainedEvents = 1;
+		$calls = 0;
+		$this->eventHandler->prerun = static function () use (&$calls, $context) {
+			if (++$calls === 2) {
+				throw new \RuntimeException('collector down');
+			}
+			if ($calls === 1) {
+				$context->track('purchase');
+				@$context->publish();
+			}
+		};
+		$log = tempnam(sys_get_temp_dir(), 'sdklog');
+		$previous = ini_set('error_log', $log);
+		try {
+			$context->publish();
+		}
+		finally {
+			ini_set('error_log', $previous === false ? '' : $previous);
+		}
+		// The failed nested send held only the goal; the early exposure was not part of it.
+		self::assertStringContainsString('Failed to publish 0 exposures and 1 goals', file_get_contents($log));
+		self::assertStringNotContainsString('Retained event queue exceeded', file_get_contents($log));
+		unlink($log);
+		self::assertSame(0, $context->getPendingCount());
+		self::assertSame([
+			[[self::$UNIT_TYPE], ['exp_sb'], 0],
+			[[self::$UNIT_TYPE, 'user_id'], [], 1],
+		], $this->publishedBatches());
 	}
 
 	/** A refresh that only changes a switchback's id starts a new epoch, so the next read exposes under the new id. */
@@ -2402,5 +2434,230 @@ class ContextSwitchbackTest extends TestCase {
 			self::assertSame('logger failed', $exception->getMessage());
 		}
 		self::assertSame(2, $context->getPendingCount());
+	}
+
+	/**
+	 * The hand-off walks only the unvisited candidates: the visited one, refreshed into a full-on switchback that would
+	 * win the key, is not read again, so the value and exposures come from the later candidate.
+	 */
+	public function testAVariableWalkHandOffDoesNotReplayAVisitedCandidate(): void {
+		$variants = [(object) ['name' => 'A', 'config' => '{"k":1}'], (object) ['name' => 'B', 'config' => '{"k":2}']];
+		$first = self::unitExperiment(2, 1, 'exp_a');
+		$first->unitType = 'user_id';
+		$first->variants = $variants;
+		$second = self::unitExperiment(2, 2, 'exp_b');
+		$second->variants = $variants;
+		$refreshedFirst = self::switchback(2, null, 1, 'exp_a');
+		$refreshedFirst->variants = $variants;
+		$refreshedFirst->fullOnVariant = 1;
+		$refreshedSecond = self::switchback(2, null, 2, 'exp_b');
+		$refreshedSecond->variants = $variants;
+		$context = $this->createContext(self::dataOf($first, $second));
+		$this->now = self::$ANCHOR + 10;
+		$this->dataProvider->next = self::dataOf($refreshedFirst, $refreshedSecond);
+		$this->setLogger($context, self::refreshOnFirstExposure());
+		self::assertSame(self::$EXPECTED_2_ARMS[0] + 1, $context->getVariableValue('k', -1));
+		self::assertSame(['exp_a', 'exp_b'], array_column($this->publishExposures($context), 1));
+	}
+
+	/**
+	 * A refresh rejected mid-walk keeps the previous data and its walk: with no switchback installed, the logger error
+	 * is re-thrown at once and the later unit candidate is not exposed.
+	 */
+	public function testARejectedRefreshMidWalkKeepsThePreviousWalk(): void {
+		$variants = [(object) ['name' => 'A', 'config' => '{"k":1}'], (object) ['name' => 'B', 'config' => '{"k":2}']];
+		$first = self::unitExperiment(2, 1, 'exp_a');
+		$first->unitType = 'user_id';
+		$first->variants = $variants;
+		$second = self::unitExperiment(2, 2, 'exp_b');
+		$second->variants = $variants;
+		$broken = self::unitExperiment(2, 3, 'exp_c');
+		unset($broken->id);
+		$context = $this->createContext(self::dataOf($first, $second));
+		$this->now = self::$ANCHOR + 10;
+		$this->dataProvider->next = self::dataOf(self::switchback(2, null, 4, 'exp_sb'), $broken);
+		$this->setLogger($context, self::refreshOnFirstExposure(true));
+		try {
+			@$context->getVariableValue('k', -1);
+			self::fail('the logger error is re-thrown');
+		}
+		catch (\RuntimeException $exception) {
+			self::assertSame('logger failed', $exception->getMessage());
+		}
+		self::assertSame(1, $context->getPendingCount());
+		self::assertFalse(self::privateValue($context, 'hasSwitchbacks'));
+	}
+
+	/** A logger that closes the context mid-walk stops a later switchback from queueing an exposure that cannot publish. */
+	public function testASwitchbackIsNotQueuedAfterALoggerClosesTheContext(): void {
+		$variants = [(object) ['name' => 'A', 'config' => '{"other":1}'], (object) ['name' => 'B', 'config' => '{"other":2}']];
+		$unit = self::unitExperiment(2, 1, 'exp_unit');
+		$unit->variants = $variants;
+		$unit->variants[0]->config = '{"sb.arm":0}';
+		$unit->variants[1]->config = '{"sb.arm":0}';
+		$unit->unitType = 'user_id';
+		$switchback = self::switchback(2, null, 2);
+		$switchback->variants = [(object) ['name' => 'A', 'config' => '{"sb.arm":10}'], (object) ['name' => 'B', 'config' => '{"sb.arm":11}']];
+		$context = $this->createContext(self::dataOf($unit, $switchback));
+		$this->now = self::$ANCHOR + 10;
+		$this->setLogger($context, new class implements \ABSmartly\SDK\Context\ContextEventLogger {
+			public array $events = [];
+
+			public function handleEvent(Context $context, \ABSmartly\SDK\Context\ContextEventLoggerEvent $event): void {
+				$this->events[] = $event->getEvent();
+				if ($event->getEvent() === \ABSmartly\SDK\Context\ContextEventLoggerEvent::Exposure && !$context->isClosed()) {
+					$context->close();
+				}
+			}
+		});
+		$logger = self::privateValue($context, 'eventLogger');
+		self::assertSame(10 + self::$EXPECTED_2_ARMS[0], $context->getVariableValue('sb.arm', -1));
+		self::assertTrue($context->isClosed());
+		self::assertSame(0, $context->getPendingCount());
+		self::assertSame(['Exposure', 'Publish', 'Close'], $logger->events);
+	}
+
+	/** A cluster attribute's serializer that closes the context leaves no switchback exposure queued on it. */
+	public function testASerializerThatClosesTheContextQueuesNoSwitchbackExposure(): void {
+		$experiment = self::switchback(2);
+		$experiment->switchbackClusters = self::clusters(self::$UNIT_TYPE, 'geo/city');
+		$context = $this->createContext(self::dataOf($experiment), null, []);
+		$context->setAttribute('geo', new class($context) implements \JsonSerializable {
+			private Context $context;
+
+			public function __construct(Context $context) {
+				$this->context = $context;
+			}
+
+			public function jsonSerialize(): array {
+				if (!$this->context->isClosed()) {
+					$this->context->close();
+				}
+				return ['city' => 'store-42'];
+			}
+		});
+		$this->now = self::$ANCHOR + 10;
+		self::assertSame(self::$EXPECTED_2_ARMS[0], $context->getTreatment('exp_sb'));
+		self::assertTrue($context->isClosed());
+		self::assertSame(0, $context->getPendingCount());
+	}
+
+	/**
+	 * A refresh from a cluster attribute's serializer that replaces the switchback wins over the read in progress: that
+	 * read finishes on its snapshot, and later reads serve and expose the refreshed experiment.
+	 */
+	public function testAnOlderReadDoesNotReplaceARefreshedSlot(): void {
+		$experiment = self::switchback(2);
+		$experiment->switchbackClusters = self::clusters(self::$UNIT_TYPE, 'geo/city');
+		$experiment->variants = [(object) ['name' => 'A', 'config' => '{"v":0}'], (object) ['name' => 'B', 'config' => '{"v":0}']];
+		$refreshed = self::switchback(2, null, 9);
+		// A plain attribute: the serializer, still being encoded, cannot be read again from inside itself.
+		$refreshed->switchbackClusters = self::clusters(self::$UNIT_TYPE, 'geo_plain/city');
+		$refreshed->variants = [(object) ['name' => 'A', 'config' => '{"v":99}'], (object) ['name' => 'B', 'config' => '{"v":99}']];
+		$context = $this->createContext(self::dataOf($experiment), null, ['geo_plain' => ['city' => 'store-42']]);
+		$this->dataProvider->next = self::dataOf($refreshed);
+		$geo = new class($context) implements \JsonSerializable {
+			private Context $context;
+			private bool $refreshed = false;
+			public $nested = null;
+
+			public function __construct(Context $context) {
+				$this->context = $context;
+			}
+
+			public function jsonSerialize(): array {
+				if (!$this->refreshed) {
+					$this->refreshed = true;
+					$this->context->refresh();
+					$this->nested = $this->context->peekVariableValue('v', -1);
+				}
+				return ['city' => 'store-42'];
+			}
+		};
+		$context->setAttribute('geo', $geo);
+		$this->now = self::$ANCHOR + 10;
+		$context->peekTreatment('exp_sb');
+		self::assertSame(99, $geo->nested);
+		self::assertSame(99, $context->peekVariableValue('v', -1));
+		self::assertSame(99, $context->getVariableValue('v', -1));
+		self::assertSame([9], array_column($this->publishExposures($context), 0));
+	}
+
+	/**
+	 * close() from the event handler while it sends an early batch does not close the context: that batch then fails and
+	 * stays queued, the next close() retries it once, and Close is logged once, after it is accepted.
+	 */
+	public function testANestedCloseLeavesAFailingEarlierBatchRetryable(): void {
+		$context = $this->contextWithAnEarlierUnitExposure();
+		$calls = 0;
+		$this->eventHandler->prerun = static function () use (&$calls, $context) {
+			if (++$calls === 1) {
+				$context->close();
+				throw new \RuntimeException('early send failed');
+			}
+		};
+		try {
+			@$context->close();
+			self::fail('the early send failure is re-thrown');
+		}
+		catch (\RuntimeException $exception) {
+			self::assertSame('early send failed', $exception->getMessage());
+		}
+		self::assertFalse($context->isClosed());
+		self::assertSame(1, $context->getPendingCount());
+		self::assertSame(0, $this->closeEventCount());
+		$context->close();
+		self::assertTrue($context->isClosed());
+		self::assertSame([[[self::$UNIT_TYPE], ['exp_sb'], 0]], $this->publishedBatches());
+		self::assertSame(1, $this->closeEventCount());
+	}
+
+	/** A nested close() whose outer early send succeeds leaves the outer caller to close: one Close, after the send. */
+	public function testANestedCloseDuringASuccessfulEarlierBatchLeavesTheOuterCloseToFinish(): void {
+		$context = $this->contextWithAnEarlierUnitExposure();
+		$context->track('goal');
+		$calls = 0;
+		$this->eventHandler->prerun = static function () use (&$calls, $context) {
+			if (++$calls === 1) {
+				$context->close();
+				self::assertFalse($context->isClosed());
+			}
+		};
+		$context->close();
+		self::assertTrue($context->isClosed());
+		self::assertSame(0, $context->getPendingCount());
+		self::assertSame([
+			[[self::$UNIT_TYPE, 'user_id'], [], 1],
+			[[self::$UNIT_TYPE], ['exp_sb'], 0],
+		], $this->publishedBatches());
+		self::assertSame(1, $this->closeEventCount());
+	}
+
+	private function closeEventCount(): int {
+		return count(array_filter($this->logger->events ?? [], static function ($event) {
+			return $event->getEvent() === \ABSmartly\SDK\Context\ContextEventLoggerEvent::Close;
+		}));
+	}
+
+	/** An event logger that refreshes the context on its first Exposure, then throws when $throw is set. */
+	private static function refreshOnFirstExposure(bool $throw = false): \ABSmartly\SDK\Context\ContextEventLogger {
+		return new class($throw) implements \ABSmartly\SDK\Context\ContextEventLogger {
+			private bool $throw;
+			private bool $refreshed = false;
+
+			public function __construct(bool $throw) {
+				$this->throw = $throw;
+			}
+
+			public function handleEvent(Context $context, \ABSmartly\SDK\Context\ContextEventLoggerEvent $event): void {
+				if ($event->getEvent() === \ABSmartly\SDK\Context\ContextEventLoggerEvent::Exposure && !$this->refreshed) {
+					$this->refreshed = true;
+					$context->refresh();
+					if ($this->throw) {
+						throw new \RuntimeException('logger failed');
+					}
+				}
+			}
+		};
 	}
 }
