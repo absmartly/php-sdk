@@ -995,7 +995,12 @@ class Context {
 		$experiments = $this->indexVariables[$key] ?? [];
 		if (!$this->hasHoldouts) {
 			// Data that never had holdouts keeps main's loop: nothing is suppressed and no exposure has holdout arms.
-			foreach ($experiments as $experimentVariables) {
+			foreach ($experiments as $i => $experimentVariables) {
+				if ($this->hasHoldouts) {
+					// A logger refreshed in the first coverage: the unvisited candidates take the holdout-aware walk.
+					$experiments = array_slice($experiments, $i);
+					break;
+				}
 				$assignment = $this->getAssignment($experimentVariables->data->name);
 
 				if ($assignment->variables !== null) {
@@ -1010,7 +1015,9 @@ class Context {
 				}
 			}
 
-			return $default;
+			if (!$this->hasHoldouts) {
+				return $default;
+			}
 		}
 
 		// A held-out unit reads the control value, not $default, when nothing else wins. The first suppressed

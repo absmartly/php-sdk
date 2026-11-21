@@ -1457,6 +1457,34 @@ class ContextHoldoutTest extends TestCase {
 		self::assertSame(1, $context->getPendingCount());
 	}
 
+	// An exposure logger that refreshes mid-walk and installs the first coverage hands the unvisited candidates to the
+	// holdout-aware path: the later, now held-out candidate gets control and its holdout exposure, not its own.
+	public function testRefreshThatInstallsFirstCoverageMidWalkUsesTheHoldoutPathForLaterCandidates(): void {
+		$logger = new class extends MockContextEventLoggerProxy {
+			public ?ContextData $next = null;
+
+			public function handleEvent(Context $context, ContextEventLoggerEvent $event): void {
+				parent::handleEvent($context, $event);
+				if ($this->next !== null && $event->getEvent() === ContextEventLoggerEvent::Exposure && $event->getData()->id === 1) {
+					$this->next = null;
+					$context->refresh();
+				}
+			}
+		};
+		[$first, $second] = self::closeCandidates('refresh_epoch');
+		$context = $this->createContext(self::data([], $first, $second), [self::UNIT_TYPE => self::UID], [], [], $logger);
+		[$first, $second] = self::closeCandidates('refresh_epoch');
+		$second->variants[0]->config = '{"refresh_epoch":"control"}';
+		$this->dataProvider->next = self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)], $first,
+			self::coveredBy($second, 11));
+		$logger->next = $this->dataProvider->next;
+
+		self::assertSame('control', $context->getVariableValue('refresh_epoch', 'default'));
+		self::assertSame(0, $context->getTreatment('exp_close_second_refresh_epoch'));
+		$this->assertPublished($context, self::exposure(1, 'exp_close_first_refresh_epoch', self::NORMAL_VARIANT),
+			self::holdoutExposure(11, 'holdout_a', 0));
+	}
+
 	public function testCoveredTreatmentLoggerThatClosesTheContextQueuesNoHoldoutExposure(): void {
 		$context = $this->createCoveredContextWhoseExposureLoggerCloses(
 			self::coveredBy(self::experiment(1, 'exp_close_covered_treatment'), 11));
