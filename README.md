@@ -117,7 +117,7 @@ The async HTTP client uses ReactPHP promises and allows for non-blocking I/O ope
 | `retries`               | `int`                                          | &#10060;  | `5`                                           | The number of times a failed GET request is retried. Event publishing (PUT) is never retried.                                                                                 |
 | `timeout`               | `int`                                          | &#10060;  | `3000`                                        | An amount of time, in milliseconds, before the SDK will stop trying to connect.                                                                                               |
 | `eventLogger`           | `ContextEventLogger`                           | &#10060;  | `null`                                        | A callback function which runs after SDK events. See [Custom Event Logger](#custom-event-logger) below.                                                                      |
-| `contextDataProvider`   | `ContextDataProvider`                          | &#10060;  | auto                                          | Custom provider for context data (advanced usage)                                                                                                                             |
+| `contextDataProvider`   | `ContextDataProvider`                          | &#10060;  | auto                                          | Custom provider for context data (advanced usage). Return fresh `ContextData`, experiment and holdout objects on each call; never mutate ones already handed to a context. |
 | `contextEventHandler`   | `ContextEventHandler`                          | &#10060;  | auto                                          | Custom handler for publishing events (advanced usage)                                                                                                                         |
 
 ## Creating a New Context
@@ -291,6 +291,29 @@ that matches now; an exposure that was already queued is not taken back. A split
 is set gives the full-on variant (variant 0 when the experiment is not full-on) until the unit is set, unless the
 treatment was already exposed. Exposures decided by a rule are flagged `ruleOverride` and excluded from analysis.
 
+### Holdouts
+
+A holdout keeps a share of units out of every experiment it covers, so their long-term effect can be measured.
+Holdouts arrive with the context data (`ContextData::$holdouts`) and cover the experiments that list them in
+`holdoutIds`; nothing needs configuring in the SDK.
+
+- A unit in a holdout's held-out arm (variant 0) gets control (variant 0) for each covered experiment, and
+  `getTreatment()` sends no exposure for that experiment. In a 3-arm holdout, arm 1 holds out only experiments that
+  are not full-on.
+- The first `getTreatment()` or `getVariableValue()` on a covered experiment sends one exposure for each of its
+  holdouts (once per holdout and unit type), with the holdout's arm as the variant. `peekTreatment()` and
+  `peekVariableValue()` send nothing.
+- An override (`setOverride()`) and a matching assignment rule win over a holdout; a custom assignment does not.
+- `getVariableValue()` for a held-out unit returns the control variant's value when no other experiment assigns the
+  key.
+
+When creating a context from pre-fetched data, pass the holdouts too:
+
+```php
+$contextData = new ContextData($payload->experiments, $payload->holdouts ?? []);
+$context = $sdk->createContextWithData($contextConfig, $contextData);
+```
+
 ### Semantic Version Conditions
 
 Audience and rule conditions can compare versions with `semver_eq`, `semver_gt`, `semver_gte`, `semver_lt` and
@@ -419,11 +442,11 @@ The data parameter depends on the type of event. Currently, the SDK logs the fol
 
 | Event      | When                                                        | Data                                                        |
 | ---------- | ----------------------------------------------------------- | ----------------------------------------------------------- |
-| `Error`    | `Context` receives an error                                 | `Exception` object thrown                                   |
+| `Error`    | `Context` receives an error                                 | `Throwable` object thrown                                   |
 | `Ready`    | `Context` turns ready                                       | `ContextData` object used to initialize the context         |
 | `Refresh`  | `Context->refresh()` method succeeds                        | `ContextData` used to refresh the context                   |
 | `Publish`  | `Context->publish()` method succeeds                        | `PublishEvent` data sent to the A/B Smartly event collector |
-| `Exposure` | `Context->getTreatment()` method succeeds on first exposure | `Exposure` data enqueued for publishing                     |
+| `Exposure` | An exposure is queued (first `getTreatment()`/`getVariableValue()`) | `Exposure` data enqueued; sent to the collector on publish  |
 | `Goal`     | `Context->track()` method succeeds                          | `GoalAchievement` goal data enqueued for publishing         |
 | `Close`    | `Context->close()` method succeeds the first time           | `null`                                                      |
 

@@ -9,11 +9,13 @@ use ABSmartly\SDK\Http\HTTPClient;
 use ABSmartly\SDK\PublishEvent;
 use React\Promise\PromiseInterface;
 
+use function is_array;
 use function json_decode;
 use function json_encode;
 use function React\Promise\reject;
 use function React\Promise\resolve;
 use function preg_match;
+use function property_exists;
 use function rtrim;
 
 use const JSON_THROW_ON_ERROR;
@@ -95,8 +97,7 @@ class Client implements AsyncClientInterface {
 	public function getContextData(): ContextData {
 		$this->authRequest();
 		$response = $this->httpClient->get($this->url, $this->query, $this->headers);
-		$decoded = $this->decode($response->content);
-		return new ContextData($decoded->experiments);
+		return self::contextData($this->decode($response->content));
 	}
 
 	public function getContextDataAsync(): PromiseInterface {
@@ -115,7 +116,7 @@ class Client implements AsyncClientInterface {
 		}
 		return $this->httpClient
 			->getAsync($this->url, $this->query, $this->headers)
-			->then(fn($response) => new ContextData($this->decode($response->content)->experiments));
+			->then(fn($response) => self::contextData($this->decode($response->content)));
 	}
 
 	public function publish(PublishEvent $publishEvent): void {
@@ -141,6 +142,11 @@ class Client implements AsyncClientInterface {
 			return reject($e);
 		}
 		return $this->httpClient->putAsync($this->url, $this->query, $this->headers, $data);
+	}
+
+	private static function contextData(object $decoded): ContextData {
+		$holdouts = property_exists($decoded, 'holdouts') && is_array($decoded->holdouts) ? $decoded->holdouts : [];
+		return new ContextData($decoded->experiments, $holdouts);
 	}
 
 	public function decode(string $jsonString): object {
