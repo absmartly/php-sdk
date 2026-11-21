@@ -1177,7 +1177,8 @@ class Context {
 	}
 
 	private function queueExposure(Assignment $assignment): void {
-		if (!empty($assignment->exposed)) {
+		// An event logger can close the context mid-read; anything queued after that could never be published.
+		if (!empty($assignment->exposed) || $this->closed) {
 			return;
 		}
 

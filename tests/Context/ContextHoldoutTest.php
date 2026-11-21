@@ -1381,6 +1381,59 @@ class ContextHoldoutTest extends TestCase {
 		];
 	}
 
+	public function testCoveredTreatmentLoggerThatClosesTheContextQueuesNoHoldoutExposure(): void {
+		$context = $this->createCoveredContextWhoseExposureLoggerCloses(
+			self::coveredBy(self::experiment(1, 'exp_close_covered_treatment'), 11));
+
+		try {
+			$context->getTreatment('exp_close_covered_treatment');
+			self::fail('the logger error must reach the caller');
+		}
+		catch (\RuntimeException $exception) {
+			self::assertSame('logger 1', $exception->getMessage());
+		}
+
+		$this->assertClosedWithOnlyTheExperimentExposurePublished($context, 'exp_close_covered_treatment');
+	}
+
+	public function testCoveredVariableLoggerThatClosesTheContextQueuesNoHoldoutExposure(): void {
+		$context = $this->createCoveredContextWhoseExposureLoggerCloses(
+			self::coveredBy(self::withVariables(self::experiment(1, 'exp_close_covered_variable'), 'close_covered_key'), 11));
+
+		try {
+			$context->getVariableValue('close_covered_key', 'default');
+			self::fail('the logger error must reach the caller');
+		}
+		catch (\RuntimeException $exception) {
+			self::assertSame('logger 1', $exception->getMessage());
+		}
+
+		$this->assertClosedWithOnlyTheExperimentExposurePublished($context, 'exp_close_covered_variable');
+	}
+
+	private function createCoveredContextWhoseExposureLoggerCloses(object $covered): Context {
+		$logger = new ThrowingExposureLogger();
+		$logger->throwWhen = function($exposure) use (&$context) {
+			if ($exposure->id === 1) {
+				$context->close();
+				throw new \RuntimeException('logger 1');
+			}
+			return false;
+		};
+		$context = $this->createContext(self::data([self::holdout(11, 'holdout_close_covered', self::HOLDOUT_B_SEED)],
+			$covered), [self::UNIT_TYPE => self::UID], [], [], $logger);
+
+		return $context;
+	}
+
+	private function assertClosedWithOnlyTheExperimentExposurePublished(Context $context, string $experimentName): void {
+		self::assertTrue($context->isClosed());
+		self::assertSame(0, $context->getPendingCount());
+		self::assertCount(1, $this->eventHandler->submitted);
+		self::assertSame([[1, $experimentName]], array_map(static fn($e) => [$e->id, $e->name],
+			$this->eventHandler->submitted[0]->exposures));
+	}
+
 	// A later candidate whose assignment itself fails must not replace the first deferred logger error.
 	public function testLaterCandidateAssignmentFailureDoesNotReplaceTheDeferredLoggerError(): void {
 		$logger = new ThrowingExposureLogger();
