@@ -1568,6 +1568,88 @@ class ContextHoldoutTest extends TestCase {
 			self::holdoutExposure(12, 'holdout_c', 0));
 	}
 
+	/** A logger that refreshes to each of $steps in turn, on the exposure of the experiment id each is keyed by. */
+	private static function multiRefreshingLogger(): MockContextEventLoggerProxy {
+		return new class extends MockContextEventLoggerProxy {
+			/** @var array<int, ContextData> */
+			public array $steps = [];
+			public ?HoldoutDataProvider $provider = null;
+
+			public function handleEvent(Context $context, ContextEventLoggerEvent $event): void {
+				parent::handleEvent($context, $event);
+				if ($event->getEvent() === ContextEventLoggerEvent::Exposure && isset($this->steps[$event->getData()->id])) {
+					$this->provider->next = $this->steps[$event->getData()->id];
+					unset($this->steps[$event->getData()->id]);
+					$context->refresh();
+				}
+			}
+		};
+	}
+
+	/** Experiments 1-4 for $key: 1 and 2 assigned to a variant without it, 3 covered by 11, 4 covered by 12. */
+	private static function fourCandidates(string $key, bool $thirdKeepsKey): array {
+		$candidates = [];
+		foreach ([1, 2] as $id) {
+			$experiment = self::experiment($id, 'exp_' . $id . '_' . $key);
+			$experiment->variants[0]->config = json_encode([$key => 'c' . $id]);
+			$experiment->variants[1]->config = '{"unrelated":"x"}';
+			$candidates[] = $experiment;
+		}
+		$third = self::coveredBy(self::experiment(3, 'exp_3_' . $key), 11);
+		$third->variants[0]->config = json_encode($thirdKeepsKey ? [$key => 'c3'] : ['other' => 'c3']);
+		$third->variants[1]->config = json_encode($thirdKeepsKey ? [$key => 't3'] : ['other' => 't3']);
+		if (!$thirdKeepsKey) {
+			$third->iteration = 2;
+		}
+		$candidates[] = $third;
+		$fourth = self::coveredBy(self::experiment(4, 'exp_4_' . $key), 12);
+		$fourth->variants[0]->config = json_encode([$key => 'c4']);
+		$candidates[] = $fourth;
+		return $candidates;
+	}
+
+	// The live candidates are rebuilt on every mid-walk refresh, not only the first: a second refresh that strips the
+	// key from a later candidate keeps it out of the fallback and its holdout exposure unqueued.
+	public function testLiveCandidatesAreRebuiltOnEachMidWalkRefresh(): void {
+		$logger = self::multiRefreshingLogger();
+		$holdouts = [self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED), self::holdout(12, 'holdout_c', self::HOLDOUT_A_SEED)];
+		$context = $this->createContext(self::data($holdouts, ...self::fourCandidates('twice', true)),
+			[self::UNIT_TYPE => self::UID], [], [], $logger);
+		$logger->provider = $this->dataProvider;
+		$logger->steps = [
+			1 => self::data($holdouts, ...self::fourCandidates('twice', true)),
+			2 => self::data($holdouts, ...self::fourCandidates('twice', false)),
+		];
+
+		self::assertSame('c4', $context->getVariableValue('twice', 'default'));
+		$this->assertPublished($context, self::exposure(1, 'exp_1_twice', self::NORMAL_VARIANT),
+			self::exposure(2, 'exp_2_twice', self::NORMAL_VARIANT), self::holdoutExposure(12, 'holdout_c', 0));
+	}
+
+	// A refresh during the no-holdout loop that installs the first coverage and strips the key from a later candidate
+	// is seen by the holdout walk too: that candidate is skipped and the next one supplies the value.
+	public function testHandoffRefreshThatStripsTheKeyIsSeenByTheHoldoutWalk(): void {
+		$logger = self::refreshingLogger(1);
+		[$first, $second] = self::closeCandidates('handoff_lost');
+		$third = self::experiment(3, 'exp_close_third_handoff_lost');
+		$third->variants[0]->config = '{"handoff_lost":"live C"}';
+		$context = $this->createContext(self::data([], $first, $second, $third), [self::UNIT_TYPE => self::UID], [], [],
+			$logger);
+		[$first, $second] = self::closeCandidates('handoff_lost');
+		$second->iteration = 2;
+		$second->variants[0]->config = '{"other":"b-control"}';
+		$second->variants[1]->config = '{"other":"b-treatment"}';
+		$third = self::coveredBy(self::experiment(3, 'exp_close_third_handoff_lost'), 12);
+		$third->variants[0]->config = '{"handoff_lost":"live C"}';
+		$this->dataProvider->next = self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED),
+			self::holdout(12, 'holdout_c', self::HOLDOUT_A_SEED)], $first, self::coveredBy($second, 11), $third);
+		$logger->next = $this->dataProvider->next;
+
+		self::assertSame('live C', $context->getVariableValue('handoff_lost', 'default'));
+		$this->assertPublished($context, self::exposure(1, 'exp_close_first_handoff_lost', self::NORMAL_VARIANT),
+			self::holdoutExposure(12, 'holdout_c', 0));
+	}
+
 	// A candidate the refresh removed takes no part in the rest of the walk, even when a peek cached its suppressed
 	// assignment: it neither supplies its control value nor queues its holdout exposure.
 	public function testCandidateRemovedByAMidWalkRefreshIsSkippedEvenWhenItsSuppressedAssignmentIsCached(): void {
