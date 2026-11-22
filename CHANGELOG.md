@@ -28,7 +28,9 @@
 - **Failed `close()` re-throws and leaves the context open.** When the final publish fails, `close()` now
   re-throws the collector error and the context stays open (`isClosed()` is false) with its events still queued; a
   later `close()` retries, and the `Close` event is emitted only once the close succeeds. `publish()`/`flush()`
-  keep the v1.0.3 behaviour of logging and returning without throwing.
+  keep the v1.0.3 behaviour of logging and returning without throwing. With a switchback in the data, a `close()`
+  whose callbacks keep queueing events can also return without throwing and leave the context open with those events
+  queued; check `isClosed()` (see the README's *Switchback Experiments*).
 - **Events retained after a failed publish are bounded and `isFailed()` no longer flips on a publish failure.**
   A failed `publish()`/`close()` keeps its exposures and goals queued for a later retry instead of discarding them
   (v1.0.3 discarded every event after the first failure and marked the context failed). The retained queue is now

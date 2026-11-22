@@ -3123,4 +3123,29 @@ class ContextSwitchbackTest extends TestCase {
 			return array_column($event->goals ?? [], 'name');
 		}, $this->eventHandler->submitted));
 	}
+
+	/** On switchback data without holdouts, a candidate a mid-walk refresh stripped of the key is skipped. */
+	public function testAVariableWalkSkipsACandidateARefreshStrippedOfTheKey(): void {
+		$variants = [(object) ['name' => 'A', 'config' => '{"k":1}'], (object) ['name' => 'B', 'config' => '{"k":2}']];
+		$first = self::unitExperiment(2, 1, 'exp_a');
+		$first->variants = $variants;
+		$first->audience = self::STRICT_GOLD_AUDIENCE;
+		$first->audienceStrict = true;
+		$stripped = self::unitExperiment(2, 2, 'exp_b');
+		$stripped->variants = $variants;
+		$stripped->audience = self::STRICT_GOLD_AUDIENCE;
+		$stripped->audienceStrict = true;
+		$last = self::unitExperiment(2, 3, 'exp_c');
+		$last->variants = $variants;
+		$last->fullOnVariant = 1;
+		$switchback = self::switchback(2, null, 4, 'exp_sb');
+		$context = $this->createContext(self::dataOf($first, $stripped, $last, $switchback));
+		$this->now = self::$ANCHOR + 10;
+		$refreshed = clone $stripped;
+		$refreshed->variants = [(object) ['name' => 'A', 'config' => '{"other":1}'], (object) ['name' => 'B', 'config' => '{"other":2}']];
+		$this->dataProvider->next = self::dataOf($first, $refreshed, $last, $switchback);
+		$this->setLogger($context, self::refreshOnFirstExposure());
+		self::assertSame(2, $context->getVariableValue('k', -1));
+		self::assertSame(['exp_a', 'exp_c'], array_column($this->publishExposures($context), 1));
+	}
 }
