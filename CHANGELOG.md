@@ -153,6 +153,9 @@
   ignored too. `new ContextData($experiments)` keeps working (no holdouts). Payloads without holdouts keep
   the previous exposure and variable lookup code. Cached assignment validation reads the experiment data once and
   compares its fields inline, offsetting the additional holdout flag check on reads.
+  A holdout exposure that the retained-event cap drops is queued again by the next exposing read of an experiment
+  whose cached assignment still pins that arm, provided the arm was still current when it was dropped. An arm
+  already replaced by a new draw when the cap drops it is not queued again; the cap is otherwise lossy.
 - **Assignment rules.** An experiment's `assignmentRules` are evaluated in order, and the first rule whose
   environments and conditions match decides the variant: `assign` rules pick a fixed variant and `split` rules
   split traffic with their own percentages (such as `20/30/50`, which must sum to 100 within 0.01), hashing the
