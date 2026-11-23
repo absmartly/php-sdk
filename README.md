@@ -220,7 +220,9 @@ $buttonColor = $context->getVariableValue('button.color', $defaultButtonColorVal
 
 When several experiments define the same variable key, the SDK picks one winner: among the experiments whose
 variants define the key, ordered by experiment id, the first one the user is assigned to, overridden into or
-rule-assigned to. Only the winner is exposed. If the winner's variant does not define the key, or the user is in none
+rule-assigned to. A user outside the traffic split or failing a non-strict audience is still in the experiment and
+gets its value for their variant; a strict audience mismatch, or no unit for the experiment's unit type, does not
+count. Only the winner is exposed. If the winner's variant does not define the key, or the user is in none
 of them, the default value is returned; a later experiment is never used instead.
 
 ### Peek at Treatment Variants
