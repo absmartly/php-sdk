@@ -354,7 +354,9 @@ class ContextHoldoutTest extends TestCase {
 			self::coveredBy(self::experiment(1, 'exp_holdout_custom_cache'), 11)), [self::UNIT_TYPE => self::UID], [], ['exp_holdout_custom_cache' => 3]);
 
 		self::assertSame(0, $context->getTreatment('exp_holdout_custom_cache'));
+		$cached = self::invoke($context, 'getAssignment', 'exp_holdout_custom_cache');
 		self::assertSame(0, $context->getTreatment('exp_holdout_custom_cache'));
+		self::assertSame($cached, self::invoke($context, 'getAssignment', 'exp_holdout_custom_cache'));
 		self::assertSame(1, $context->getPendingCount());
 	}
 
@@ -412,7 +414,9 @@ class ContextHoldoutTest extends TestCase {
 			self::coveredBy(self::experiment(1, 'exp_holdout_cache'), 11)));
 
 		self::assertSame(0, $context->getTreatment('exp_holdout_cache'));
+		$cached = self::invoke($context, 'getAssignment', 'exp_holdout_cache');
 		self::assertSame(0, $context->getTreatment('exp_holdout_cache'));
+		self::assertSame($cached, self::invoke($context, 'getAssignment', 'exp_holdout_cache'));
 		self::assertSame(1, $context->getPendingCount());
 	}
 
@@ -1001,7 +1005,6 @@ class ContextHoldoutTest extends TestCase {
 			self::exposure(2, 'exp_var_throwing_assigned', self::NORMAL_VARIANT), self::holdoutExposure(12, 'holdout_b', 1));
 	}
 
-	// The first error wins when a later candidate's logger throws too.
 	public function testFirstVariableCandidateLoggerErrorWinsOverALaterOne(): void {
 		$logger = new ThrowingExposureLogger();
 		$suppressed = self::coveredBy(self::experiment(1, 'exp_var_first_error'), 11);
@@ -1060,7 +1063,6 @@ class ContextHoldoutTest extends TestCase {
 		return [$first, $second];
 	}
 
-	// A candidate covered by a holdout that does not hold the unit out also defers the error and keeps walking.
 	public function testThrowingHoldoutLoggerOnCoveredNotHeldOutVariableCandidateKeepsWalking(): void {
 		$logger = new ThrowingExposureLogger();
 		$logger->throwWhen = fn($exposure) => $exposure->id === 12;
@@ -1315,8 +1317,6 @@ class ContextHoldoutTest extends TestCase {
 		self::assertSame(1, $context->getPendingCount());
 	}
 
-	// With holdouts in the data, an uncovered candidate's logger error is deferred too, so a later covered candidate's
-	// own and holdout exposures are still queued (Java). Data without holdouts keeps main's loop.
 	public function testThrowingLoggerOnUncoveredVariableCandidateKeepsWalkingWhenTheDataHasHoldouts(): void {
 		$logger = new ThrowingExposureLogger();
 		$logger->throwWhen = fn($exposure) => $exposure->id === 1;
@@ -1520,8 +1520,6 @@ class ContextHoldoutTest extends TestCase {
 			self::holdoutExposure(11, 'holdout_a', 0));
 	}
 
-	// Skipping a removed candidate moves on to the next one rather than ending the walk: a later held-out candidate
-	// that stayed installed still supplies its control value and holdout exposure.
 	public function testWalkContinuesPastACandidateRemovedByAMidWalkRefresh(): void {
 		$logger = self::refreshingLogger(1);
 		[$first, $second] = self::closeCandidates('refresh_skip');
@@ -1542,9 +1540,6 @@ class ContextHoldoutTest extends TestCase {
 			self::holdoutExposure(11, 'holdout_a', 0));
 	}
 
-	// A candidate a mid-walk refresh keeps but strips of the key takes no part in the rest of the walk: it neither
-	// claims the held-out fallback nor queues its holdout exposure, so a later candidate that still defines the key
-	// supplies the value.
 	public function testCandidateThatLosesTheKeyInAMidWalkRefreshIsSkipped(): void {
 		$logger = self::refreshingLogger(1);
 		[$first, $second] = self::closeCandidates('refresh_lost');
@@ -1608,8 +1603,6 @@ class ContextHoldoutTest extends TestCase {
 		return $candidates;
 	}
 
-	// The live candidates are rebuilt on every mid-walk refresh, not only the first: a second refresh that strips the
-	// key from a later candidate keeps it out of the fallback and its holdout exposure unqueued.
 	public function testLiveCandidatesAreRebuiltOnEachMidWalkRefresh(): void {
 		$logger = self::multiRefreshingLogger();
 		$holdouts = [self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED), self::holdout(12, 'holdout_c', self::HOLDOUT_A_SEED)];
@@ -1626,8 +1619,6 @@ class ContextHoldoutTest extends TestCase {
 			self::exposure(2, 'exp_2_twice', self::NORMAL_VARIANT), self::holdoutExposure(12, 'holdout_c', 0));
 	}
 
-	// A refresh during the no-holdout loop that installs the first coverage and strips the key from a later candidate
-	// is seen by the holdout walk too: that candidate is skipped and the next one supplies the value.
 	public function testHandoffRefreshThatStripsTheKeyIsSeenByTheHoldoutWalk(): void {
 		$logger = self::refreshingLogger(1);
 		[$first, $second] = self::closeCandidates('handoff_lost');
@@ -1713,8 +1704,6 @@ class ContextHoldoutTest extends TestCase {
 			self::exposure(2, 'exp_close_second_refresh_last', self::NORMAL_VARIANT));
 	}
 
-	// The candidate whose exposure triggered the refresh is not re-read even if the new data covers it: it keeps the
-	// ordinary exposure already queued, and only later candidates use the new coverage.
 	public function testRefreshThatCoversTheTriggeringCandidateDoesNotRereadIt(): void {
 		$logger = self::refreshingLogger(1);
 		[$first, $second] = self::closeCandidates('refresh_self');

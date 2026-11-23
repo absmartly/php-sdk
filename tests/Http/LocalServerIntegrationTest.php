@@ -151,7 +151,6 @@ class LocalServerIntegrationTest extends TestCase {
 		$sdk->close();
 	}
 
-	// A held-out unit reads control and the collector receives the holdout's exposure in place of the experiment's.
 	public function testRealGetAndPutContextPublishesTheHoldoutExposureOfAHeldOutUnit(): void {
 		file_put_contents($this->contextFile, (string) file_get_contents(__DIR__ . '/../Fixtures/json/holdouts_context.json'));
 		$clientConfig = new ClientConfig("http://127.0.0.1:{$this->port}", 'test-api-key', 'website', 'dev');

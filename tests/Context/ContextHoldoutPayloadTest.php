@@ -560,7 +560,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertSame([[1, 'exp_gone', 'session_id', 1]], $this->published($context));
 	}
 
-	// A holdout exposure dropped by the retained-event cap is re-queued by the next exposing read, like any other.
 	public function testHoldoutExposureDroppedByTheRetainedEventCapIsQueuedAgain(): void {
 		$context = $this->createContext(new ContextData([self::experiment(1, 'exp', [11])], [self::holdout(11, 'holdout_a', 13, 111)]));
 		$context->maxRetainedEvents = 1;
@@ -690,7 +689,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertSame([[11, 'exp_eleven', 'session_id', 1], [11, 'holdout_a', 'session_id', 0]], $this->published($context));
 	}
 
-	// A refresh that fails part-way keeps the dropped mark, so the held-back holdout exposure is still queued again.
 	public function testFailedRefreshKeepsADroppedHoldoutExposurePending(): void {
 		[$context, $provider] = $this->contextWithProvider(
 			new ContextData([self::experiment(1, 'exp', [11])], [self::holdout(11, 'holdout_a', 13, 111)]));
@@ -988,7 +986,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 		}
 	}
 
-	// A refresh whose data fails to install sends an Error event, never Refresh, and keeps the previous data.
 	public function testRefreshWhoseDataFailsToInstallKeepsThePreviousData(): void {
 		[$context, $provider, $logger] = $this->contextWithThrowingRefreshLogger(new \RuntimeException('unused'));
 		$broken = self::experiment(2, 'exp_broken', []);
@@ -1167,7 +1164,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertSame(1, $context->getPendingCount());
 	}
 
-	// A refresh that fails part-way keeps the holdouts of the data still installed.
 	public function testFailedRefreshKeepsTheInstalledHoldouts(): void {
 		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'test-api-key', 'website', 'production'));
 		$config = new Config($client);
