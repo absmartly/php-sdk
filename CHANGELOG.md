@@ -74,9 +74,10 @@ changes below before upgrading. It is not a guarantee that every 1.0.3 workload 
 - **Audience re-evaluation after `setAttribute()`.** As in JS, a treatment computed before an attribute changed is
   re-evaluated, so the treatment and exposures can change. *Affects:* code setting audience attributes after
   reading a treatment; strict audiences can move from variant 0 and send a second exposure.
-- **Shared variable keys.** A key defined by several experiments resolves in ascending experiment-id order (see
-  Fixed below for the rule); `getVariableKeys()` keeps its shape and reports the lowest-id experiment. *Affects:*
-  experiments sharing variable keys (1.0.3 used the last one loaded).
+- **Shared variable keys.** A key defined by several experiments resolves to the lowest-id experiment the unit is
+  in (1.0.3 used the last one loaded); see Fixed for the full rule. `getVariableKeys()` keeps its shape and reports
+  the lowest-id experiment. *Affects:* anyone running two or more experiments whose variants define the same
+  variable key.
 
 - **Traffic eligibility uses the traffic seed.** Eligibility for experiments with traffic below 100% is assigned
   with `trafficSeedHi`/`trafficSeedLo`, as in every other SDK and the backend (1.0.3 reused the variant seed).
@@ -104,21 +105,21 @@ changes below before upgrading. It is not a guarantee that every 1.0.3 workload 
   next `publish()`/`close()`, `publish()` still logs and returns, and `isFailed()` only reports a failed load.
 - `Context::close()` no longer closes the SDK's shared HTTP client, so closing one context no longer breaks
   sibling contexts. `SDK::close()` still closes it.
-- **Only the winning experiment is exposed for a shared variable key.** Earlier 1.1.0 builds exposed every
-  experiment they checked while resolving a key, including ones the unit was not in (a strict audience mismatch or
-  a missing unit) and ones that lost to an earlier experiment, recording units in experiments they never saw. They
-  also fell through to a later experiment when the winner's variant did not define the key, so the arm a unit got
-  decided which experiment's value it saw, biasing both experiments. *Affects:* anyone running two or more
-  experiments whose variants define the same variable key. The rule now applied, as in the Java SDK:
+- **`getVariableValue()` exposes only the experiment whose value it uses.** 1.0.3 exposed the experiment
+  behind a key even when the unit was not in it: on a strict audience mismatch, or with no unit for its unit type
+  (exposed as `assigned`), recording units in an experiment they never saw and returning its control value. With
+  shared keys, the experiment picked could also be one the unit was not in while another one it was in was
+  ignored. *Affects:* anyone with strict audiences or experiments on a unit type a context may lack, and anyone
+  running two or more experiments whose variants define the same variable key. The rule now applied, as in the
+  Java SDK:
   - The candidates are the experiments whose variants (any variant) define the key, by ascending experiment id.
-  - The winner is the first candidate the unit is assigned to, overridden into or rule-assigned to. If there is
-    none, the caller default is returned and nothing is exposed.
+  - The winner is the first candidate the unit is assigned to (including outside the traffic split), overridden
+    into or rule-assigned to. If there is none, the caller default is returned and nothing is exposed.
   - If the winner's variant does not define the key, the caller default is returned; later candidates are not
-    consulted. A key present with a `null`, `false`, `0` or empty value is returned as is.
-  - `getVariableValue()` exposes only the winner; `peekVariableValue()` exposes nothing.
-
-  This also applies to a key defined by a single experiment: `getVariableValue()` no longer exposes it when the
-  unit is not in it (strict audience mismatch or missing unit); 1.0.3 did. `getTreatment()` still exposes it.
+    consulted, so the arm a unit got never decides which experiment it reads. A key present with a `null`,
+    `false`, `0` or empty value is returned as is.
+  - `getVariableValue()` exposes only the winner; candidates that were checked but did not win are not exposed.
+    `peekVariableValue()` exposes nothing. `getTreatment()` still exposes the experiment it is asked about.
 - `getVariableValue()` and `peekVariableValue()` agree: both return the default when the unit is neither
   assigned nor overridden (1.0.3's peek returned the control variant's value).
 - An experiment missing a required field, with a field of the wrong type, or with malformed audience JSON no

@@ -623,7 +623,7 @@ class Context {
 				}
 				else if (empty($experiment->data->fullOnVariant)) {
 					// Not a full-on experiment: assign via the traffic split only when the unit is present.
-					// A missing unit leaves the assignment unassigned (control) so it falls through, as in JS.
+					// A missing unit leaves the assignment unassigned (control), so it never wins a variable key.
 					if (($uid = $this->units[$experiment->data->unitType] ?? null) !== null) {
 						$assigner = $this->getVariantAssigner($unitType, $uid);
 
@@ -698,7 +698,7 @@ class Context {
 			return $default;
 		}
 
-		if ($exposeAssignment) {
+		if ($exposeAssignment && !$assignment->exposed) {
 			$this->queueExposure($assignment);
 		}
 

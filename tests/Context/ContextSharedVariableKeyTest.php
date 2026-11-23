@@ -148,6 +148,40 @@ class ContextSharedVariableKeyTest extends TestCase {
 		self::assertSame(['exp_low'], $this->publishedExposureNames($context));
 	}
 
+	public function testAnOverrideToAVariantTheExperimentDoesNotHaveReturnsTheDefaultAndExposesOnlyIt(): void {
+		$context = $this->createContext([
+			self::loser(),
+			self::experiment(1, 'exp_low', [['shared' => 'low-control'], ['shared' => 'low']]),
+			self::experiment(2, 'exp_high', [null, ['shared' => 'high']]),
+		]);
+		$context->setOverride('exp_low', 7);
+
+		self::assertSame('def', $context->peekVariableValue('shared', 'def'));
+		self::assertSame(0, $context->getPendingCount());
+		self::assertSame('def', $context->getVariableValue('shared', 'def'));
+		self::assertSame(1, $context->getPendingCount());
+		self::assertSame(['exp_low'], $this->publishedExposureNames($context));
+	}
+
+	public function testATrafficExcludedCandidateStillWinsWithItsControlValue(): void {
+		// Outside the traffic split the unit is still assigned (not eligible, variant 0), so it is in the experiment.
+		$context = $this->createContext([
+			self::loser(),
+			self::experiment(1, 'exp_low', [['shared' => 'low-control'], ['shared' => 'low']], ['trafficSplit' => [1.0, 0.0], 'fullOnVariant' => 0]),
+			self::experiment(2, 'exp_high', [null, ['shared' => 'high']]),
+		]);
+
+		self::assertSame('low-control', $context->getVariableValue('shared', 'def'));
+		self::assertSame(1, $context->getPendingCount());
+
+		$context->publish();
+		$exposures = $this->eventHandler->submitted[0]->exposures;
+		self::assertCount(1, $exposures);
+		self::assertSame('exp_low', $exposures[0]->name);
+		self::assertTrue($exposures[0]->assigned);
+		self::assertFalse($exposures[0]->eligible);
+	}
+
 	public function testNoCandidateAssignedReturnsTheDefaultAndExposesNothing(): void {
 		$context = $this->createContext([
 			self::experiment(1, 'exp_strict', [['shared' => 'a-control'], ['shared' => 'a']], self::strictAudience()),
