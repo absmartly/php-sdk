@@ -576,17 +576,12 @@ class ContextTest extends TestCase {
 		self::assertFalse($this->eventHandler->submitted[0]->exposures[0]->audienceMismatch);
 	}
 
-	// Function name yikes!
-	public function testGetVariableValueQueuesExposureWithAudienceMismatchFalseAndControlVariantOnAudienceMismatchInStrictMode(): void {
+	// A strict audience mismatch is not a participant, so it never wins the key and is not exposed (as in Java).
+	public function testGetVariableValueDoesNotQueueExposureOnAudienceMismatchInStrictMode(): void {
 		$context = $this->createReadyContext('audience_strict_context.json');
 
 		self::assertSame("small", $context->getVariableValue('banner.size', 'small'));
-		self::assertSame(1, $context->getPendingCount());
-
-		$context->publish();
-		self::assertArrayHasKey(0, $this->eventHandler->submitted);
-		self::assertSame('exp_test_ab', $this->eventHandler->submitted[0]->exposures[0]->name);
-		self::assertTrue($this->eventHandler->submitted[0]->exposures[0]->audienceMismatch);
+		self::assertSame(0, $context->getPendingCount());
 	}
 
 	public function testGetVariableValueCallsEventLogger(): void {
@@ -609,8 +604,9 @@ class ContextTest extends TestCase {
 		self::assertEquals($this->variableExperiments, $context->getVariableKeys());
 	}
 
-	// Shared variable keys: ports the JS _resolveVariableValue rule. A key defined by more than one experiment is
-	// resolved by walking the experiments in ascending id order. See tests/Fixtures/json/shared_variables.json.
+	// Shared variable keys, as in the Java SDK's getVariableAssignment: the first experiment (ascending id) defining
+	// the key that the unit is in wins, and only it is exposed. See tests/Fixtures/json/shared_variables.json and
+	// ContextSharedVariableKeyTest.
 
 	public function testSharedKeyBothAssignedLowestIdWins(): void {
 		// (a) exp_low_a (id 1) and exp_high_a (id 2) both define "a.color".
@@ -625,25 +621,20 @@ class ContextTest extends TestCase {
 		self::assertSame('low', $context->getVariableValue('a.color', 'def'));
 	}
 
-	public function testSharedKeyFirstUnassignedFallsThroughAndBothExposed(): void {
-		// (c) exp_low_b (id 3, strict audience) is unassigned for age 5, so it falls through to exp_high_b (id 4).
-		// Both experiments are exposed, the first with assigned:false.
+	public function testSharedKeyFirstUnassignedIsSkippedAndOnlyTheWinnerExposed(): void {
+		// (c) exp_low_b (id 3, strict audience) is unassigned for age 5, so exp_high_b (id 4) wins. Only the winner
+		// is exposed: the unit never saw exp_low_b.
 		$context = $this->createReadyContext('shared_variables.json');
 		$context->setAttributeValue('age', 5);
 
 		self::assertSame('highb', $context->getVariableValue('b.color', 'def'));
-		self::assertSame(2, $context->getPendingCount());
+		self::assertSame(1, $context->getPendingCount());
 
 		$context->publish();
 		$event = $this->eventHandler->submitted[0];
-		$byName = [];
-		foreach ($event->exposures as $exposure) {
-			$byName[$exposure->name] = $exposure;
-		}
-		self::assertArrayHasKey('exp_low_b', $byName);
-		self::assertArrayHasKey('exp_high_b', $byName);
-		self::assertFalse($byName['exp_low_b']->assigned);
-		self::assertTrue($byName['exp_high_b']->assigned);
+		self::assertCount(1, $event->exposures);
+		self::assertSame('exp_high_b', $event->exposures[0]->name);
+		self::assertTrue($event->exposures[0]->assigned);
 	}
 
 	public function testSharedKeyFirstUnassignedButOverriddenWins(): void {
@@ -655,11 +646,14 @@ class ContextTest extends TestCase {
 		self::assertSame('lowb', $context->getVariableValue('b.color', 'def'));
 	}
 
-	public function testSharedKeyAssignedVariantLacksKeyFallsThrough(): void {
-		// (e) exp_low_c (id 5) is assigned a variant whose config lacks "c.color", so it falls through to
-		// exp_high_c (id 6).
+	public function testSharedKeyAssignedVariantLacksKeyReturnsTheDefault(): void {
+		// (e) exp_low_c (id 5) is assigned a variant whose config lacks "c.color". It still wins, so the default is
+		// returned and exp_high_c (id 6) is neither read nor exposed: falling through on the arm would bias exp_low_c.
 		$context = $this->createReadyContext('shared_variables.json');
-		self::assertSame('highc', $context->getVariableValue('c.color', 'def'));
+		self::assertSame('def', $context->getVariableValue('c.color', 'def'));
+
+		$context->publish();
+		self::assertSame(['exp_low_c'], array_map(fn($e) => $e->name, $this->eventHandler->submitted[0]->exposures));
 	}
 
 	public function testSharedKeyPeekReturnsSameValueAndQueuesNothing(): void {
@@ -668,31 +662,33 @@ class ContextTest extends TestCase {
 
 		self::assertSame('low', $context->peekVariableValue('a.color', 'def'));
 		self::assertSame('highb', $context->peekVariableValue('b.color', 'def'));
-		self::assertSame('highc', $context->peekVariableValue('c.color', 'def'));
+		self::assertSame('def', $context->peekVariableValue('c.color', 'def'));
 		self::assertSame(0, $context->getPendingCount());
 	}
 
-	public function testSharedKeyMissingUnitExperimentFallsThroughAndBothExposed(): void {
+	public function testSharedKeyMissingUnitExperimentIsSkippedAndOnlyTheWinnerExposed(): void {
 		// A running, non-full-on experiment (exp_missing_unit, id 10) whose unit type "device_id" is absent must
-		// stay unassigned/control rather than becoming assigned/full-on, so "shared.color" falls through to the
-		// next experiment (exp_present_unit, id 12). Its control variant A defines the key, so a lost assigned
-		// guard would wrongly return "control-a" and fail here.
+		// stay unassigned/control rather than becoming assigned/full-on, so the next experiment (exp_present_unit,
+		// id 12) wins "shared.color". Its control variant A defines the key, so a lost assigned guard would wrongly
+		// return "control-a" and fail here. The skipped experiment is not exposed.
 		$context = $this->createReadyContext('shared_variables_missing_unit.json');
 
 		self::assertSame('b', $context->getVariableValue('shared.color', 'def'));
-		self::assertSame(2, $context->getPendingCount());
+		self::assertSame(1, $context->getPendingCount());
 
 		$context->publish();
 		$event = $this->eventHandler->submitted[0];
-		$byName = [];
-		foreach ($event->exposures as $exposure) {
-			$byName[$exposure->name] = $exposure;
-		}
-		self::assertArrayHasKey('exp_missing_unit', $byName);
-		self::assertArrayHasKey('exp_present_unit', $byName);
-		self::assertFalse($byName['exp_missing_unit']->assigned);
-		self::assertFalse($byName['exp_missing_unit']->fullOn);
-		self::assertTrue($byName['exp_present_unit']->assigned);
+		self::assertCount(1, $event->exposures);
+		self::assertSame('exp_present_unit', $event->exposures[0]->name);
+		self::assertTrue($event->exposures[0]->assigned);
+
+		// getTreatment still exposes the skipped experiment, unassigned and not full-on.
+		self::assertSame(0, $context->getTreatment('exp_missing_unit'));
+		$context->publish();
+		$exposure = $this->eventHandler->submitted[1]->exposures[0];
+		self::assertSame('exp_missing_unit', $exposure->name);
+		self::assertFalse($exposure->assigned);
+		self::assertFalse($exposure->fullOn);
 	}
 
 	public function testSharedKeyPresentNullValueShadowsLaterExperiment(): void {
@@ -2748,10 +2744,13 @@ class ContextTest extends TestCase {
 		self::assertTrue($event->exposures[0]->audienceMismatch);
 	}
 
-	public function testVariableValueQueuesExposureWithAudienceMatchFalseAndControlOnMismatchStrictMode(): void {
+	public function testVariableValueDoesNotQueueExposureOnMismatchStrictModeButTreatmentDoes(): void {
 		$context = $this->createReadyContext('audience_strict_context.json');
 
 		self::assertSame('small', $context->getVariableValue('banner.size', 'small'));
+		self::assertSame(0, $context->getPendingCount());
+
+		self::assertSame(0, $context->getTreatment('exp_test_ab'));
 		self::assertSame(1, $context->getPendingCount());
 
 		$context->publish();

@@ -216,6 +216,13 @@ $defaultButtonColorValue = 'red';
 $buttonColor = $context->getVariableValue('button.color', $defaultButtonColorValue);
 ```
 
+#### Shared variable keys
+
+When several experiments define the same variable key, the SDK picks one winner: among the experiments whose
+variants define the key, ordered by experiment id, the first one the user is assigned to, overridden into or
+rule-assigned to. Only the winner is exposed. If the winner's variant does not define the key, or the user is in none
+of them, the default value is returned; a later experiment is never used instead.
+
 ### Peek at Treatment Variants
 
 Although generally not recommended, it is sometimes necessary to peek at a treatment or variable without triggering an exposure. The A/B Smartly SDK provides a `Context->peekTreatment()` method for that.

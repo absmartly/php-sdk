@@ -263,7 +263,7 @@ class Context {
 
 	/**
 	 * Indexes $experimentVariables under $key, keeping the per-key list sorted and unique by experiment id, as the
-	 * JS SDK's _resolveVariableValue does (insertUniqueSorted by data->id).
+	 * JS SDK does (insertUniqueSorted by data->id), so getVariableAssignment visits the candidates by ascending id.
 	 */
 	private function addVariableExperiment(string $key, ExperimentVariables $experimentVariables): void {
 		if (!isset($this->indexVariables[$key])) {
@@ -688,33 +688,41 @@ class Context {
 	}
 
 	/**
-	 * Ports the JS SDK `_resolveVariableValue`: walks the experiments that define $key in ascending id order. For
-	 * each one it computes the assignment; when the variant has variables, getVariableValue (not peek) queues the
-	 * exposure the first time, and if $key is present and the unit is assigned, overridden or rule-assigned it returns
-	 * that value.
-	 * Otherwise it falls through to the next experiment, and finally to $default.
+	 * Resolves $key as the Java SDK's Context.getVariableAssignment does. Only the winner is exposed (by
+	 * getVariableValue, not peek), and when its variant lacks $key the default is returned: resolution never falls
+	 * through to a later experiment because of the arm the unit got.
 	 */
-	private function resolveVariableValue(string $key, $default, bool $exposeAssignments) {
-		$experiments = $this->indexVariables[$key] ?? [];
+	private function resolveVariableValue(string $key, $default, bool $exposeAssignment) {
+		$assignment = $this->getVariableAssignment($key);
+		if ($assignment === null) {
+			return $default;
+		}
 
-		foreach ($experiments as $experimentVariables) {
-			$assignment = $this->getAssignment($experimentVariables->data->name);
+		if ($exposeAssignment) {
+			$this->queueExposure($assignment);
+		}
 
-			if (isset($assignment->variables)) {
-				if ($exposeAssignments && empty($assignment->exposed)) {
-					$this->queueExposure($assignment);
-				}
-
-				// property_exists (not isset) so a present key whose value is null is still returned,
-				// matching JS: a lower-id experiment that defines $key=null shadows a later competitor.
-				if (property_exists($assignment->variables, $key)
-					&& ($assignment->assigned || $assignment->overridden || $assignment->ruleOverride)) {
-					return $assignment->variables->{$key};
-				}
-			}
+		// property_exists (not isset) so a present key whose value is null is returned rather than the default.
+		if (isset($assignment->variables) && property_exists($assignment->variables, $key)) {
+			return $assignment->variables->{$key};
 		}
 
 		return $default;
+	}
+
+	/**
+	 * The candidates are the experiments whose variants define $key, in ascending id order; the winner is the first
+	 * one the unit is assigned, overridden or rule-assigned to. Null when there is none.
+	 */
+	private function getVariableAssignment(string $key): ?Assignment {
+		foreach ($this->indexVariables[$key] ?? [] as $experimentVariables) {
+			$assignment = $this->getAssignment($experimentVariables->data->name);
+			if ($assignment->assigned || $assignment->overridden || $assignment->ruleOverride) {
+				return $assignment;
+			}
+		}
+
+		return null;
 	}
 
 	public function getVariableKeys(): array {
