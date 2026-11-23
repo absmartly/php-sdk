@@ -1004,7 +1004,7 @@ class Context {
 					catch (Throwable $exception) {
 						$error = $error ?? $exception;
 						// Coverage installed by the callback defers its error to the winner; otherwise retain fail-fast.
-						if (!$this->hasHoldouts || ($holdoutAware && $this->isClosed())) {
+						if (!$this->hasHoldouts) {
 							throw $error;
 						}
 					}

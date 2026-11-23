@@ -23,8 +23,8 @@ use React\Promise\PromiseInterface;
 use function React\Promise\resolve;
 
 /**
- * Holdouts as they arrive from the collector: decoding, forward compatibility, malformed entries, and the shared
- * cross-sdk-tests cases H1-H8 that the java-sdk suite doesn't cover.
+ * Holdouts as they arrive from the collector: decoding, forward compatibility, malformed entries, and the
+ * cross-sdk-tests Holdout Conformance scenarios (501-507) that the java-sdk suite doesn't cover.
  */
 class ContextHoldoutPayloadTest extends TestCase {
 	private const UID = 'e791e240fcd3df7d238cfc285f475e8152fcc0ec';
@@ -387,7 +387,7 @@ class ContextHoldoutPayloadTest extends TestCase {
 		}
 	}
 
-	// H1: a holdout id listed twice covers the experiment once and exposes once (JS insertUniqueSorted).
+	// A holdout id listed twice covers the experiment once and exposes once (JS insertUniqueSorted).
 	public function testDuplicateHoldoutIdsCoverOnceAndExposeOnce(): void {
 		$context = $this->createContext(new ContextData([self::experiment(1, 'exp', [12, 11, 12, 11])],
 			[self::holdout(11, 'holdout_a', 1, 222), self::holdout(12, 'holdout_b', 1, 222)]));
@@ -400,7 +400,7 @@ class ContextHoldoutPayloadTest extends TestCase {
 		], $this->published($context));
 	}
 
-	// H6: one holdout covering experiments with two unit types publishes one exposure per unit type.
+	// Scenario 505: one holdout covering experiments with two unit types publishes one exposure per unit type.
 	public function testSharedHoldoutAcrossUnitTypesPublishesOneExposurePerUnitType(): void {
 		$context = $this->createContext(new ContextData([
 			self::experiment(1, 'exp_session', [11]),
@@ -416,7 +416,7 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertSame([[11, 'holdout_a', 'session_id', 1], [11, 'holdout_a', 'user_id', 1]], $holdoutExposures);
 	}
 
-	// H7: a strict audience mismatch on a covered experiment that isn't held out still exposes the holdout.
+	// Scenario 506: a strict audience mismatch on a covered experiment that isn't held out still exposes the holdout.
 	public function testStrictAudienceMismatchStillExposesTheHoldout(): void {
 		$experiment = self::experiment(1, 'exp', [11]);
 		$experiment->audienceStrict = true;
@@ -428,7 +428,7 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertSame([[1, 'exp', 'session_id', 0], [11, 'holdout_a', 'session_id', 1]], $this->published($context));
 	}
 
-	// H8 and scenario 226: a suppressed candidate falls back to its control value only when nothing assigned wins.
+	// Scenarios 507 and 226: a suppressed candidate falls back to its control value only when nothing assigned wins.
 	public function testSuppressedVariableFallsBackToControlOnlyWhenNothingAssignedWins(): void {
 		$suppressed = self::experiment(1, 'exp_suppressed', [11]);
 		$suppressed->variants = [(object) ['name' => 'A', 'config' => '{"color":"control_1"}'],
@@ -465,7 +465,7 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertSame('default', $context->getVariableValue('color', 'default'));
 	}
 
-	// H4: peeks never queue a holdout exposure.
+	// Scenario 503: peeks never queue a holdout exposure.
 	public function testPeeksQueueNoHoldoutExposure(): void {
 		$experiment = self::experiment(1, 'exp', [11]);
 		$experiment->variants[1]->config = '{"color":"blue"}';
@@ -1145,6 +1145,22 @@ class ContextHoldoutPayloadTest extends TestCase {
 
 		self::assertSame('c2', $context->peekVariableValue('color', 'default'));
 		self::assertSame('c2', $context->getVariableValue('color', 'default'));
+	}
+
+	// An overridden experiment is never the suppressed fallback, even when its holdout holds the unit out (JS).
+	public function testOverriddenHeldOutCandidateIsNeverTheSuppressedFallback(): void {
+		$overridden = self::experiment(1, 'exp_overridden', [11]);
+		// The key is indexed through the control variant, while the override selects variant B, which lacks it.
+		$overridden->variants = [(object) ['name' => 'A', 'config' => '{"color":"c1"}'], (object) ['name' => 'B', 'config' => '{"other":2}']];
+		$suppressed = self::experiment(2, 'exp_suppressed', [11]);
+		$suppressed->variants = [(object) ['name' => 'A', 'config' => '{"color":"c2"}'], (object) ['name' => 'B', 'config' => '{"color":"t2"}']];
+
+		$context = $this->createContext(new ContextData([$overridden, $suppressed], [self::holdout(11, 'holdout_all', 13, 111, [1.0, 0.0])]));
+		$context->setOverride('exp_overridden', 1);
+
+		self::assertSame('c2', $context->peekVariableValue('color', 'default'));
+		self::assertSame('c2', $context->getVariableValue('color', 'default'));
+		self::assertSame(0, $context->getTreatment('exp_suppressed'));
 	}
 
 	// A suppressed assignment is reused across attribute changes and custom assignments rather than rebuilt per read.
