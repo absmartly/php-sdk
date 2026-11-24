@@ -252,7 +252,10 @@ class Context {
 	 */
 	private function setData(ContextData $data): void {
 		$firstLoad = $this->data === null;
-		$this->firstLoadInProgress = $firstLoad;
+		// A nested setData() from a callback must not clear the flag the outer first load set.
+		if ($firstLoad) {
+			$this->firstLoadInProgress = true;
+		}
 		try {
 			$this->indexData($data);
 		}

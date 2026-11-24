@@ -1607,6 +1607,39 @@ class ContextHoldoutTest extends TestCase {
 		self::assertSame(['exp_refreshed'], $context->getExperiments());
 	}
 
+	// A setContextData() a callback calls during the pending first load leaves the first load in progress, so a
+	// refresh() the same callback calls afterwards is still ignored.
+	public function testNestedSetContextDataKeepsTheFirstLoadInProgress(): void {
+		$logger = new class extends MockContextEventLoggerProxy {
+			public ?ContextData $nested = null;
+
+			public function handleEvent(Context $context, ContextEventLoggerEvent $event): void {
+				parent::handleEvent($context, $event);
+				if ($event->getEvent() === ContextEventLoggerEvent::Error && $this->nested !== null) {
+					$nested = $this->nested;
+					$this->nested = null;
+					$context->setContextData($nested);
+					$context->refresh();
+				}
+			}
+		};
+		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'test-api-key', 'website', 'production'));
+		$this->eventHandler = new ContextEventHandlerMock($client);
+		$provider = new HoldoutDataProvider();
+		$provider->next = self::data([], self::experiment(3, 'exp_refreshed'));
+		$contextConfig = new ContextConfig();
+		$contextConfig->setUnits([self::UNIT_TYPE => self::UID]);
+		$contextConfig->setEventLogger($logger);
+		$context = Context::createPending(new SDK(new Config($client)), $contextConfig, $provider, $this->eventHandler);
+		$logger->nested = self::data([], self::experiment(4, 'exp_nested'));
+
+		$context->setContextData(self::data([], self::malformedExperiment(1), self::experiment(2, 'exp_valid')));
+
+		self::assertNotContains(ContextEventLoggerEvent::Refresh, array_map(static fn($event) => $event->getEvent(), $logger->events));
+		$context->refresh();
+		self::assertSame(['exp_refreshed'], $context->getExperiments());
+	}
+
 	// A first load that a throwing Error logger fails still lets a later refresh() run.
 	public function testRefreshRunsAfterAFirstLoadThatFailed(): void {
 		$logger = self::throwOnceOnErrorLogger();
