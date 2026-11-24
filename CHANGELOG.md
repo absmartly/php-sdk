@@ -62,7 +62,8 @@
   so assignments the handler read from it can't outlive it, and the error is ignored rather than sent back to that
   logger as an `Error` event, as for `Publish` and as in JS, which swallows logger errors. 1.1.0 instead restored
   the previous data and sent an `Error` event for an `Exception`, and let an `\Error` escape `refresh()`; code that
-  relied on that must catch errors inside its `Refresh` handler. A refresh that fails to load or install data still keeps the previous data and sends `Error`.
+  relied on that must catch errors inside its `Refresh` handler. A refresh that fails to load or install data still
+  keeps the previous data and sends `Error`.
 
 ## 1.1.0
 
