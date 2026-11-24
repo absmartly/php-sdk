@@ -1381,6 +1381,8 @@ class ContextHoldoutTest extends TestCase {
 		self::assertFalse(self::property($context, 'hasHoldouts'));
 	}
 
+	// Márcio's and Jervasion's probe: an Error logger peeks at the rejected payload's held-out experiment, whose holdout
+	// split flips, then throws. After the rollback the restored definitions keep the unit held out.
 	/** @dataProvider rejectedPeekIterations */
 	public function testRejectedRefreshDiscardsDecisionsFromAnErrorLoggerPeek(int $incomingIteration): void {
 		$logger = new class extends MockContextEventLoggerProxy {
@@ -1512,6 +1514,37 @@ class ContextHoldoutTest extends TestCase {
 		self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_same'));
 		self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_other'));
 		self::assertSame($pending + 1, $context->getPendingCount());
+	}
+
+	// A decision an Error logger exposed from the rejected data replaces a restored one that was only peeked, so its
+	// queued exposure is not queued again by the next read.
+	public function testRejectedRefreshKeepsAnExposedDecisionOverARestoredPeek(): void {
+		$logger = new class extends MockContextEventLoggerProxy {
+			public bool $armed = false;
+
+			public function handleEvent(Context $context, ContextEventLoggerEvent $event): void {
+				parent::handleEvent($context, $event);
+				if ($this->armed && $event->getEvent() === ContextEventLoggerEvent::Error) {
+					$this->armed = false;
+					$context->getTreatment('exp_same');
+					throw new \RuntimeException('reject install');
+				}
+			}
+		};
+		$same = self::experiment(1, 'exp_same');
+		$same->audience = '{"filter":[{"gte":[{"var":"age"},{"value":20}]}]}';
+		$context = $this->createContext(self::data([], $same), [self::UNIT_TYPE => self::UID], [], [], $logger);
+		self::assertSame(self::NORMAL_VARIANT, $context->peekTreatment('exp_same'));
+		$context->setAttributeValue('age', 30);
+		$incoming = clone $same;
+		$incoming->audience = '{"filter":[{"gte":[{"var":"age"},{"value":10}]}]}';
+		$logger->armed = true;
+
+		$this->refresh($context, self::data([], $incoming, self::malformedExperiment(2)));
+
+		self::assertSame(1, $context->getPendingCount());
+		self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_same'));
+		$this->assertPublished($context, self::exposure(1, 'exp_same', self::NORMAL_VARIANT));
 	}
 
 	public static function rejectedExposureCoverage(): array {
