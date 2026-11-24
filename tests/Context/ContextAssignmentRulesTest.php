@@ -154,7 +154,7 @@ class ContextAssignmentRulesTest extends TestCase {
 		$audience = ['audienceStrict' => true, 'audience' => '{"filter":[{"gte":[{"var":"age"},{"value":20}]}]}'];
 		$context = $this->createContext([self::assignRule(1, self::usCondition())], $audience);
 		$context->setAttribute('country', 'US');
-		$context->setAttribute('age', 15);
+		$context->setAttributeValue('age', 15);
 
 		self::assertSame(1, $context->getTreatment('exp_test_abc'));
 		self::assertFalse($this->publishedExposures($context)[0]->audienceMismatch);
@@ -163,7 +163,7 @@ class ContextAssignmentRulesTest extends TestCase {
 	public function testStrictAudienceAppliesWhenNoRuleMatches(): void {
 		$audience = ['audienceStrict' => true, 'audience' => '{"filter":[{"gte":[{"var":"age"},{"value":20}]}]}'];
 		$context = $this->createContext([self::assignRule(1, self::usCondition())], $audience);
-		$context->setAttribute('age', 15);
+		$context->setAttributeValue('age', 15);
 
 		self::assertSame(0, $context->getTreatment('exp_test_abc'));
 		$exposures = $this->publishedExposures($context);
@@ -184,6 +184,45 @@ class ContextAssignmentRulesTest extends TestCase {
 	public function testOutOfRangeRuleVariantFallsBackToNormalAssignment(): void {
 		self::assertSame(self::NORMAL_VARIANT, $this->createContext([self::assignRule(99, null)])->getTreatment('exp_test_abc'));
 		self::assertSame(self::NORMAL_VARIANT, $this->createContext([self::assignRule(-1, null)])->getTreatment('exp_test_abc'));
+	}
+
+	/**
+	 * @dataProvider hugeVariants
+	 */
+	public function testAHugeIntegralRuleVariantIsOutOfBoundsAndStopsRuleEvaluation(string $variant): void {
+		// JS Number.isInteger accepts these, so the first rule is selected, then out of bounds: normal assignment, not
+		// the second rule's variant 1. Rules are raw JSON so the literal reaches the decoder unchanged.
+		$rules = '{"rules":[{"name":"huge","type":"assign","conditions":null,"environments":[],"variant":' . $variant
+			. '},{"name":"next","type":"assign","conditions":null,"environments":[],"variant":1}]}';
+		set_error_handler(static function (int $severity, string $message): bool {
+			throw new \ErrorException($message, 0, $severity);
+		});
+		try {
+			$context = $this->createContext([], ['assignmentRules' => $rules]);
+			self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_test_abc'));
+		}
+		finally {
+			restore_error_handler();
+		}
+	}
+
+	public static function hugeVariants(): array {
+		return [
+			'1e20' => ['1e20'],
+			'beyond int64' => ['99999999999999999999'],
+			'2^63' => ['9223372036854775808'],
+			'below -2^63' => ['-9223372036854775809'],
+			'-1e19' => ['-1e19'],
+			'-1e20' => ['-1e20'],
+			'below int64' => ['-99999999999999999999'],
+		];
+	}
+
+	public function testAnInfiniteRuleVariantIsMalformedAndSkipped(): void {
+		// A 401-digit literal decodes to INF, which is not an integer in JS either: the rule is skipped.
+		$rules = '{"rules":[{"name":"inf","type":"assign","conditions":null,"environments":[],"variant":'
+			. str_repeat('9', 401) . '},{"name":"next","type":"assign","conditions":null,"environments":[],"variant":1}]}';
+		self::assertSame(1, $this->createContext([], ['assignmentRules' => $rules])->getTreatment('exp_test_abc'));
 	}
 
 	public function testInvalidRulesFallBackToNormalAssignment(): void {
@@ -233,7 +272,7 @@ class ContextAssignmentRulesTest extends TestCase {
 		$context->setAttribute('country', 'US');
 		self::assertSame(1, $context->getTreatment('exp_test_abc'));
 
-		$context->setAttribute('unrelated', true);
+		$context->setAttributeValue('unrelated', true);
 		self::assertSame(1, $context->getTreatment('exp_test_abc'));
 		self::assertCount(1, $this->publishedExposures($context));
 	}
@@ -284,7 +323,7 @@ class ContextAssignmentRulesTest extends TestCase {
 		self::assertSame(0, $context->getTreatment('exp_test_abc'));
 
 		$context->setUnit('session_id', self::SESSION_ID);
-		$context->setAttribute('unrelated', true);
+		$context->setAttributeValue('unrelated', true);
 		self::assertSame(0, $context->getTreatment('exp_test_abc'));
 
 		$variants = array_map(static fn($exposure) => $exposure->variant, $this->publishedExposures($context));
@@ -306,9 +345,9 @@ class ContextAssignmentRulesTest extends TestCase {
 		$context->publish();
 
 		$context->setUnit('session_id', self::SESSION_ID);
-		$context->setAttribute('unrelated', true);
+		$context->setAttributeValue('unrelated', true);
 		self::assertSame(0, $context->peekTreatment('exp_test_abc'));
-		$context->setAttribute('unrelated', false);
+		$context->setAttributeValue('unrelated', false);
 		self::assertSame(0, $context->peekTreatment('exp_test_abc'));
 		self::assertSame(0, $context->getTreatment('exp_test_abc'));
 	}
@@ -323,7 +362,7 @@ class ContextAssignmentRulesTest extends TestCase {
 		$treatments[] = $context->getTreatment('exp_test_abc');
 		$context->setUnit('session_id', self::SESSION_ID);
 		$treatments[] = $context->getTreatment('exp_test_abc');
-		$context->setAttribute('unrelated', true);
+		$context->setAttributeValue('unrelated', true);
 		$treatments[] = $context->getTreatment('exp_test_abc');
 
 		self::assertSame([0, 0, 0, 0], $treatments);

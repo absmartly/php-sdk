@@ -20,7 +20,7 @@ use const JSON_THROW_ON_ERROR;
 
 class Client implements AsyncClientInterface {
 	/** The SDK version, sent in the X-Agent header. Keep in step with the release tag (checked by the release workflow). */
-	public const SDK_VERSION = '2.0.0';
+	public const SDK_VERSION = '1.1.0';
 	public const SDK_NAME = 'absmartly-php-sdk';
 	/** @deprecated Use SDK_VERSION. */
 	protected const VERSION = self::SDK_VERSION;
@@ -71,17 +71,9 @@ class Client implements AsyncClientInterface {
 		return $applicationVersion;
 	}
 
-	/** The value sent as the X-Agent header, "<name>/<version>", e.g. "absmartly-php-sdk/2.0.0". */
+	/** The value sent as the X-Agent header, "<name>/<version>", e.g. "absmartly-php-sdk/1.1.0". */
 	public function getAgent(): string {
 		return $this->headers['X-Agent'];
-	}
-
-	private function authRequest(): void {
-		if (empty($this->headers['X-API-Key'])) {
-			throw new \ABSmartly\SDK\Exception\RuntimeException(
-				'API key is not configured. Please set a valid API key in ClientConfig.'
-			);
-		}
 	}
 
 	public function getApplication(): string {
@@ -93,7 +85,6 @@ class Client implements AsyncClientInterface {
 	}
 
 	public function getContextData(): ContextData {
-		$this->authRequest();
 		$response = $this->httpClient->get($this->url, $this->query, $this->headers);
 		$decoded = $this->decode($response->content);
 		return new ContextData($decoded->experiments);
@@ -108,18 +99,12 @@ class Client implements AsyncClientInterface {
 			}
 		}
 
-		try {
-			$this->authRequest();
-		} catch (\Throwable $e) {
-			return reject($e);
-		}
 		return $this->httpClient
 			->getAsync($this->url, $this->query, $this->headers)
 			->then(fn($response) => new ContextData($this->decode($response->content)->experiments));
 	}
 
 	public function publish(PublishEvent $publishEvent): void {
-		$this->authRequest();
 		$data = $this->encode($publishEvent);
 		$this->httpClient->put($this->url, $this->query, $this->headers, $data);
 	}
@@ -135,7 +120,6 @@ class Client implements AsyncClientInterface {
 		}
 
 		try {
-			$this->authRequest();
 			$data = $this->encode($publishEvent);
 		} catch (\Throwable $e) {
 			return reject($e);

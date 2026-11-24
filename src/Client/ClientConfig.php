@@ -24,9 +24,6 @@ class ClientConfig {
 		string $application,
 		string $environment
 	) {
-		if (($endpoint === '' && $apiKey !== '') || ($endpoint !== '' && $apiKey === '')) {
-			error_log('ABsmartly SDK Warning: ClientConfig created with empty endpoint or API key. This may cause runtime errors.');
-		}
 
 		$this->apiKey = $apiKey;
 		$this->application = $application;
@@ -44,6 +41,8 @@ class ClientConfig {
 			'application' => $this->application,
 			'endpoint' => $this->endpoint,
 			'environment' => $this->environment,
+			// Always null, as in v1.0.3 (ClientConfig has no event logger); kept so the dump keeps its released keys.
+			'eventLogger' => null,
 			'applicationVersion' => $this->applicationVersion,
 		];
 	}
@@ -81,7 +80,8 @@ class ClientConfig {
 
 
 	/**
-	 * @param int $retries The number of times a failed GET request is retried. Event publishing (PUT) is never retried.
+	 * @param int $retries The number of times a failed GET request is retried, only when HTTPClient::$totalTimeout bounds
+	 *             the retries (see HTTPClient). Event publishing (PUT) is never retried.
 	 * @return $this
 	 */
 	public function setRetries(int $retries = 5): ClientConfig {

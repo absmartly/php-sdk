@@ -2,7 +2,7 @@
 
 // Checks that a release tag matches the SDK version sent in the X-Agent header. Packagist imports a tag as soon as it
 // is pushed, so run this before pushing the tag; the Release workflow re-runs it but cannot unpublish a bad tag.
-// Usage: php .github/scripts/check-release-version.php v2.0.0
+// Usage: php .github/scripts/check-release-version.php v1.1.0
 
 require dirname(__DIR__, 2) . '/vendor/autoload.php';
 
