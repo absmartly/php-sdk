@@ -112,11 +112,6 @@ class Context {
 	 * while the holdout's iteration is unchanged, so a same-iteration seed or split edit never re-randomizes a unit.
 	 */
 	private array $holdoutAssignmentCache = [];
-	/**
-	 * @var array<string, Assignment> Covered candidates an exposing variable read checked and passed over, by experiment.
-	 * A later unit leaves them as they were, as it does without holdouts, so it cannot switch the key's winner.
-	 */
-	private array $variableLosers = [];
 	/** Set while the first load installs experiments, so a callback's refresh() can't be overwritten by the rest of it. */
 	private bool $firstLoadInProgress = false;
 	private ?Throwable $readyError = null;
@@ -225,7 +220,7 @@ class Context {
 				$data = $contextData;
 			}
 
-			$this->setData($data);
+			$this->setData($data, true);
 			$this->logEvent(ContextEventLoggerEvent::Ready, $data);
 		}
 		catch (Exception $exception) {
@@ -245,34 +240,34 @@ class Context {
 	}
 
 	/**
-	 * Indexes $data. The first load installs each experiment as it goes, as in 1.1.0, so an Error callback for a
-	 * malformed experiment reads the experiments loaded before it. A refresh builds the indexes aside and installs them
-	 * only once all of the data is processed, so that callback still reads the previous data, and a failure (or a
-	 * logger that throws) leaves the previous data and its decisions in use.
+	 * Indexes $data. The initial load ($initial) installs each experiment as it goes, as in 1.1.0, so an Error callback
+	 * for a malformed experiment reads the experiments loaded before it. A refresh builds the indexes aside and installs
+	 * them only once all of the data is processed, so that callback still reads the previous data (or none, on a pending
+	 * context), and a failure (or a logger that throws) leaves the previous data and its decisions in use.
 	 */
-	private function setData(ContextData $data): void {
-		$firstLoad = $this->data === null;
-		// A nested setData() from a callback must not clear the flag the outer first load set.
-		if ($firstLoad) {
+	private function setData(ContextData $data, bool $initial = false): void {
+		// A nested initial load from a callback must not clear the flag the outer one set.
+		$outermost = $initial && !$this->firstLoadInProgress;
+		if ($outermost) {
 			$this->firstLoadInProgress = true;
 		}
 		try {
-			$this->indexData($data);
+			$this->indexData($data, $initial);
 		}
 		finally {
-			if ($firstLoad) {
+			if ($outermost) {
 				$this->firstLoadInProgress = false;
 			}
 		}
 	}
 
-	private function indexData(ContextData $data): void {
+	private function indexData(ContextData $data, bool $initial): void {
 		$index = [];
 		$indexVariables = [];
 		$ruleKeys = [];
 		$experimentHoldouts = [];
 		$hasHoldouts = $this->hasHoldouts;
-		if ($this->data === null) {
+		if ($initial) {
 			$this->data = $data;
 			$this->index = &$index;
 			$this->indexVariables = &$indexVariables;
@@ -343,6 +338,8 @@ class Context {
 			}
 		}
 
+		// Coverage history is read at install time: a refresh a callback made while this data was processed may have set it.
+		$hasHoldouts = $hasHoldouts || $this->hasHoldouts;
 		// Plain values again (no references left behind), installed together.
 		unset($this->index, $this->indexVariables, $this->ruleKeys, $this->experimentHoldouts, $this->hasHoldouts);
 		$this->data = $data;
@@ -352,12 +349,6 @@ class Context {
 		$this->parsedRules = [];
 		$this->experimentHoldouts = $experimentHoldouts;
 		$this->hasHoldouts = $hasHoldouts;
-		// A pinned loser stays pinned only while its cached assignment is still the one an exposing walk passed over.
-		foreach ($this->variableLosers as $name => $loser) {
-			if (($this->assignmentCache[$name] ?? null) !== $loser) {
-				unset($this->variableLosers[$name]);
-			}
-		}
 
 		// Only an exposed cached assignment can queue a dropped arm again (a new assignment queues its arms anyway), so a
 		// mark whose arm no cached assignment pins any more is forgotten.
@@ -492,7 +483,7 @@ class Context {
 		}
 
 		try {
-			$this->setData($contextData);
+			$this->setData($contextData, true);
 			$this->failed = false;
 			$this->ready = true;
 			$this->logEvent(ContextEventLoggerEvent::Ready, $contextData);
@@ -757,6 +748,12 @@ class Context {
 					return $assignment;
 				}
 			}
+
+			// A nested read during the check above (an audience getter) may have cached its own decision; validate that
+			// one instead of replacing it, so its exposure isn't lost or queued twice.
+			if (isset($this->assignmentCache[$experimentName]) && $this->assignmentCache[$experimentName] !== $assignment) {
+				return $this->getAssignment($experimentName);
+			}
 		}
 
 		$this->assignmentCache[$experimentName] = $assignment = new Assignment();
@@ -977,6 +974,7 @@ class Context {
 		}
 		else {
 			$assignment->exposed = true;
+			$assignment->served = true;
 		}
 
 		// Use the pinned arms, never a live re-resolution: an exposure callback may install a different decision epoch.
@@ -1071,8 +1069,9 @@ class Context {
 				$selectedVariables = $assignment->variables ?? null;
 				break;
 			}
-			if ($exposeAssignment && $assignment->holdoutAssignments !== null) {
-				$this->variableLosers[$name] = $assignment;
+			// Passed over by an exposing read: as without holdouts, a later unit doesn't switch the key's winner.
+			if ($exposeAssignment) {
+				$assignment->served = true;
 			}
 
 			if ($assignment->suppressed && $assignment->variables !== null && $selectedVariables === null) {
@@ -1247,6 +1246,7 @@ class Context {
 
 		$exposure = new Exposure();
 		$assignment->exposed = true;
+		$assignment->served = true;
 		$assignment->isUnitPinnedMissing = $assignment->isUnitPinnedMissing || $assignment->isRuleMissingUnit;
 		$exposure->ingestAssignment($assignment);
 
@@ -1382,10 +1382,10 @@ class Context {
 				continue;
 			}
 
-			// Holdout arms are drawn with the assignment's own unit type, so while it was missing every arm is null.
+			// Holdout arms are drawn with the assignment's own unit type, so while it was missing every arm is null. A served
+			// decision is kept even if the cap dropped its exposure, which only makes the exposure retryable.
 			if (($assignment->isRuleMissingUnit && !$assignment->isUnitPinnedMissing)
-				|| (!$assignment->exposed && $assignment->holdoutAssignments !== null
-					&& ($this->variableLosers[$experimentName] ?? null) !== $assignment)) {
+				|| (!$assignment->served && $assignment->holdoutAssignments !== null)) {
 				unset($this->assignmentCache[$experimentName]);
 			}
 		}

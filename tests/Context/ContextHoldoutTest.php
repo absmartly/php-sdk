@@ -1494,16 +1494,18 @@ class ContextHoldoutTest extends TestCase {
 	}
 
 	/**
-	 * A logger that, armed, runs $beforeThrow (if any) on the next Error event and then throws, so the refresh that is
-	 * installing fails.
+	 * A logger that, armed, runs $beforeThrow (if any) on the next Error event and then throws (unless $throw is false),
+	 * so the refresh that is installing fails.
 	 */
-	private static function throwOnceOnErrorLogger(?\Closure $beforeThrow = null): MockContextEventLoggerProxy {
-		return new class($beforeThrow) extends MockContextEventLoggerProxy {
+	private static function throwOnceOnErrorLogger(?\Closure $beforeThrow = null, bool $throw = true): MockContextEventLoggerProxy {
+		return new class($beforeThrow, $throw) extends MockContextEventLoggerProxy {
 			public bool $armed = false;
 			private ?\Closure $beforeThrow;
+			private bool $throw;
 
-			public function __construct(?\Closure $beforeThrow) {
+			public function __construct(?\Closure $beforeThrow, bool $throw) {
 				$this->beforeThrow = $beforeThrow;
+				$this->throw = $throw;
 			}
 
 			public function handleEvent(Context $context, ContextEventLoggerEvent $event): void {
@@ -1513,7 +1515,9 @@ class ContextHoldoutTest extends TestCase {
 					if ($this->beforeThrow !== null) {
 						($this->beforeThrow)($context);
 					}
-					throw new \RuntimeException('logger rejected the malformed experiment');
+					if ($this->throw) {
+						throw new \RuntimeException('logger rejected the malformed experiment');
+					}
 				}
 			}
 		};
@@ -1581,31 +1585,17 @@ class ContextHoldoutTest extends TestCase {
 	// A refresh() an Error logger calls during the first load does nothing, since the rest of that load would replace
 	// the refreshed data; the first load completes and emits Ready, not Refresh.
 	public function testRefreshFromAnErrorLoggerDuringTheFirstLoadIsIgnored(): void {
-		$logger = new class extends MockContextEventLoggerProxy {
-			public bool $refreshed = false;
-
-			public function handleEvent(Context $context, ContextEventLoggerEvent $event): void {
-				parent::handleEvent($context, $event);
-				if ($event->getEvent() === ContextEventLoggerEvent::Error && !$this->refreshed) {
-					$this->refreshed = true;
-					$context->refresh();
-				}
-			}
-		};
-		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'test-api-key', 'website', 'production'));
-		$config = new Config($client);
-		$this->dataProvider = new HoldoutDataProvider();
-		$this->dataProvider->next = self::data([], self::experiment(3, 'exp_refreshed'));
-		$config->setContextDataProvider($this->dataProvider);
-		$this->eventHandler = new ContextEventHandlerMock($client);
-		$config->setContextEventHandler($this->eventHandler);
-		$contextConfig = new ContextConfig();
-		$contextConfig->setUnits([self::UNIT_TYPE => self::UID]);
-		$contextConfig->setEventLogger($logger);
+		$refreshed = false;
+		$logger = self::throwOnceOnErrorLogger(function (Context $context) use (&$refreshed) {
+			$refreshed = true;
+			$this->dataProvider->next = self::data([], self::experiment(3, 'exp_refreshed'));
+			$context->refresh();
+		}, false);
+		$logger->armed = true;
 		$data = self::data([], self::malformedExperiment(1), self::experiment(2, 'exp_valid'));
-		$context = (new SDK($config))->createContextWithData($contextConfig, $data);
+		$context = $this->createContext($data, [self::UNIT_TYPE => self::UID], [], [], $logger);
 
-		self::assertTrue($logger->refreshed);
+		self::assertTrue($refreshed);
 		self::assertSame([ContextEventLoggerEvent::Error, ContextEventLoggerEvent::Ready],
 			array_map(static fn($event) => $event->getEvent(), $logger->events));
 		self::assertSame($data, $context->getContextData());
@@ -1648,7 +1638,6 @@ class ContextHoldoutTest extends TestCase {
 		self::assertSame(['exp_refreshed'], $context->getExperiments());
 	}
 
-	// A first load that a throwing Error logger fails still lets a later refresh() run.
 	public function testRefreshRunsAfterAFirstLoadThatFailed(): void {
 		$logger = self::throwOnceOnErrorLogger();
 		$logger->armed = true;
@@ -1720,8 +1709,6 @@ class ContextHoldoutTest extends TestCase {
 		self::assertFalse(self::property($context, 'hasHoldouts'));
 	}
 
-	// An Error logger peeks at an experiment while a refresh whose holdout split would release the unit is being
-	// installed, then throws. The logger sees the previous data, and so does every later read: the unit stays held out.
 	/** @dataProvider rejectedPeekIterations */
 	public function testErrorLoggerDuringARejectedRefreshSeesAndKeepsThePreviousData(int $incomingIteration): void {
 		$peek = null;
@@ -1872,7 +1859,6 @@ class ContextHoldoutTest extends TestCase {
 		return ['same experiment iteration' => [1], 'changed experiment iteration' => [2]];
 	}
 
-	// A unit the rejecting Error logger sets stays set, and the peek it invalidated is not revived.
 	public function testUnitSetByARejectingErrorLoggerIsHonoured(): void {
 		$logger = self::throwOnceOnErrorLogger(static function (Context $context) {
 			$context->setUnit(self::UNIT_TYPE, self::UID);
@@ -1890,7 +1876,6 @@ class ContextHoldoutTest extends TestCase {
 		$this->assertPublished($context, self::holdoutExposure(11, 'holdout_unit', 0));
 	}
 
-	// An exposure the rejecting Error logger queues for the installed iteration is not queued again afterwards.
 	/** @dataProvider rejectedExposureCoverage */
 	public function testExposureOfTheInstalledIterationByARejectingErrorLoggerIsKept(bool $covered): void {
 		$logger = self::throwOnceOnErrorLogger(static function (Context $context) {
@@ -1924,7 +1909,6 @@ class ContextHoldoutTest extends TestCase {
 		self::assertSame($covered ? 4 : 2, $pending);
 	}
 
-	// A holdout exposure the retained-event cap drops during a rejected refresh is still queued again later.
 	public function testHoldoutExposureDroppedDuringARejectedRefreshIsRetried(): void {
 		$logger = self::throwOnceOnErrorLogger(function (Context $context) {
 			$context->peekTreatment('exp_covered');
@@ -1936,6 +1920,8 @@ class ContextHoldoutTest extends TestCase {
 			$context->publish();
 			$this->eventHandler->prerun = null;
 			$context->maxRetainedEvents = 10000;
+			// Only the goal is left queued: the holdout exposure was dropped.
+			$context->publish();
 		});
 		$holdout = self::holdout(11, 'holdout_retry', self::HOLDOUT_A_SEED);
 		$covered = self::coveredBy(self::experiment(1, 'exp_covered'), 11);
@@ -1950,9 +1936,103 @@ class ContextHoldoutTest extends TestCase {
 
 		$this->refresh($context, self::data([$bumped], $incoming, self::malformedExperiment(2), clone $other));
 
+		self::assertCount(1, $this->eventHandler->submitted);
+		self::assertSame([], $this->eventHandler->submitted[0]->exposures ?? []);
 		self::assertSame(0, $context->getTreatment('exp_other'));
-		$published = array_map(static fn($exposure) => [$exposure[0], $exposure[3]], $this->published($context));
-		self::assertContains([11, 0], $published);
+		$this->assertPublished($context, self::holdoutExposure(11, 'holdout_retry', 0));
+	}
+
+	/** @dataProvider nestedRefreshCoverage */
+	public function testNestedRefreshFromARefreshErrorLoggerKeepsDecisionsOnTheInstalledData(bool $outerFails): void {
+		$holdout = self::holdout(11, 'holdout_nested', self::HOLDOUT_A_SEED);
+		$holdout->split = [1.0, 0.0];
+		$fullOn = self::experiment(1, 'exp_full_on', self::UNIT_TYPE, 1);
+		$nested = self::data([$holdout], self::coveredBy(clone $fullOn, 11));
+		$logger = self::throwOnceOnErrorLogger(function (Context $context) use ($nested) {
+			$this->dataProvider->next = $nested;
+			$context->refresh();
+			$context->getTreatment('exp_full_on');
+		}, $outerFails);
+		$context = $this->createContext(self::data([], $fullOn), [self::UNIT_TYPE => self::UID], [], [], $logger);
+		$outer = self::data([], clone $fullOn, self::malformedExperiment(2));
+		$logger->armed = true;
+
+		$this->refresh($context, $outer);
+
+		$installed = $context->getContextData();
+		self::assertSame($outerFails ? $nested : $outer, $installed);
+		$expected = $outerFails ? 0 : 1;
+		self::assertSame($expected, $context->getTreatment('exp_full_on'));
+		self::assertSame($expected, $context->getTreatment('exp_full_on'));
+	}
+
+	public static function nestedRefreshCoverage(): array {
+		return ['outer refresh installs' => [false], 'outer refresh rejected' => [true]];
+	}
+
+	public function testRejectedRefreshOnAPendingContextLeavesNothingVisible(): void {
+		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'test-api-key', 'website', 'production'));
+		$this->eventHandler = new ContextEventHandlerMock($client);
+		$provider = new HoldoutDataProvider();
+		$provider->next = self::data([], self::experiment(1, 'exp_rejected'), self::malformedExperiment(2));
+		$logger = self::throwOnceOnErrorLogger();
+		$logger->armed = true;
+		$contextConfig = new ContextConfig();
+		$contextConfig->setUnits([self::UNIT_TYPE => self::UID]);
+		$contextConfig->setEventLogger($logger);
+		$context = Context::createPending(new SDK(new Config($client)), $contextConfig, $provider, $this->eventHandler);
+
+		$context->refresh();
+
+		self::assertFalse($context->isReady());
+		self::assertNull(self::property($context, 'data'));
+		self::assertSame([], self::property($context, 'index'));
+		$initial = self::data([], self::experiment(3, 'exp_initial'));
+		$context->setContextData($initial);
+		self::assertSame($initial, $context->getContextData());
+		self::assertSame(['exp_initial'], $context->getExperiments());
+	}
+
+	// The cap dropping a served decision's exposure lets the exposure be queued again, but a later unit doesn't change
+	// the treatment already served.
+	public function testDroppedExposureKeepsTheServedTreatmentForALateUnit(): void {
+		$holdout = self::holdout(11, 'holdout_cap', self::HOLDOUT_A_SEED);
+		$holdout->split = [1.0, 0.0];
+		$context = $this->createContext(self::data([$holdout],
+			self::coveredBy(self::experiment(1, 'exp_full_on', self::UNIT_TYPE, 1), 11)), []);
+		self::assertSame(1, $context->getTreatment('exp_full_on'));
+		$context->track('goal');
+		$this->eventHandler->prerun = static function () {
+			throw new \RuntimeException('collector down');
+		};
+		$context->maxRetainedEvents = 1;
+		$context->publish();
+		$this->eventHandler->prerun = null;
+		$context->maxRetainedEvents = 10000;
+
+		$context->setUnit(self::UNIT_TYPE, self::UID);
+		self::assertSame(1, $context->getTreatment('exp_full_on'));
+		$this->assertPublished($context, self::exposure(1, 'exp_full_on', 1, true, false, true, false, false, false));
+	}
+
+	// An override set and exposed by a nested read during an audience re-check is the decision the outer read returns,
+	// exposed once.
+	public function testNestedReadDuringARecheckKeepsItsExposedDecision(): void {
+		$experiment = self::coveredBy(self::experiment(1, 'exp_nested'), 11);
+		$experiment->audience = '{"filter":[{"gte":[{"var":"probe/score"},{"value":0}]}]}';
+		$context = $this->createContext(self::data([self::holdout(11, 'holdout_nested', self::HOLDOUT_B_SEED)], $experiment));
+		$probe = self::unitSettingProbe();
+		$context->setAttributeValue('probe', $probe);
+		self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_nested'));
+		$context->setAttributeValue('bump', 1);
+		$probe->onRead = function () use ($context) {
+			$context->setOverride('exp_nested', 0);
+			$context->getTreatment('exp_nested');
+		};
+
+		self::assertSame(0, $context->getTreatment('exp_nested'));
+		$this->assertPublished($context, self::exposure(1, 'exp_nested', self::NORMAL_VARIANT),
+			self::holdoutExposure(11, 'holdout_nested', 1), self::exposure(1, 'exp_nested', 0, false, true));
 	}
 
 	public static function rejectedCoverageInstalls(): array {

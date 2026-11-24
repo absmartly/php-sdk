@@ -15,7 +15,8 @@
   the holdout's iteration changes, so a same-iteration seed or split edit does not re-randomize or re-expose, and a
   unit set later (even by an attribute getter during an audience check) re-resolves a not-yet-exposed experiment,
   except a candidate an exposing `getVariableValue()` passed over: as without holdouts, it keeps the decision made
-  without the unit (for that key and for `getTreatment()`) until a refresh rebuilds it.
+  without the unit (for that key and for `getTreatment()`) until a refresh rebuilds it. A decision already served
+  keeps its treatment even if the retained-event cap drops its exposure; the exposure is just queued again.
   Unlike JS, which coerces them, malformed holdouts are
   ignored and their experiments assign normally: a holdout whose `id`, `iteration`, `seedHi` or `seedLo` is
   missing, null or not a JSON integer within the int64 range (integral floats such as `11.0` count; numeric
@@ -42,9 +43,9 @@
 - Ready and Refresh event logger data (`ContextData`) now has a `holdouts` property, an empty array when there are
   none.
 - New typed public properties: `ContextData::$holdouts` (`array`); `Experiment::$holdoutIds` (`?array`) and
-  `$holdoutType` (`?string`); `Assignment::$suppressed` (`bool`), `$holdouts` and `$holdoutAssignments` (`?array`)
-  and `$holdoutArmCount` (`int`). A subclass that already declares a property of the same name must declare the
-  same type, or PHP rejects the class when it loads.
+  `$holdoutType` (`?string`); `Assignment::$suppressed` and `$served` (`bool`), `$holdouts` and
+  `$holdoutAssignments` (`?array`) and `$holdoutArmCount` (`int`). A subclass that already declares a property of the
+  same name must declare the same type, or PHP rejects the class when it loads.
 - With holdouts in the data, an exposure logger error on a held-out candidate during `getVariableValue()` no longer
   stops the walk over the experiments defining the key: the winner is still found and exposed, and the first error
   is re-thrown afterwards, as in the Java SDK. Once an event logger closes the context mid-read, whether or not it
@@ -62,9 +63,10 @@
   `TypeError` while installing, no longer escapes `refresh()` (which also left the experiment index cleared). Code
   that caught `\Error` around `refresh()` should listen for the `Error` event instead. A refresh installs its data
   only once all of it is processed, so an `Error` logger for a malformed experiment in it reads the previous data,
-  and if that logger throws, the refresh is rejected with nothing from the new data left behind. The first load
-  still installs experiments as it goes, as in 1.1.0; a `refresh()` called from a callback during it does nothing,
-  since the rest of the load would replace the refreshed data.
+  and if that logger throws, the refresh is rejected with nothing from the new data left behind (on a pending
+  context, nothing is installed). If such a logger itself refreshes, later decisions follow whichever data ends up
+  installed. The initial load still installs experiments as it goes, as in 1.1.0; a `refresh()` called from a
+  callback during it does nothing, since the rest of the load would replace the refreshed data.
 - A `Refresh` event logger that throws (any `Throwable`) no longer undoes the refresh. The new data stays installed,
   so assignments the handler read from it can't outlive it, and the error is ignored rather than sent back to that
   logger as an `Error` event, as for `Publish` and as in JS, which swallows logger errors. 1.1.0 instead restored

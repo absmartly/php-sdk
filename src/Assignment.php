@@ -28,6 +28,11 @@ class Assignment {
 	public stdClass $variables;
 
 	public bool $exposed = false;
+	/**
+	 * Exposed, or passed over by an exposing variable read: a later unit leaves it as it was, as without holdouts.
+	 * Unlike $exposed, not cleared when the queued exposure is evicted, so a retry can't change what was served.
+	 */
+	public bool $served = false;
 	public int $attrsSeq = 0;
 
 	/** Held out by one of the experiment's holdouts and not won by an override or rule: control, no own exposure. */
