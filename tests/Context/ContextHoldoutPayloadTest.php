@@ -1172,8 +1172,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertSame([[11, 'holdout_a', 'session_id', 0]], $this->published($context));
 	}
 
-	// A failed refresh leaves the installed holdout definition live, so a newly read covered experiment still reads
-	// the unit's pinned arm.
 	public function testFailedRefreshKeepsTheInstalledHoldoutDefinition(): void {
 		[$context, $provider] = $this->contextWithProvider(new ContextData(
 			[self::experiment(1, 'exp', [11]), self::experiment(2, 'exp_later', [11])], [self::holdout(11, 'holdout_a', 13, 111)]));

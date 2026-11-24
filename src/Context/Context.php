@@ -956,7 +956,7 @@ class Context {
 		$experiments = $indexVariables[$key] ?? [];
 		$error = null;
 		// With no winner, the first held-out candidate supplies its control value, even if it lacks the key (JS).
-		$suppressedFallback = null;
+		$selectedVariables = null;
 		$liveCandidates = null;
 		foreach ($experiments as $experimentVariables) {
 			// Once a callback closes the context, a read already committed to throwing evaluates nothing more.
@@ -1000,18 +1000,12 @@ class Context {
 			}
 
 			if ($wins) {
-				if ($error !== null) {
-					throw $error;
-				}
-				// property_exists (not isset) so a present key whose value is null is returned rather than the default.
-				if (isset($assignment->variables) && property_exists($assignment->variables, $key)) {
-					return $assignment->variables->{$key};
-				}
-				return $default;
+				$selectedVariables = $assignment->variables ?? null;
+				break;
 			}
 
-			if ($assignment->suppressed && $assignment->variables !== null && $suppressedFallback === null) {
-				$suppressedFallback = $assignment->variables;
+			if ($assignment->suppressed && $assignment->variables !== null && $selectedVariables === null) {
+				$selectedVariables = $assignment->variables ?? null;
 			}
 		}
 
@@ -1019,8 +1013,9 @@ class Context {
 			throw $error;
 		}
 
-		if ($suppressedFallback !== null && property_exists($suppressedFallback, $key)) {
-			return $suppressedFallback->{$key};
+		// property_exists (not isset) preserves a present null value.
+		if ($selectedVariables !== null && property_exists($selectedVariables, $key)) {
+			return $selectedVariables->{$key};
 		}
 
 		return $default;
@@ -1523,6 +1518,8 @@ class Context {
 		$oldParsedRules = $this->parsedRules;
 		$oldExperimentHoldouts = $this->experimentHoldouts;
 		$oldHasHoldouts = $this->hasHoldouts;
+		$oldAssignments = $this->assignmentCache ?? [];
+		$oldHoldoutAssignments = $this->holdoutAssignmentCache;
 		try {
 			$data = $this->dataProvider->getContextData();
 			$this->setData($data);
@@ -1537,6 +1534,10 @@ class Context {
 			$this->parsedRules = $oldParsedRules;
 			$this->experimentHoldouts = $oldExperimentHoldouts;
 			$this->hasHoldouts = $oldHasHoldouts;
+			// An Error callback may have peeked at the partially installed data before rejecting it. Discard those
+			// decisions too, while retaining exposed flags on the old assignments if the callback published them.
+			$this->assignmentCache = $oldAssignments;
+			$this->holdoutAssignmentCache = $oldHoldoutAssignments;
 			$this->logError($exception);
 			return;
 		}

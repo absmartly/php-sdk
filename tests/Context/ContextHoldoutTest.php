@@ -1352,7 +1352,6 @@ class ContextHoldoutTest extends TestCase {
 		return $malformed;
 	}
 
-	// A refresh that fails while installing keeps the installed holdouts: the covered experiment stays held out.
 	public function testRefreshFailingMidInstallKeepsTheExperimentsHoldouts(): void {
 		$logger = self::throwOnceOnErrorLogger();
 		$holdout = self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED);
@@ -1368,8 +1367,6 @@ class ContextHoldoutTest extends TestCase {
 		$this->assertPublished($context, self::holdoutExposure(11, 'holdout_a', 0));
 	}
 
-	// A refresh that would have installed the first coverage, then fails while installing, leaves the context on the
-	// no-holdout path it was on.
 	public function testRefreshFailingMidInstallDoesNotKeepItsFirstCoverage(): void {
 		$logger = self::throwOnceOnErrorLogger();
 		$data = self::data([], self::withVariables(self::experiment(1, 'exp_first'), 'key'),
@@ -1382,6 +1379,49 @@ class ContextHoldoutTest extends TestCase {
 
 		self::assertSame($data, $context->getContextData());
 		self::assertFalse(self::property($context, 'hasHoldouts'));
+	}
+
+	/** @dataProvider rejectedPeekIterations */
+	public function testRejectedRefreshDiscardsDecisionsFromAnErrorLoggerPeek(int $incomingIteration): void {
+		$logger = new class extends MockContextEventLoggerProxy {
+			public bool $armed = false;
+			public ?int $peek = null;
+
+			public function handleEvent(Context $context, ContextEventLoggerEvent $event): void {
+				parent::handleEvent($context, $event);
+				if ($this->armed && $event->getEvent() === ContextEventLoggerEvent::Error) {
+					$this->armed = false;
+					$this->peek = $context->peekTreatment('exp_covered');
+					throw new \RuntimeException('reject install');
+				}
+			}
+		};
+		$covered = self::coveredBy(self::withVariables(self::experiment(1, 'exp_covered'), 'key'), 11);
+		$winner = self::withVariables(self::experiment(3, 'exp_winner'), 'key');
+		$holdout = self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED);
+		$holdout->split = [1.0, 0.0];
+		$oldData = self::data([$holdout], $covered, $winner);
+		$context = $this->createContext($oldData, [self::UNIT_TYPE => self::UID], [], [], $logger);
+		$incoming = clone $covered;
+		$incoming->iteration = $incomingIteration;
+		$incomingHoldout = clone $holdout;
+		$incomingHoldout->split = [0.0, 1.0];
+		$logger->armed = true;
+
+		$this->refresh($context, self::data([$incomingHoldout], $incoming, self::malformedExperiment(2), $winner));
+
+		self::assertSame(1, $logger->peek);
+		self::assertSame(0, $context->getPendingCount());
+		self::assertSame($oldData, $context->getContextData());
+		self::assertSame('treatment', $context->getVariableValue('key', 'default'));
+		self::assertSame(0, $context->peekTreatment('exp_covered'));
+		self::assertSame('treatment', $context->getVariableValue('key', 'default'));
+		$this->assertPublished($context, self::holdoutExposure(11, 'holdout_a', 0),
+			self::exposure(3, 'exp_winner', self::NORMAL_VARIANT));
+	}
+
+	public static function rejectedPeekIterations(): array {
+		return ['same experiment iteration' => [1], 'changed experiment iteration' => [2]];
 	}
 
 	public static function rejectedCoverageInstalls(): array {
@@ -1406,7 +1446,6 @@ class ContextHoldoutTest extends TestCase {
 
 	/** @dataProvider loggerCloseOutcomes */
 	public function testVariableWalkStopsOnlyAfterASuccessfulLoggerClose(int $closeAt, bool $closeSucceeds, bool $closeThrows): void {
-		// Exposures in walk order: holdout 11 (experiment 1 held out), holdout 12 (experiment 2 held out), experiment 3.
 		$order = [11 => 0, 12 => 1, 3 => 2];
 		$logger = new ThrowingExposureLogger();
 		$logger->throwWhen = function($exposure) use (&$context, $order, $closeAt, $closeThrows) {

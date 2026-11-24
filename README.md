@@ -312,12 +312,14 @@ Holdouts arrive with the context data (`ContextData::$holdouts`) and cover the e
 - A unit in a holdout's held-out arm (variant 0) gets control (variant 0) for each covered experiment, and
   `getTreatment()` sends no exposure for that experiment. In a 3-arm holdout, arm 1 holds out only experiments that
   are not full-on.
-- The first `getTreatment()` or `getVariableValue()` on a covered experiment sends one exposure for each of its
-  holdouts (once per holdout and unit type), with the holdout's arm as the variant. `peekTreatment()` and
+- The first `getTreatment()` on a covered experiment sends one exposure for each of its holdouts (once per
+  holdout and unit type), with the holdout's arm as the variant. A `getVariableValue()` read exposes only the winner
+  experiment and its holdouts, plus the holdouts of suppressed candidates visited before it (or all visited
+  suppressed candidates when nothing wins). It does not expose every covered candidate. `peekTreatment()` and
   `peekVariableValue()` send nothing.
 - An override (`setOverride()`) and a matching assignment rule win over a holdout; a custom assignment does not.
 - For a variable key shared by several experiments, a held-out experiment never wins the key (the unit is not
-  assigned to it), but `getVariableValue()` still sends its holdouts' exposures. When no experiment wins the key,
+  assigned to it), but `getVariableValue()` still sends its holdouts' exposures when it visits that candidate. When no experiment wins the key,
   the first held-out experiment's control value is returned (if its control variant defines the key).
 
 When creating a context from pre-fetched data, pass the holdouts too:
