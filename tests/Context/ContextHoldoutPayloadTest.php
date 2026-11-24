@@ -1299,6 +1299,25 @@ class ContextHoldoutPayloadTest extends TestCase {
 		];
 	}
 
+	/** @dataProvider uninitializedHoldoutFields */
+	public function testProviderHoldoutWithAnUninitializedTypedFieldIsIgnored(string $field): void {
+		$declarations = ['id' => 'public int $id', 'name' => 'public string $name', 'split' => 'public array $split'];
+		$values = ['id' => ' = 11', 'name' => ' = "holdout_a"', 'split' => ' = [0.1, 0.9]'];
+		$code = 'public int $iteration = 1; public int $seedHi = 13; public int $seedLo = 111;';
+		foreach ($declarations as $name => $declaration) {
+			$code .= ' ' . $declaration . ($name === $field ? '' : $values[$name]) . ';';
+		}
+		$holdout = eval('return new class { ' . $code . ' };');
+		[$context] = $this->contextWithProvider(new ContextData([self::experiment(1, 'exp', [11])], [$holdout]));
+
+		self::assertFalse($context->isFailed());
+		self::assertSame(1, $context->getTreatment('exp'));
+	}
+
+	public static function uninitializedHoldoutFields(): array {
+		return ['id' => ['id'], 'name' => ['name'], 'split' => ['split']];
+	}
+
 	// JS can't tell 11.0 from 11, so integral floats name and seed a holdout like integers; the caller's data is untouched.
 	public function testIntegralFloatIdsAndSeedsAreIntegers(): void {
 		$payload = json_decode('{"experiments":[' . json_encode(self::experiment(1, 'exp', [])) . '],"holdouts":[{"id":11.0,"name":"holdout_a",'

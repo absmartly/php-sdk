@@ -72,11 +72,18 @@ class Experiment {
 			elseif ($field === 'holdoutIds') {
 				// Ids that aren't integers (integral floats such as 11.0 count) can't name a holdout, so they are dropped
 				// rather than failing the whole context.
-				$this->holdoutIds = is_array($value)
-					? array_values(array_filter(array_map(static function ($id) {
-						return is_float($id) && floor($id) === $id && $id >= -9.2233720368547758E18 && $id < 9.2233720368547758E18 ? (int) $id : $id;
-					}, $value), 'is_int'))
-					: null;
+				$this->holdoutIds = null;
+				if (is_array($value)) {
+					$this->holdoutIds = [];
+					foreach ($value as $id) {
+						if (is_int($id)) {
+							$this->holdoutIds[] = $id;
+						}
+						elseif (is_float($id) && floor($id) === $id && $id >= -9.2233720368547758E18 && $id < 9.2233720368547758E18) {
+							$this->holdoutIds[] = (int) $id;
+						}
+					}
+				}
 			}
 			elseif ($field === 'holdoutType') {
 				$this->holdoutType = is_string($value) ? $value : null;

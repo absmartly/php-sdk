@@ -153,7 +153,8 @@
   numbers; and `holdoutIds` entries that are not such integers. Ids that name no holdout and unknown fields are
   ignored too. `new ContextData($experiments)` keeps working (no holdouts). Payloads without holdouts keep
   the previous variable lookup results and exposures. `getVariableValue()` on them is about 3% slower than before,
-  because coverage is checked per candidate (a logger refresh can install it mid-walk). Cached assignment
+  because coverage is checked per candidate (a logger refresh can install it mid-walk). Context creation and refresh do extra holdout
+  validation; with 50 experiments, creation measured about 7-9% slower. Cached assignment
   validation reads the experiment data once and compares its fields inline, offsetting the additional holdout flag
   check on reads.
   A holdout exposure that the retained-event cap drops is queued again by the next exposing read of an experiment
