@@ -1381,8 +1381,8 @@ class ContextHoldoutTest extends TestCase {
 		self::assertFalse(self::property($context, 'hasHoldouts'));
 	}
 
-	// Márcio's and Jervasion's probe: an Error logger peeks at the rejected payload's held-out experiment, whose holdout
-	// split flips, then throws. After the rollback the restored definitions keep the unit held out.
+	// An Error logger peeks at an experiment in the rejected payload, whose holdout split would release the unit, then
+	// throws. After the rollback the restored definitions keep the unit held out.
 	/** @dataProvider rejectedPeekIterations */
 	public function testRejectedRefreshDiscardsDecisionsFromAnErrorLoggerPeek(int $incomingIteration): void {
 		$logger = new class extends MockContextEventLoggerProxy {
