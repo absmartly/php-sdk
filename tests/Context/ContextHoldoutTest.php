@@ -1497,14 +1497,26 @@ class ContextHoldoutTest extends TestCase {
 	 * A logger that throws once on the Error event of a malformed experiment, so the refresh fails partway through
 	 * installing the data, after setData() has cleared the holdout index.
 	 */
-	private static function throwOnceOnErrorLogger(): MockContextEventLoggerProxy {
-		return new class extends MockContextEventLoggerProxy {
+	/**
+	 * A logger that, armed, runs $beforeThrow (if any) on the next Error event and then throws, so the refresh that is
+	 * installing fails.
+	 */
+	private static function throwOnceOnErrorLogger(?\Closure $beforeThrow = null): MockContextEventLoggerProxy {
+		return new class($beforeThrow) extends MockContextEventLoggerProxy {
 			public bool $armed = false;
+			private ?\Closure $beforeThrow;
+
+			public function __construct(?\Closure $beforeThrow) {
+				$this->beforeThrow = $beforeThrow;
+			}
 
 			public function handleEvent(Context $context, ContextEventLoggerEvent $event): void {
 				parent::handleEvent($context, $event);
 				if ($this->armed && $event->getEvent() === ContextEventLoggerEvent::Error) {
 					$this->armed = false;
+					if ($this->beforeThrow !== null) {
+						($this->beforeThrow)($context);
+					}
 					throw new \RuntimeException('logger rejected the malformed experiment');
 				}
 			}
@@ -1755,18 +1767,9 @@ class ContextHoldoutTest extends TestCase {
 
 	/** @dataProvider rejectedExposureCoverage */
 	public function testRejectedRefreshKeepsExposuresAnErrorLoggerQueuedDeduplicated(bool $covered): void {
-		$logger = new class extends MockContextEventLoggerProxy {
-			public bool $armed = false;
-
-			public function handleEvent(Context $context, ContextEventLoggerEvent $event): void {
-				parent::handleEvent($context, $event);
-				if ($this->armed && $event->getEvent() === ContextEventLoggerEvent::Error) {
-					$this->armed = false;
-					$context->getTreatment('exp_same');
-					throw new \RuntimeException('reject install');
-				}
-			}
-		};
+		$logger = self::throwOnceOnErrorLogger(static function (Context $context) {
+			$context->getTreatment('exp_same');
+		});
 		$same = self::experiment(1, 'exp_same');
 		$holdouts = [];
 		if ($covered) {
@@ -1788,20 +1791,11 @@ class ContextHoldoutTest extends TestCase {
 		$this->assertPublished($context, ...$expected);
 	}
 
-	// The holdout arm an Error logger exposed is kept too, so another experiment it covers doesn't expose it again.
+	// The holdout arm a rejecting Error logger exposed (from the previous data) isn't exposed again by another experiment.
 	public function testRejectedRefreshKeepsAHoldoutArmAnErrorLoggerExposed(): void {
-		$logger = new class extends MockContextEventLoggerProxy {
-			public bool $armed = false;
-
-			public function handleEvent(Context $context, ContextEventLoggerEvent $event): void {
-				parent::handleEvent($context, $event);
-				if ($this->armed && $event->getEvent() === ContextEventLoggerEvent::Error) {
-					$this->armed = false;
-					$context->getTreatment('exp_same');
-					throw new \RuntimeException('reject install');
-				}
-			}
-		};
+		$logger = self::throwOnceOnErrorLogger(static function (Context $context) {
+			$context->getTreatment('exp_same');
+		});
 		$holdouts = [self::holdout(11, 'holdout_b', self::HOLDOUT_B_SEED)];
 		$same = self::coveredBy(self::experiment(1, 'exp_same'), 11);
 		$other = self::coveredBy(self::experiment(3, 'exp_other'), 11);
@@ -1815,21 +1809,11 @@ class ContextHoldoutTest extends TestCase {
 			self::holdoutExposure(11, 'holdout_b', 1), self::exposure(3, 'exp_other', self::NORMAL_VARIANT));
 	}
 
-	// A decision exposed before the refresh wins over one an Error logger exposed from the rejected data: after the
-	// rollback the restored definitions match it, so later reads queue nothing again.
+	// The rejecting Error logger reads the decision exposed before the refresh, so later reads queue nothing again.
 	public function testRejectedRefreshKeepsTheDecisionExposedBeforeIt(): void {
-		$logger = new class extends MockContextEventLoggerProxy {
-			public bool $armed = false;
-
-			public function handleEvent(Context $context, ContextEventLoggerEvent $event): void {
-				parent::handleEvent($context, $event);
-				if ($this->armed && $event->getEvent() === ContextEventLoggerEvent::Error) {
-					$this->armed = false;
-					$context->getTreatment('exp_same');
-					throw new \RuntimeException('reject install');
-				}
-			}
-		};
+		$logger = self::throwOnceOnErrorLogger(static function (Context $context) {
+			$context->getTreatment('exp_same');
+		});
 		$holdout = self::holdout(11, 'holdout_b', self::HOLDOUT_B_SEED);
 		$same = self::coveredBy(self::experiment(1, 'exp_same'), 11);
 		$other = self::coveredBy(self::experiment(3, 'exp_other'), 11);
@@ -1847,21 +1831,11 @@ class ContextHoldoutTest extends TestCase {
 		self::assertSame($pending + 1, $context->getPendingCount());
 	}
 
-	// A decision an Error logger exposed from the rejected data replaces a restored one that was only peeked, so its
-	// queued exposure is not queued again by the next read.
+	// A rejecting Error logger that exposes an experiment only peeked before keeps that decision for the next read.
 	public function testRejectedRefreshKeepsAnExposedDecisionOverARestoredPeek(): void {
-		$logger = new class extends MockContextEventLoggerProxy {
-			public bool $armed = false;
-
-			public function handleEvent(Context $context, ContextEventLoggerEvent $event): void {
-				parent::handleEvent($context, $event);
-				if ($this->armed && $event->getEvent() === ContextEventLoggerEvent::Error) {
-					$this->armed = false;
-					$context->getTreatment('exp_same');
-					throw new \RuntimeException('reject install');
-				}
-			}
-		};
+		$logger = self::throwOnceOnErrorLogger(static function (Context $context) {
+			$context->getTreatment('exp_same');
+		});
 		$same = self::experiment(1, 'exp_same');
 		$same->audience = '{"filter":[{"gte":[{"var":"age"},{"value":20}]}]}';
 		$context = $this->createContext(self::data([], $same), [self::UNIT_TYPE => self::UID], [], [], $logger);
@@ -1885,18 +1859,9 @@ class ContextHoldoutTest extends TestCase {
 	// An Error logger that exposes the experiment during a rejected refresh whose iteration differs exposes it from the
 	// previous data, so the next read reuses that decision and nothing is queued twice.
 	public function testErrorLoggerExposureDuringARejectedRefreshIsNotQueuedAgain(): void {
-		$logger = new class extends MockContextEventLoggerProxy {
-			public bool $armed = false;
-
-			public function handleEvent(Context $context, ContextEventLoggerEvent $event): void {
-				parent::handleEvent($context, $event);
-				if ($this->armed && $event->getEvent() === ContextEventLoggerEvent::Error) {
-					$this->armed = false;
-					$context->getTreatment('exp_covered');
-					throw new \RuntimeException('reject install');
-				}
-			}
-		};
+		$logger = self::throwOnceOnErrorLogger(static function (Context $context) {
+			$context->getTreatment('exp_covered');
+		});
 		$covered = self::coveredBy(self::withVariables(self::experiment(1, 'exp_covered'), 'key'), 11);
 		$winner = self::withVariables(self::experiment(3, 'exp_winner'), 'key');
 		$holdout = self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED);
@@ -1918,6 +1883,89 @@ class ContextHoldoutTest extends TestCase {
 
 	public static function rejectedPeekIterations(): array {
 		return ['same experiment iteration' => [1], 'changed experiment iteration' => [2]];
+	}
+
+	// A unit the rejecting Error logger sets stays set, and the peek it invalidated is not revived.
+	public function testUnitSetByARejectingErrorLoggerIsHonoured(): void {
+		$logger = self::throwOnceOnErrorLogger(static function (Context $context) {
+			$context->setUnit(self::UNIT_TYPE, self::UID);
+		});
+		$fullOn = self::coveredBy(self::experiment(1, 'exp_full_on', self::UNIT_TYPE, 1), 11);
+		$holdout = self::holdout(11, 'holdout_unit', self::HOLDOUT_A_SEED);
+		$holdout->split = [1.0, 0.0];
+		$context = $this->createContext(self::data([$holdout], $fullOn), [], [], [], $logger);
+		self::assertSame(1, $context->peekTreatment('exp_full_on'));
+		$logger->armed = true;
+
+		$this->refresh($context, self::data([$holdout], clone $fullOn, self::malformedExperiment(2)));
+
+		self::assertSame(0, $context->getTreatment('exp_full_on'));
+		$this->assertPublished($context, self::holdoutExposure(11, 'holdout_unit', 0));
+	}
+
+	// An exposure the rejecting Error logger queues for the installed iteration is not queued again afterwards.
+	/** @dataProvider rejectedExposureCoverage */
+	public function testExposureOfTheInstalledIterationByARejectingErrorLoggerIsKept(bool $covered): void {
+		$logger = self::throwOnceOnErrorLogger(static function (Context $context) {
+			$context->getTreatment('exp_same');
+		});
+		$same = self::experiment(1, 'exp_same');
+		$holdout = self::holdout(11, 'holdout_b', self::HOLDOUT_B_SEED);
+		$holdouts = [];
+		if ($covered) {
+			$same = self::coveredBy($same, 11);
+			$holdouts[] = $holdout;
+		}
+		$context = $this->createContext(self::data($holdouts, $same), [self::UNIT_TYPE => self::UID], [], [], $logger);
+		self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_same'));
+		$installed = clone $same;
+		$installed->iteration = 2;
+		$installedHoldouts = $holdouts;
+		if ($covered) {
+			$bumped = clone $holdout;
+			$bumped->iteration = 2;
+			$installedHoldouts = [$bumped];
+		}
+		$this->refresh($context, self::data($installedHoldouts, $installed));
+		$logger->armed = true;
+
+		$this->refresh($context, self::data($installedHoldouts, clone $installed, self::malformedExperiment(2)));
+
+		$pending = $context->getPendingCount();
+		self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_same'));
+		self::assertSame($pending, $context->getPendingCount());
+		self::assertSame($covered ? 4 : 2, $pending);
+	}
+
+	// A holdout exposure the retained-event cap drops during a rejected refresh is still queued again later.
+	public function testHoldoutExposureDroppedDuringARejectedRefreshIsRetried(): void {
+		$logger = self::throwOnceOnErrorLogger(function (Context $context) {
+			$context->peekTreatment('exp_covered');
+			$context->track('goal');
+			$this->eventHandler->prerun = static function () {
+				throw new \RuntimeException('collector down');
+			};
+			$context->maxRetainedEvents = 1;
+			$context->publish();
+			$this->eventHandler->prerun = null;
+			$context->maxRetainedEvents = 10000;
+		});
+		$holdout = self::holdout(11, 'holdout_retry', self::HOLDOUT_A_SEED);
+		$covered = self::coveredBy(self::experiment(1, 'exp_covered'), 11);
+		$other = self::coveredBy(self::experiment(3, 'exp_other'), 11);
+		$context = $this->createContext(self::data([$holdout], $covered, $other), [self::UNIT_TYPE => self::UID], [], [], $logger);
+		self::assertSame(0, $context->getTreatment('exp_covered'));
+		$incoming = clone $covered;
+		$incoming->iteration = 2;
+		$bumped = clone $holdout;
+		$bumped->iteration = 2;
+		$logger->armed = true;
+
+		$this->refresh($context, self::data([$bumped], $incoming, self::malformedExperiment(2), clone $other));
+
+		self::assertSame(0, $context->getTreatment('exp_other'));
+		$published = array_map(static fn($exposure) => [$exposure[0], $exposure[3]], $this->published($context));
+		self::assertContains([11, 0], $published);
 	}
 
 	public static function rejectedCoverageInstalls(): array {

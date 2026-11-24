@@ -1076,7 +1076,7 @@ class Context {
 			}
 
 			if ($assignment->suppressed && $assignment->variables !== null && $selectedVariables === null) {
-				$selectedVariables = $assignment->variables ?? null;
+				$selectedVariables = $assignment->variables;
 			}
 		}
 
