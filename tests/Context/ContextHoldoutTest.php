@@ -1420,6 +1420,72 @@ class ContextHoldoutTest extends TestCase {
 			self::exposure(3, 'exp_winner', self::NORMAL_VARIANT));
 	}
 
+	/** @dataProvider rejectedExposureCoverage */
+	public function testRejectedRefreshKeepsExposuresAnErrorLoggerQueuedDeduplicated(bool $covered): void {
+		$logger = new class extends MockContextEventLoggerProxy {
+			public bool $armed = false;
+
+			public function handleEvent(Context $context, ContextEventLoggerEvent $event): void {
+				parent::handleEvent($context, $event);
+				if ($this->armed && $event->getEvent() === ContextEventLoggerEvent::Error) {
+					$this->armed = false;
+					$context->getTreatment('exp_same');
+					throw new \RuntimeException('reject install');
+				}
+			}
+		};
+		$same = self::experiment(1, 'exp_same');
+		$holdouts = [];
+		if ($covered) {
+			$same = self::coveredBy($same, 11);
+			$holdouts[] = self::holdout(11, 'holdout_b', self::HOLDOUT_B_SEED);
+		}
+		$context = $this->createContext(self::data($holdouts, $same), [self::UNIT_TYPE => self::UID], [], [], $logger);
+		$logger->armed = true;
+
+		$this->refresh($context, self::data($holdouts, clone $same, self::malformedExperiment(2)));
+
+		$pending = $context->getPendingCount();
+		self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_same'));
+		self::assertSame($pending, $context->getPendingCount());
+		$expected = [self::exposure(1, 'exp_same', self::NORMAL_VARIANT)];
+		if ($covered) {
+			$expected[] = self::holdoutExposure(11, 'holdout_b', 1);
+		}
+		$this->assertPublished($context, ...$expected);
+	}
+
+	// The holdout arm an Error logger exposed is kept too, so another experiment it covers doesn't expose it again.
+	public function testRejectedRefreshKeepsAHoldoutArmAnErrorLoggerExposed(): void {
+		$logger = new class extends MockContextEventLoggerProxy {
+			public bool $armed = false;
+
+			public function handleEvent(Context $context, ContextEventLoggerEvent $event): void {
+				parent::handleEvent($context, $event);
+				if ($this->armed && $event->getEvent() === ContextEventLoggerEvent::Error) {
+					$this->armed = false;
+					$context->getTreatment('exp_same');
+					throw new \RuntimeException('reject install');
+				}
+			}
+		};
+		$holdouts = [self::holdout(11, 'holdout_b', self::HOLDOUT_B_SEED)];
+		$same = self::coveredBy(self::experiment(1, 'exp_same'), 11);
+		$other = self::coveredBy(self::experiment(3, 'exp_other'), 11);
+		$context = $this->createContext(self::data($holdouts, $same, $other), [self::UNIT_TYPE => self::UID], [], [], $logger);
+		$logger->armed = true;
+
+		$this->refresh($context, self::data($holdouts, clone $same, self::malformedExperiment(2), clone $other));
+
+		self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_other'));
+		$this->assertPublished($context, self::exposure(1, 'exp_same', self::NORMAL_VARIANT),
+			self::holdoutExposure(11, 'holdout_b', 1), self::exposure(3, 'exp_other', self::NORMAL_VARIANT));
+	}
+
+	public static function rejectedExposureCoverage(): array {
+		return ['without holdouts' => [false], 'covered by a holdout' => [true]];
+	}
+
 	public static function rejectedPeekIterations(): array {
 		return ['same experiment iteration' => [1], 'changed experiment iteration' => [2]];
 	}

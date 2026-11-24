@@ -1534,10 +1534,10 @@ class Context {
 			$this->parsedRules = $oldParsedRules;
 			$this->experimentHoldouts = $oldExperimentHoldouts;
 			$this->hasHoldouts = $oldHasHoldouts;
-			// An Error callback may have peeked at the partially installed data before rejecting it. Discard those
-			// decisions too, while retaining exposed flags on the old assignments if the callback published them.
-			$this->assignmentCache = $oldAssignments;
-			$this->holdoutAssignmentCache = $oldHoldoutAssignments;
+			// An Error callback may have read the partially installed data before rejecting it. Its unexposed decisions
+			// are discarded, but one whose exposure it queued is kept, so a later read does not queue that exposure again.
+			$this->assignmentCache = self::keepExposed($oldAssignments, $this->assignmentCache ?? []);
+			$this->holdoutAssignmentCache = self::keepExposed($oldHoldoutAssignments, $this->holdoutAssignmentCache);
 			$this->logError($exception);
 			return;
 		}
@@ -1550,6 +1550,20 @@ class Context {
 		}
 		catch (Throwable $exception) {
 		}
+	}
+
+	/**
+	 * @param array<string, Assignment> $restored
+	 * @param array<string, Assignment> $rejected
+	 * @return array<string, Assignment> $restored, plus the entries of $rejected whose exposure was queued
+	 */
+	private static function keepExposed(array $restored, array $rejected): array {
+		foreach ($rejected as $key => $assignment) {
+			if ($assignment->exposed) {
+				$restored[$key] = $assignment;
+			}
+		}
+		return $restored;
 	}
 
 	/**
