@@ -127,7 +127,6 @@ class ContextSharedVariableKeyTest extends TestCase {
 	}
 
 	public function testAFullOnLowerIdWinsWithoutItsUnit(): void {
-		// Unlike a split experiment, a full-on one is assigned without its unit, so it wins and is the only exposure.
 		$context = $this->createContext([
 			self::loser(),
 			self::experiment(1, 'exp_low', [['shared' => 'low-control'], ['shared' => 'low']], ['unitType' => 'device_id']),
