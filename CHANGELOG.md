@@ -76,9 +76,10 @@
 ### Changed
 
 - Ready and Refresh event logger data now includes an additive `holdouts: []` field even when no holdouts exist.
-- New typed public properties: `ContextData::$holdouts` (`array`) and `Experiment::$holdoutIds` (`?array`) and
-  `$holdoutType` (`?string`). A subclass that already declares a property of the same name must declare the same
-  type, or PHP rejects the class when it loads.
+- New typed public properties: `ContextData::$holdouts` (`array`); `Experiment::$holdoutIds` (`?array`) and
+  `$holdoutType` (`?string`); `Assignment::$suppressed` (`bool`), `$holdouts` and `$holdoutAssignments` (`?array`)
+  and `$holdoutArmCount` (`int`). A subclass that already declares a property of the same name must declare the
+  same type, or PHP rejects the class when it loads.
 - With holdouts in the data, an exposure logger error during `getVariableValue()` no longer stops the walk over
   the experiments defining the key: later ones are still exposed and the first error is re-thrown afterwards,
   as in the Java SDK. Once an event logger closes the context mid-read, whether or not it then throws, nothing
@@ -151,7 +152,8 @@
   strings such as `"11"` do not), whose `name` is not a string, or whose `split` is not a non-empty array of
   numbers; and `holdoutIds` entries that are not such integers. Ids that name no holdout and unknown fields are
   ignored too. `new ContextData($experiments)` keeps working (no holdouts). Payloads without holdouts keep
-  the previous exposure and variable lookup code. Cached assignment validation reads the experiment data once and
+  the previous variable lookup results and exposures; `getVariableValue()` on them runs about 3% slower than before
+  holdouts, from the per-candidate coverage check that a logger refresh can change mid-walk. Cached assignment validation reads the experiment data once and
   compares its fields inline, offsetting the additional holdout flag check on reads.
   A holdout exposure that the retained-event cap drops is queued again by the next exposing read of an experiment
   whose cached assignment still pins that arm, provided the arm was still current when it was dropped. An arm
