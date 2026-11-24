@@ -956,7 +956,8 @@ class ContextHoldoutTest extends TestCase {
 
 	// The same holds when the getter sets the unit while a cached decision is re-checked after an attribute change.
 	/** @dataProvider unitSettingRecheckSplits */
-	public function testUnitSetByAnAudienceGetterDuringARecheckIsHonouredByTheHoldout(array $split, int $variant, array $expected): void {
+	public function testUnitSetByAnAudienceGetterDuringARecheckIsHonouredByTheHoldout(array $split, int $variant, array $expected,
+		bool $getterReads = false): void {
 		$experiment = self::coveredBy(self::experiment(1, 'exp_getter_unit'), 11);
 		$experiment->audience = '{"filter":[{"gte":[{"var":"probe/score"},{"value":0}]}]}';
 		$holdout = self::holdout(11, 'holdout_getter', self::HOLDOUT_A_SEED);
@@ -966,8 +967,11 @@ class ContextHoldoutTest extends TestCase {
 		$context->setAttributeValue('probe', $probe);
 		$context->peekTreatment('exp_getter_unit');
 		$context->setAttributeValue('bump', 1);
-		$probe->onRead = function () use ($context) {
+		$probe->onRead = function () use ($context, $getterReads) {
 			$context->setUnit(self::UNIT_TYPE, self::UID);
+			if ($getterReads) {
+				$context->peekTreatment('exp_getter_unit');
+			}
 		};
 
 		self::assertSame($variant, $context->getTreatment('exp_getter_unit'));
@@ -980,7 +984,25 @@ class ContextHoldoutTest extends TestCase {
 			'held out' => [[1.0, 0.0], 0, [self::holdoutExposure(11, 'holdout_getter', 0)]],
 			'not held out' => [[0.0, 1.0], self::NORMAL_VARIANT, [self::exposure(1, 'exp_getter_unit', self::NORMAL_VARIANT),
 				self::holdoutExposure(11, 'holdout_getter', 1)]],
+			'held out, getter reads it again' => [[1.0, 0.0], 0, [self::holdoutExposure(11, 'holdout_getter', 0)], true],
 		];
+	}
+
+	// A covered candidate that lost an exposing variable read because its unit was missing stays the loser once the unit
+	// is set, as without holdouts: the key keeps resolving to the experiment that won it.
+	public function testLateUnitDoesNotSwitchTheWinnerOfAnExposedVariableRead(): void {
+		$first = self::coveredBy(self::withVariables(self::experiment(1, 'exp_first', 'user_id'), 'late_key'), 11);
+		$first->variants[1]->config = '{"late_key":"from_first"}';
+		$second = self::withVariables(self::experiment(2, 'exp_second'), 'late_key');
+		$context = $this->createContext(self::data([self::holdout(11, 'holdout_late', self::HOLDOUT_B_SEED, 'user_id')],
+			$first, $second));
+
+		self::assertSame('treatment', $context->getVariableValue('late_key', 'default'));
+		$context->setUnit('user_id', self::UID);
+		self::assertSame('treatment', $context->getVariableValue('late_key', 'default'));
+		self::assertSame('treatment', $context->getVariableValue('late_key', 'default'));
+		$this->assertPublished($context, self::exposure(2, 'exp_second', self::NORMAL_VARIANT));
+		self::assertSame(0, $context->peekTreatment('exp_first'));
 	}
 
 	public function testOverrideValueAndExposuresSurviveALateUnitAndItsHoldoutResolves(): void {
@@ -1475,10 +1497,10 @@ class ContextHoldoutTest extends TestCase {
 		self::assertFalse(self::property($context, 'hasHoldouts'));
 	}
 
-	// An Error logger peeks at an experiment in the rejected payload, whose holdout split would release the unit, then
-	// throws. After the rollback the restored definitions keep the unit held out.
+	// An Error logger peeks at an experiment while a refresh whose holdout split would release the unit is being
+	// installed, then throws. The logger sees the previous data, and so does every later read: the unit stays held out.
 	/** @dataProvider rejectedPeekIterations */
-	public function testRejectedRefreshDiscardsDecisionsFromAnErrorLoggerPeek(int $incomingIteration): void {
+	public function testErrorLoggerDuringARejectedRefreshSeesAndKeepsThePreviousData(int $incomingIteration): void {
 		$logger = new class extends MockContextEventLoggerProxy {
 			public bool $armed = false;
 			public ?int $peek = null;
@@ -1506,7 +1528,7 @@ class ContextHoldoutTest extends TestCase {
 
 		$this->refresh($context, self::data([$incomingHoldout], $incoming, self::malformedExperiment(2), $winner));
 
-		self::assertSame(1, $logger->peek);
+		self::assertSame(0, $logger->peek);
 		self::assertSame(0, $context->getPendingCount());
 		self::assertSame($oldData, $context->getContextData());
 		self::assertSame('treatment', $context->getVariableValue('key', 'default'));
@@ -1643,6 +1665,40 @@ class ContextHoldoutTest extends TestCase {
 
 	public static function rejectedExposureCoverage(): array {
 		return ['without holdouts' => [false], 'covered by a holdout' => [true]];
+	}
+
+	// An Error logger that exposes the experiment during a rejected refresh whose iteration differs exposes it from the
+	// previous data, so the next read reuses that decision and nothing is queued twice.
+	public function testErrorLoggerExposureDuringARejectedRefreshIsNotQueuedAgain(): void {
+		$logger = new class extends MockContextEventLoggerProxy {
+			public bool $armed = false;
+
+			public function handleEvent(Context $context, ContextEventLoggerEvent $event): void {
+				parent::handleEvent($context, $event);
+				if ($this->armed && $event->getEvent() === ContextEventLoggerEvent::Error) {
+					$this->armed = false;
+					$context->getTreatment('exp_covered');
+					throw new \RuntimeException('reject install');
+				}
+			}
+		};
+		$covered = self::coveredBy(self::withVariables(self::experiment(1, 'exp_covered'), 'key'), 11);
+		$winner = self::withVariables(self::experiment(3, 'exp_winner'), 'key');
+		$holdout = self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED);
+		$holdout->split = [1.0, 0.0];
+		$context = $this->createContext(self::data([$holdout], $covered, $winner), [self::UNIT_TYPE => self::UID], [], [], $logger);
+		$incoming = clone $covered;
+		$incoming->iteration = 2;
+		$incomingHoldout = clone $holdout;
+		$incomingHoldout->split = [0.0, 1.0];
+		$logger->armed = true;
+
+		$this->refresh($context, self::data([$incomingHoldout], $incoming, self::malformedExperiment(2), $winner));
+
+		self::assertSame('treatment', $context->getVariableValue('key', 'default'));
+		self::assertSame(0, $context->getTreatment('exp_covered'));
+		$this->assertPublished($context, self::holdoutExposure(11, 'holdout_a', 0),
+			self::exposure(3, 'exp_winner', self::NORMAL_VARIANT));
 	}
 
 	public static function rejectedPeekIterations(): array {

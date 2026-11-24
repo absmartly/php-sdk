@@ -13,7 +13,9 @@
   and arm as `variant`, hashed with the covered experiment's unit type) per unit type, on the first exposing
   `getTreatment()`/`getVariableValue()` of an experiment it covers; peeks publish nothing. The arm is kept until
   the holdout's iteration changes, so a same-iteration seed or split edit does not re-randomize or re-expose, and a
-  unit set later re-resolves a not-yet-exposed experiment. Unlike JS, which coerces them, malformed holdouts are
+  unit set later (even by an attribute getter during an audience check) re-resolves a not-yet-exposed experiment,
+  except a candidate an exposing `getVariableValue()` passed over, which keeps losing that key as without holdouts.
+  Unlike JS, which coerces them, malformed holdouts are
   ignored and their experiments assign normally: a holdout whose `id`, `iteration`, `seedHi` or `seedLo` is
   missing, null or not a JSON integer within the int64 range (integral floats such as `11.0` count; numeric
   strings such as `"11"` do not), whose `name` is not a string, or whose `split` is not a non-empty array of
@@ -30,9 +32,9 @@
     holdouts' exposures (never its own), so the holdout counts the unit. When no candidate wins, the first held-out
     candidate's control value is returned if its control variant defines the key, else the caller default.
   - **Cost.** Payloads without holdouts keep the 1.1.0 variable lookup results and exposures. On PHP 8.5 with 50
-    experiments and no holdouts, context creation measured about 5% slower than 1.1.0 (extra holdout validation)
-    and `getVariableValue()` about 1-3% slower (coverage is checked per candidate, since a logger refresh can install
-    it mid-walk).
+    experiments and no holdouts, context creation measured about 5% slower than 1.1.0 (extra holdout validation),
+    `getVariableValue()` about 3% slower (coverage is checked per candidate, since a logger refresh can install it
+    mid-walk) and `getTreatment()` level.
 
 ### Changed
 
@@ -57,7 +59,9 @@
 - `refresh()` keeps the previous data and logs an `Error` event when fetching or installing the new data raises any
   `Throwable`, not only an `Exception`. A data provider that throws an `\Error`, or a mistyped field that raises a
   `TypeError` while installing, no longer escapes `refresh()` (which also left the experiment index cleared). Code
-  that caught `\Error` around `refresh()` should listen for the `Error` event instead.
+  that caught `\Error` around `refresh()` should listen for the `Error` event instead. New data is installed only
+  once all of it is processed, so an `Error` logger for a malformed experiment reads the previous data, and if it
+  throws, the refresh is rejected with nothing from the new data left behind.
 - A `Refresh` event logger that throws (any `Throwable`) no longer undoes the refresh. The new data stays installed,
   so assignments the handler read from it can't outlive it, and the error is ignored rather than sent back to that
   logger as an `Error` event, as for `Publish` and as in JS, which swallows logger errors. 1.1.0 instead restored
