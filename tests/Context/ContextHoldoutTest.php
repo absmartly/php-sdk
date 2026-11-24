@@ -1328,6 +1328,62 @@ class ContextHoldoutTest extends TestCase {
 		$this->assertPublished($context, self::exposure(1, 'exp_refresh_first', self::NORMAL_VARIANT));
 	}
 
+	/**
+	 * A logger that throws once on the Error event of a malformed experiment, so the refresh fails partway through
+	 * installing the data, after setData() has cleared the holdout index.
+	 */
+	private static function throwOnceOnErrorLogger(): MockContextEventLoggerProxy {
+		return new class extends MockContextEventLoggerProxy {
+			public bool $armed = false;
+
+			public function handleEvent(Context $context, ContextEventLoggerEvent $event): void {
+				parent::handleEvent($context, $event);
+				if ($this->armed && $event->getEvent() === ContextEventLoggerEvent::Error) {
+					$this->armed = false;
+					throw new \RuntimeException('logger rejected the malformed experiment');
+				}
+			}
+		};
+	}
+
+	private static function malformedExperiment(int $id): object {
+		$malformed = self::experiment($id, 'exp_malformed_' . $id);
+		$malformed->audience = '{';
+		return $malformed;
+	}
+
+	// A refresh that fails while installing keeps the installed holdouts: the covered experiment stays held out.
+	public function testRefreshFailingMidInstallKeepsTheExperimentsHoldouts(): void {
+		$logger = self::throwOnceOnErrorLogger();
+		$holdout = self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED);
+		$context = $this->createContext(self::data([$holdout], self::coveredBy(self::experiment(2, 'exp_covered'), 11)),
+			[self::UNIT_TYPE => self::UID], [], [], $logger);
+
+		$logger->armed = true;
+		$this->refresh($context, self::data([$holdout], self::malformedExperiment(1),
+			self::coveredBy(self::experiment(2, 'exp_covered'), 11)));
+
+		self::assertSame(['exp_covered'], $context->getExperiments());
+		self::assertSame(0, $context->getTreatment('exp_covered'));
+		$this->assertPublished($context, self::holdoutExposure(11, 'holdout_a', 0));
+	}
+
+	// A refresh that would have installed the first coverage, then fails while installing, leaves the context on the
+	// no-holdout path it was on.
+	public function testRefreshFailingMidInstallDoesNotKeepItsFirstCoverage(): void {
+		$logger = self::throwOnceOnErrorLogger();
+		$data = self::data([], self::withVariables(self::experiment(1, 'exp_first'), 'key'),
+			self::withVariables(self::experiment(2, 'exp_second'), 'key'));
+		$context = $this->createContext($data, [self::UNIT_TYPE => self::UID], [], [], $logger);
+
+		$logger->armed = true;
+		$this->refresh($context, self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)],
+			self::coveredBy(self::experiment(3, 'exp_covered'), 11), self::malformedExperiment(4)));
+
+		self::assertSame($data, $context->getContextData());
+		self::assertFalse(self::property($context, 'hasHoldouts'));
+	}
+
 	public static function rejectedCoverageInstalls(): array {
 		return [
 			'first coverage rejected by JsonException' => [false, false],
