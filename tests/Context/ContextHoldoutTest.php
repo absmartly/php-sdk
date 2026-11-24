@@ -1494,10 +1494,6 @@ class ContextHoldoutTest extends TestCase {
 	}
 
 	/**
-	 * A logger that throws once on the Error event of a malformed experiment, so the refresh fails partway through
-	 * installing the data, after setData() has cleared the holdout index.
-	 */
-	/**
 	 * A logger that, armed, runs $beforeThrow (if any) on the next Error event and then throws, so the refresh that is
 	 * installing fails.
 	 */
@@ -1728,19 +1724,10 @@ class ContextHoldoutTest extends TestCase {
 	// installed, then throws. The logger sees the previous data, and so does every later read: the unit stays held out.
 	/** @dataProvider rejectedPeekIterations */
 	public function testErrorLoggerDuringARejectedRefreshSeesAndKeepsThePreviousData(int $incomingIteration): void {
-		$logger = new class extends MockContextEventLoggerProxy {
-			public bool $armed = false;
-			public ?int $peek = null;
-
-			public function handleEvent(Context $context, ContextEventLoggerEvent $event): void {
-				parent::handleEvent($context, $event);
-				if ($this->armed && $event->getEvent() === ContextEventLoggerEvent::Error) {
-					$this->armed = false;
-					$this->peek = $context->peekTreatment('exp_covered');
-					throw new \RuntimeException('reject install');
-				}
-			}
-		};
+		$peek = null;
+		$logger = self::throwOnceOnErrorLogger(static function (Context $context) use (&$peek) {
+			$peek = $context->peekTreatment('exp_covered');
+		});
 		$covered = self::coveredBy(self::withVariables(self::experiment(1, 'exp_covered'), 'key'), 11);
 		$winner = self::withVariables(self::experiment(3, 'exp_winner'), 'key');
 		$holdout = self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED);
@@ -1755,7 +1742,7 @@ class ContextHoldoutTest extends TestCase {
 
 		$this->refresh($context, self::data([$incomingHoldout], $incoming, self::malformedExperiment(2), $winner));
 
-		self::assertSame(0, $logger->peek);
+		self::assertSame(0, $peek);
 		self::assertSame(0, $context->getPendingCount());
 		self::assertSame($oldData, $context->getContextData());
 		self::assertSame('treatment', $context->getVariableValue('key', 'default'));
