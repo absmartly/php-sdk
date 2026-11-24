@@ -302,11 +302,7 @@ class ContextHoldoutPayloadTest extends TestCase {
 		};
 		$assignment = self::invokeGetAssignment($context, 'exp');
 		$assignment->holdouts = [$counted];
-		$sets = new \ReflectionProperty(Context::class, 'experimentHoldouts');
-		if (PHP_VERSION_ID < 80100) {
-			$sets->setAccessible(true);
-		}
-		$sets->setValue($context, ['exp' => [$counted]]);
+		self::property($context, 'experimentHoldouts', ['exp' => [$counted]]);
 		for ($i = 0; $i < 10; ++$i) {
 			$context->peekTreatment('exp');
 		}
@@ -1047,11 +1043,19 @@ class ContextHoldoutPayloadTest extends TestCase {
 	}
 
 	private static function droppedHoldoutArms(Context $context): array {
-		$property = new \ReflectionProperty(Context::class, 'droppedHoldoutArms');
+		return self::property($context, 'droppedHoldoutArms');
+	}
+
+	/** @return mixed */
+	private static function property(Context $context, string $name, ...$value) {
+		$reflection = new \ReflectionProperty(Context::class, $name);
 		if (PHP_VERSION_ID < 80100) {
-			$property->setAccessible(true);
+			$reflection->setAccessible(true);
 		}
-		return $property->getValue($context);
+		if ($value !== []) {
+			$reflection->setValue($context, $value[0]);
+		}
+		return $reflection->getValue($context);
 	}
 
 	// A refresh that removes an experiment's holdouts rebuilds its suppressed assignment, so the unit is assigned again.

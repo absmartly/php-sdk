@@ -979,7 +979,6 @@ class Context {
 					}
 				}
 				if ($liveCandidates !== null && !isset($liveCandidates[$name]) && !array_key_exists($name, $this->overrides)) {
-					// Removed candidates and those that lost the key cannot supply a value or exposure; overrides still apply.
 					continue;
 				}
 			}
@@ -1003,11 +1002,14 @@ class Context {
 					}
 					catch (Throwable $exception) {
 						$error = $error ?? $exception;
-						// Coverage installed by the callback defers its error to the winner; otherwise retain fail-fast. A
-						// logger that closed the context ends the walk: no later candidate is evaluated after close.
-						if (!$this->hasHoldouts || $this->isClosed()) {
+						// Fail fast unless coverage exists, even coverage this callback has just installed.
+						if (!$this->hasHoldouts) {
 							throw $error;
 						}
+					}
+					// The read is already committed to throwing, so after a close evaluate nothing more.
+					if ($error !== null && $this->isClosed()) {
+						throw $error;
 					}
 				}
 

@@ -174,6 +174,18 @@ class ContextHoldoutTest extends TestCase {
 		self::assertSame($expected, $this->published($context));
 	}
 
+	/** @return mixed */
+	private static function property(Context $context, string $name, ...$value) {
+		$reflection = new \ReflectionProperty(Context::class, $name);
+		if (PHP_VERSION_ID < 80100) {
+			$reflection->setAccessible(true);
+		}
+		if ($value !== []) {
+			$reflection->setValue($context, $value[0]);
+		}
+		return $reflection->getValue($context);
+	}
+
 	private static function invoke(Context $context, string $method, ...$args) {
 		$reflection = new \ReflectionMethod(Context::class, $method);
 		if (PHP_VERSION_ID < 80100) {
@@ -1190,17 +1202,11 @@ class ContextHoldoutTest extends TestCase {
 	public function testCachedReadWithoutHoldoutsSkipsTheHoldoutSetCheck(): void {
 		$context = $this->createContext(self::data([], self::experiment(1, 'exp_no_holdouts_cached')));
 		self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_no_holdouts_cached'));
-		$cache = new \ReflectionProperty(Context::class, 'assignmentCache');
-		$holdouts = new \ReflectionProperty(Context::class, 'experimentHoldouts');
-		if (PHP_VERSION_ID < 80100) {
-			$cache->setAccessible(true);
-			$holdouts->setAccessible(true);
-		}
-		$cached = $cache->getValue($context)['exp_no_holdouts_cached'];
-		$holdouts->setValue($context, ['exp_no_holdouts_cached' => [self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)]]);
+		$cached = self::property($context, 'assignmentCache')['exp_no_holdouts_cached'];
+		self::property($context, 'experimentHoldouts', ['exp_no_holdouts_cached' => [self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)]]);
 
 		self::assertSame(self::NORMAL_VARIANT, $context->peekTreatment('exp_no_holdouts_cached'));
-		self::assertSame($cached, $cache->getValue($context)['exp_no_holdouts_cached']);
+		self::assertSame($cached, self::property($context, 'assignmentCache')['exp_no_holdouts_cached']);
 	}
 
 	// A holdout that covers no experiment leaves the context on main's exposure and variable lookup: an arm planted on
@@ -1211,13 +1217,7 @@ class ContextHoldoutTest extends TestCase {
 		$context = $this->createContext(self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)], $experiment));
 		self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_fast_path'));
 
-		$cache = new \ReflectionProperty(Context::class, 'assignmentCache');
-		$dropped = new \ReflectionProperty(Context::class, 'droppedHoldoutArms');
-		if (PHP_VERSION_ID < 80100) {
-			$cache->setAccessible(true);
-			$dropped->setAccessible(true);
-		}
-		$assignment = $cache->getValue($context)['exp_fast_path'];
+		$assignment = self::property($context, 'assignmentCache')['exp_fast_path'];
 		$arm = new \ABSmartly\SDK\Assignment();
 		$arm->id = 11;
 		$arm->unitType = self::UNIT_TYPE;
@@ -1225,7 +1225,7 @@ class ContextHoldoutTest extends TestCase {
 		$arm->eligible = true;
 		$assignment->holdouts = [self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)];
 		$assignment->holdoutAssignments = [$arm];
-		$dropped->setValue($context, [spl_object_id($arm) => $arm]);
+		self::property($context, 'droppedHoldoutArms', [spl_object_id($arm) => $arm]);
 
 		self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_fast_path'));
 		self::assertSame('treatment', $context->getVariableValue('fast_path', 'default'));
@@ -1345,11 +1345,7 @@ class ContextHoldoutTest extends TestCase {
 		$context = $this->createContext(self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)], $experiment));
 		self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_unknown_fast_path'));
 
-		$hasHoldouts = new \ReflectionProperty(Context::class, 'hasHoldouts');
-		if (PHP_VERSION_ID < 80100) {
-			$hasHoldouts->setAccessible(true);
-		}
-		self::assertFalse($hasHoldouts->getValue($context));
+		self::assertFalse(self::property($context, 'hasHoldouts'));
 		self::assertSame('treatment', $context->getVariableValue('unknown_fast_path', 'default'));
 		self::assertSame(1, $context->getPendingCount());
 	}
@@ -1379,13 +1375,13 @@ class ContextHoldoutTest extends TestCase {
 	}
 
 	/** @dataProvider loggerCloseOutcomes */
-	public function testVariableWalkStopsOnlyAfterASuccessfulLoggerClose(int $closeAt, bool $closeSucceeds): void {
+	public function testVariableWalkStopsOnlyAfterASuccessfulLoggerClose(int $closeAt, bool $closeSucceeds, bool $closeThrows): void {
 		$logger = new ThrowingExposureLogger();
-		$logger->throwWhen = function($exposure) use (&$context, $closeAt) {
+		$logger->throwWhen = function($exposure) use (&$context, $closeAt, $closeThrows) {
 			if ($exposure->id === $closeAt) {
 				$context->close();
 			}
-			if ($exposure->id <= $closeAt) {
+			if ($exposure->id < $closeAt || ($exposure->id === $closeAt && $closeThrows)) {
 				throw new \RuntimeException('logger ' . $exposure->id);
 			}
 			return false;
@@ -1416,13 +1412,8 @@ class ContextHoldoutTest extends TestCase {
 
 		self::assertSame($closeSucceeds, $context->isClosed());
 		self::assertSame($closeSucceeds ? 0 : 3, $context->getPendingCount());
-		// A successful close stops the walk: no later candidate is even evaluated.
-		$cache = new \ReflectionProperty(Context::class, 'assignmentCache');
-		if (PHP_VERSION_ID < 80100) {
-			$cache->setAccessible(true);
-		}
 		self::assertSame($closeSucceeds ? array_slice(['exp_close_first', 'exp_close_second', 'exp_close_third'], 0, $closeAt)
-			: ['exp_close_first', 'exp_close_second', 'exp_close_third'], array_keys($cache->getValue($context)));
+			: ['exp_close_first', 'exp_close_second', 'exp_close_third'], array_keys(self::property($context, 'assignmentCache')));
 		$this->eventHandler->prerun = null;
 		$context->close();
 		self::assertSame(0, $context->getPendingCount());
@@ -1433,9 +1424,10 @@ class ContextHoldoutTest extends TestCase {
 
 	public static function loggerCloseOutcomes(): array {
 		return [
-			'first logger closes' => [1, true],
-			'later logger closes after an earlier error' => [2, true],
-			'failed close keeps walking' => [1, false],
+			'first logger closes' => [1, true, true],
+			'later logger closes after an earlier error' => [2, true, true],
+			'later logger closes and returns after an earlier error' => [2, true, false],
+			'failed close keeps walking' => [1, false, true],
 		];
 	}
 
@@ -1518,7 +1510,6 @@ class ContextHoldoutTest extends TestCase {
 		$logger->next = $this->dataProvider->next;
 
 		self::assertSame('control', $context->getVariableValue('refresh_epoch', 'default'));
-		// The variable read itself queued the holdout exposure; check before any other read can queue it.
 		self::assertSame(2, $context->getPendingCount());
 		self::assertSame(0, $context->peekTreatment('exp_close_second_refresh_epoch'));
 		$this->assertPublished($context, self::exposure(1, 'exp_close_first_refresh_epoch', self::NORMAL_VARIANT),
