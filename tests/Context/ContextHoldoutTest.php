@@ -1039,6 +1039,21 @@ class ContextHoldoutTest extends TestCase {
 			self::holdoutExposure(11, 'holdout_late', 0, 'user_id'));
 	}
 
+	// A refresh that leaves a passed-over candidate's assignment as it was keeps it pinned.
+	public function testLoserStaysPinnedAcrossARefreshThatKeepsItsAssignment(): void {
+		$first = self::coveredBy(self::withVariables(self::experiment(1, 'exp_first', 'user_id'), 'late_key'), 11);
+		$first->variants[1]->config = '{"late_key":"from_first"}';
+		$second = self::withVariables(self::experiment(2, 'exp_second'), 'late_key');
+		$data = self::data([self::holdout(11, 'holdout_late', self::HOLDOUT_B_SEED, 'user_id')], $first, $second);
+		$context = $this->createContext($data);
+
+		self::assertSame('treatment', $context->getVariableValue('late_key', 'default'));
+		$this->refresh($context, $data);
+		$context->setUnit('user_id', self::UID);
+		self::assertSame('treatment', $context->getVariableValue('late_key', 'default'));
+		$this->assertPublished($context, self::exposure(2, 'exp_second', self::NORMAL_VARIANT));
+	}
+
 	public function testOverrideValueAndExposuresSurviveALateUnitAndItsHoldoutResolves(): void {
 		$context = $this->createContext(self::data([self::holdout(11, 'holdout_override_late', self::HOLDOUT_B_SEED, 'user_id')],
 			self::coveredBy(self::experiment(1, 'exp_override_late_unit', 'user_id'), 11)), [], ['exp_override_late_unit' => 3]);
@@ -1521,6 +1536,91 @@ class ContextHoldoutTest extends TestCase {
 		self::assertTrue($context->isReady());
 		self::assertFalse($context->isFailed());
 		self::assertSame(['exp_valid'], $context->getExperiments());
+	}
+
+	// An Error logger reads the experiments the first load installed before the malformed one, and their holdouts.
+	/** @dataProvider firstLoadCoverage */
+	public function testErrorLoggerDuringTheFirstLoadReadsTheExperimentsLoadedBeforeIt(bool $covered): void {
+		$logger = new class extends MockContextEventLoggerProxy {
+			public ?array $seen = null;
+
+			public function handleEvent(Context $context, ContextEventLoggerEvent $event): void {
+				parent::handleEvent($context, $event);
+				if ($event->getEvent() === ContextEventLoggerEvent::Error && $this->seen === null) {
+					$this->seen = [$context->getExperiments(), $context->peekVariableValue('key', 'default'),
+						$context->getTreatment('exp_valid')];
+				}
+			}
+		};
+		$valid = self::withVariables(self::experiment(1, 'exp_valid'), 'key');
+		$holdouts = [];
+		if ($covered) {
+			$valid = self::coveredBy($valid, 11);
+			$holdout = self::holdout(11, 'holdout_first_load', self::HOLDOUT_A_SEED);
+			$holdout->split = [1.0, 0.0];
+			$holdouts[] = $holdout;
+		}
+		$context = $this->createContext(self::data($holdouts, $valid, self::malformedExperiment(2)),
+			[self::UNIT_TYPE => self::UID], [], [], $logger);
+
+		$variant = $covered ? 0 : self::NORMAL_VARIANT;
+		self::assertSame([['exp_valid'], $covered ? 'control' : 'treatment', $variant], $logger->seen);
+		self::assertSame($variant, $context->getTreatment('exp_valid'));
+		$this->assertPublished($context, $covered ? self::holdoutExposure(11, 'holdout_first_load', 0)
+			: self::exposure(1, 'exp_valid', self::NORMAL_VARIANT));
+	}
+
+	// A refresh() an Error logger calls during the first load does nothing, since the rest of that load would replace
+	// the refreshed data; the first load completes and emits Ready, not Refresh.
+	public function testRefreshFromAnErrorLoggerDuringTheFirstLoadIsIgnored(): void {
+		$logger = new class extends MockContextEventLoggerProxy {
+			public bool $refreshed = false;
+
+			public function handleEvent(Context $context, ContextEventLoggerEvent $event): void {
+				parent::handleEvent($context, $event);
+				if ($event->getEvent() === ContextEventLoggerEvent::Error && !$this->refreshed) {
+					$this->refreshed = true;
+					$context->refresh();
+				}
+			}
+		};
+		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'test-api-key', 'website', 'production'));
+		$config = new Config($client);
+		$this->dataProvider = new HoldoutDataProvider();
+		$this->dataProvider->next = self::data([], self::experiment(3, 'exp_refreshed'));
+		$config->setContextDataProvider($this->dataProvider);
+		$this->eventHandler = new ContextEventHandlerMock($client);
+		$config->setContextEventHandler($this->eventHandler);
+		$contextConfig = new ContextConfig();
+		$contextConfig->setUnits([self::UNIT_TYPE => self::UID]);
+		$contextConfig->setEventLogger($logger);
+		$data = self::data([], self::malformedExperiment(1), self::experiment(2, 'exp_valid'));
+		$context = (new SDK($config))->createContextWithData($contextConfig, $data);
+
+		self::assertTrue($logger->refreshed);
+		self::assertSame([ContextEventLoggerEvent::Error, ContextEventLoggerEvent::Ready],
+			array_map(static fn($event) => $event->getEvent(), $logger->events));
+		self::assertSame($data, $context->getContextData());
+		self::assertSame(['exp_valid'], $context->getExperiments());
+
+		$context->refresh();
+		self::assertSame(['exp_refreshed'], $context->getExperiments());
+	}
+
+	// A first load that a throwing Error logger fails still lets a later refresh() run.
+	public function testRefreshRunsAfterAFirstLoadThatFailed(): void {
+		$logger = self::throwOnceOnErrorLogger();
+		$logger->armed = true;
+		$context = $this->createContext(self::data([], self::malformedExperiment(1), self::experiment(2, 'exp_valid')),
+			[self::UNIT_TYPE => self::UID], [], [], $logger);
+		self::assertTrue($context->isFailed());
+
+		$this->refresh($context, self::data([], self::experiment(3, 'exp_refreshed')));
+		self::assertSame(['exp_refreshed'], $context->getExperiments());
+	}
+
+	public static function firstLoadCoverage(): array {
+		return ['without holdouts' => [false], 'held out by a holdout' => [true]];
 	}
 
 	// On the pending path an Error logger reads the data being loaded too; reading experiments there fails the context,

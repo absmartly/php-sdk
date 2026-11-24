@@ -63,7 +63,8 @@
   that caught `\Error` around `refresh()` should listen for the `Error` event instead. A refresh installs its data
   only once all of it is processed, so an `Error` logger for a malformed experiment in it reads the previous data,
   and if that logger throws, the refresh is rejected with nothing from the new data left behind. The first load
-  still installs experiments as it goes, as in 1.1.0.
+  still installs experiments as it goes, as in 1.1.0; a `refresh()` called from a callback during it does nothing,
+  since the rest of the load would replace the refreshed data.
 - A `Refresh` event logger that throws (any `Throwable`) no longer undoes the refresh. The new data stays installed,
   so assignments the handler read from it can't outlive it, and the error is ignored rather than sent back to that
   logger as an `Error` event, as for `Publish` and as in JS, which swallows logger errors. 1.1.0 instead restored

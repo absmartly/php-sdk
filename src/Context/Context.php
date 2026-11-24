@@ -117,6 +117,8 @@ class Context {
 	 * A later unit leaves them as they were, as it does without holdouts, so it cannot switch the key's winner.
 	 */
 	private array $variableLosers = [];
+	/** Set while the first load installs experiments, so a callback's refresh() can't be overwritten by the rest of it. */
+	private bool $firstLoadInProgress = false;
 	private ?Throwable $readyError = null;
 
 	/**
@@ -249,6 +251,19 @@ class Context {
 	 * logger that throws) leaves the previous data and its decisions in use.
 	 */
 	private function setData(ContextData $data): void {
+		$firstLoad = $this->data === null;
+		$this->firstLoadInProgress = $firstLoad;
+		try {
+			$this->indexData($data);
+		}
+		finally {
+			if ($firstLoad) {
+				$this->firstLoadInProgress = false;
+			}
+		}
+	}
+
+	private function indexData(ContextData $data): void {
 		$index = [];
 		$indexVariables = [];
 		$ruleKeys = [];
@@ -1564,6 +1579,9 @@ class Context {
 
 	public function refresh(): void {
 		$this->checkNotClosed();
+		if ($this->firstLoadInProgress) {
+			return;
+		}
 
 		// setData() installs nothing until all of the data is processed, so a failure, including a TypeError from a
 		// mistyped field or an Error logger that throws, keeps the previous data and its decisions in use.
