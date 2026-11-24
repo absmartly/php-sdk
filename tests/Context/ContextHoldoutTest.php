@@ -1005,6 +1005,40 @@ class ContextHoldoutTest extends TestCase {
 		self::assertSame(0, $context->peekTreatment('exp_first'));
 	}
 
+	// A peek pins nothing: the unit set after it re-resolves the covered candidate, which then wins the key.
+	public function testLateUnitAfterAPeekLetsTheCoveredCandidateWin(): void {
+		$first = self::coveredBy(self::withVariables(self::experiment(1, 'exp_first', 'user_id'), 'late_key'), 11);
+		$first->variants[1]->config = '{"late_key":"from_first"}';
+		$second = self::withVariables(self::experiment(2, 'exp_second'), 'late_key');
+		$context = $this->createContext(self::data([self::holdout(11, 'holdout_late', self::HOLDOUT_B_SEED, 'user_id')],
+			$first, $second));
+
+		self::assertSame('treatment', $context->peekVariableValue('late_key', 'default'));
+		$context->setUnit('user_id', self::UID);
+		self::assertSame('from_first', $context->getVariableValue('late_key', 'default'));
+		$this->assertPublished($context, self::exposure(1, 'exp_first', self::NORMAL_VARIANT, true, false, false, false, false,
+			false, 'user_id'), self::holdoutExposure(11, 'holdout_late', 1, 'user_id'));
+	}
+
+	// A refresh that rebuilds a passed-over candidate unpins it: the rebuilt assignment is re-resolved for a late unit.
+	public function testRebuiltLoserIsNoLongerPinnedForALateUnit(): void {
+		$first = self::coveredBy(self::withVariables(self::experiment(1, 'exp_first', 'user_id'), 'late_key'), 11);
+		$second = self::withVariables(self::experiment(2, 'exp_second'), 'late_key');
+		$holdout = self::holdout(11, 'holdout_late', self::HOLDOUT_A_SEED, 'user_id');
+		$holdout->split = [1.0, 0.0];
+		$context = $this->createContext(self::data([$holdout], $first, $second));
+		self::assertSame('treatment', $context->getVariableValue('late_key', 'default'));
+		$bumped = clone $first;
+		$bumped->iteration = 2;
+		$this->refresh($context, self::data([$holdout], $bumped, $second));
+
+		self::assertSame('treatment', $context->peekVariableValue('late_key', 'default'));
+		$context->setUnit('user_id', self::UID);
+		self::assertSame(0, $context->getTreatment('exp_first'));
+		$this->assertPublished($context, self::exposure(2, 'exp_second', self::NORMAL_VARIANT),
+			self::holdoutExposure(11, 'holdout_late', 0, 'user_id'));
+	}
+
 	public function testOverrideValueAndExposuresSurviveALateUnitAndItsHoldoutResolves(): void {
 		$context = $this->createContext(self::data([self::holdout(11, 'holdout_override_late', self::HOLDOUT_B_SEED, 'user_id')],
 			self::coveredBy(self::experiment(1, 'exp_override_late_unit', 'user_id'), 11)), [], ['exp_override_late_unit' => 3]);
@@ -1466,6 +1500,54 @@ class ContextHoldoutTest extends TestCase {
 		$malformed = self::experiment($id, 'exp_malformed_' . $id);
 		$malformed->audience = '{';
 		return $malformed;
+	}
+
+	// On the first load an Error logger for a malformed experiment can read the context, which then loads the rest.
+	public function testErrorLoggerDuringTheFirstLoadCanReadTheContext(): void {
+		$logger = new class extends MockContextEventLoggerProxy {
+			public ?array $seen = null;
+
+			public function handleEvent(Context $context, ContextEventLoggerEvent $event): void {
+				parent::handleEvent($context, $event);
+				if ($event->getEvent() === ContextEventLoggerEvent::Error) {
+					$this->seen = [$context->getExperiments(), count($context->getContextData()->experiments)];
+				}
+			}
+		};
+		$context = $this->createContext(self::data([], self::malformedExperiment(1), self::experiment(2, 'exp_valid')),
+			[self::UNIT_TYPE => self::UID], [], [], $logger);
+
+		self::assertSame([[], 2], $logger->seen);
+		self::assertTrue($context->isReady());
+		self::assertFalse($context->isFailed());
+		self::assertSame(['exp_valid'], $context->getExperiments());
+	}
+
+	// On the pending path an Error logger reads the data being loaded too; reading experiments there fails the context,
+	// as in 1.1.0, since it isn't ready yet.
+	public function testErrorLoggerDuringAPendingLoadCanReadTheData(): void {
+		$logger = new class extends MockContextEventLoggerProxy {
+			public ?int $seen = null;
+
+			public function handleEvent(Context $context, ContextEventLoggerEvent $event): void {
+				parent::handleEvent($context, $event);
+				if ($event->getEvent() === ContextEventLoggerEvent::Error && $this->seen === null) {
+					$this->seen = count($context->getContextData()->experiments);
+				}
+			}
+		};
+		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'test-api-key', 'website', 'production'));
+		$this->eventHandler = new ContextEventHandlerMock($client);
+		$contextConfig = new ContextConfig();
+		$contextConfig->setUnits([self::UNIT_TYPE => self::UID]);
+		$contextConfig->setEventLogger($logger);
+		$context = Context::createPending(new SDK(new Config($client)), $contextConfig, new HoldoutDataProvider(), $this->eventHandler);
+
+		$context->setContextData(self::data([], self::malformedExperiment(1), self::experiment(2, 'exp_valid')));
+
+		self::assertSame(2, $logger->seen);
+		self::assertFalse($context->isFailed());
+		self::assertSame(['exp_valid'], $context->getExperiments());
 	}
 
 	public function testRefreshFailingMidInstallKeepsTheExperimentsHoldouts(): void {

@@ -63,10 +63,10 @@ class Context {
 	private array $units = [];
 	private bool $failed = false;
 
-	private ?ContextData $data;
+	private ?ContextData $data = null;
 
-	private array $index;
-	private array $indexVariables;
+	private array $index = [];
+	private array $indexVariables = [];
 
 
 	private array $hashedUnits;
@@ -243,16 +243,27 @@ class Context {
 	}
 
 	/**
-	 * Builds the indexes for $data and installs them only once all of it is processed, so an Error callback for a
-	 * malformed experiment still sees the previous data, and a failure (or a logger that throws) leaves it in use.
+	 * Indexes $data. The first load installs each experiment as it goes, as in 1.1.0, so an Error callback for a
+	 * malformed experiment reads the experiments loaded before it. A refresh builds the indexes aside and installs them
+	 * only once all of the data is processed, so that callback still reads the previous data, and a failure (or a
+	 * logger that throws) leaves the previous data and its decisions in use.
 	 */
 	private function setData(ContextData $data): void {
 		$index = [];
 		$indexVariables = [];
 		$ruleKeys = [];
-		$holdoutsById = [];
 		$experimentHoldouts = [];
 		$hasHoldouts = $this->hasHoldouts;
+		if ($this->data === null) {
+			$this->data = $data;
+			$this->index = &$index;
+			$this->indexVariables = &$indexVariables;
+			$this->ruleKeys = &$ruleKeys;
+			$this->parsedRules = [];
+			$this->experimentHoldouts = &$experimentHoldouts;
+			$this->hasHoldouts = &$hasHoldouts;
+		}
+		$holdoutsById = [];
 		$environment = $this->sdk->getClient()->getEnvironment();
 
 		foreach ($data->holdouts as $holdout) {
@@ -314,6 +325,8 @@ class Context {
 			}
 		}
 
+		// Plain values again (no references left behind), installed together.
+		unset($this->index, $this->indexVariables, $this->ruleKeys, $this->experimentHoldouts, $this->hasHoldouts);
 		$this->data = $data;
 		$this->index = $index;
 		$this->indexVariables = $indexVariables;
@@ -321,6 +334,12 @@ class Context {
 		$this->parsedRules = [];
 		$this->experimentHoldouts = $experimentHoldouts;
 		$this->hasHoldouts = $hasHoldouts;
+		// A pinned loser stays pinned only while its cached assignment is still the one an exposing walk passed over.
+		foreach ($this->variableLosers as $name => $loser) {
+			if (($this->assignmentCache[$name] ?? null) !== $loser) {
+				unset($this->variableLosers[$name]);
+			}
+		}
 
 		// Only an exposed cached assignment can queue a dropped arm again (a new assignment queues its arms anyway), so a
 		// mark whose arm no cached assignment pins any more is forgotten.
