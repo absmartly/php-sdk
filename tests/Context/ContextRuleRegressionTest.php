@@ -158,7 +158,7 @@ class ContextRuleRegressionTest extends TestCase {
 		$context->setAttribute('country', 'US');
 		$context->getTreatment('exp');
 		$context->getTreatment('exp');
-		$context->setAttribute('unrelated', 1);
+		$context->setAttributeValue('unrelated', 1);
 		$context->getTreatment('exp');
 		$context->setAttribute('country', 'GB');
 		$context->getTreatment('exp');
@@ -232,21 +232,36 @@ class ContextRuleRegressionTest extends TestCase {
 		$config = new Config($client);
 		$config->setContextDataProvider(new class($client) extends \ABSmartly\SDK\Context\ContextDataProvider {
 			public function getContextData(): ContextData {
-				// setData() throws on the second experiment after installing the first.
-				return new ContextData([ContextRuleRegressionTest::validExperiment(), (object) ['name' => 'broken']]);
+				return new ContextData([ContextRuleRegressionTest::validExperiment(), ContextRuleRegressionTest::brokenExperiment()]);
 			}
 		});
 		$config->setContextEventHandler(new ContextEventHandlerMock($client));
 		$contextConfig = new ContextConfig();
 		$contextConfig->setUnits(['session_id' => 'e791e240fcd3df7d238cfc285f475e8152fcc0ec']);
+		// The broken experiment is reported as an Error after the valid one is installed; a logger that throws on that
+		// first report makes setData() fail partway through the refresh.
+		$throws = true;
+		$contextConfig->setEventLogger(new \ABSmartly\SDK\Context\ContextEventLoggerCallback(
+			static function (string $event) use (&$throws): void {
+				if ($throws && $event === \ABSmartly\SDK\Context\ContextEventLoggerEvent::Error) {
+					$throws = false;
+					throw new \RuntimeException('logger failed');
+				}
+			}
+		));
 		$context = (new SDK($config))->createContextWithData($contextConfig, new ContextData([$experiment]));
 
 		self::assertSame(1, $context->getTreatment('exp'));
 		$context->refresh();
+		self::assertFalse($throws, 'the refresh must have failed partway');
 		self::assertSame(1, $context->getTreatment('exp'));
-		$context->setAttribute('unrelated', true);
+		$context->setAttributeValue('unrelated', true);
 		self::assertSame(1, $context->getTreatment('exp'));
 		self::assertSame(1, $context->getPendingCount());
+	}
+
+	public static function brokenExperiment(): object {
+		return self::experiment(['name' => 'broken', 'id' => 9, 'audience' => '{not json']);
 	}
 
 	public static function validExperiment(): object {

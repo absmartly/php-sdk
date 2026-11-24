@@ -25,7 +25,7 @@ class Assignment {
 	public string $ruleKey = '';
 
 	public bool $audienceMismatch = false;
-	public ?stdClass $variables = null;
+	public stdClass $variables;
 
 	public bool $exposed = false;
 	public int $attrsSeq = 0;

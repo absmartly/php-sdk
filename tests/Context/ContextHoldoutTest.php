@@ -322,7 +322,7 @@ class ContextHoldoutTest extends TestCase {
 			$experiment->audienceStrict = true;
 			$experiment->audience = $audience;
 			$context = $this->createContext(self::data([self::threeArmHoldout(21, 'holdout_three_arm', $seed)], $experiment));
-			$context->setAttribute('age', 5);
+			$context->setAttributeValue('age', 5);
 
 			self::assertSame(0, $context->getTreatment('exp_three_arm_audience_fullon'));
 			$this->assertPublished($context, self::exposure(1, 'exp_three_arm_audience_fullon', 0, false, false, false, false, true),
@@ -395,7 +395,7 @@ class ContextHoldoutTest extends TestCase {
 		$experiment->audienceStrict = true;
 		$experiment->audience = '{"filter":[{"gte":[{"var":"age"},{"value":20}]}]}';
 		$context = $this->createContext(self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)], $experiment));
-		$context->setAttribute('age', 5);
+		$context->setAttributeValue('age', 5);
 
 		self::assertSame(0, $context->getTreatment('exp_holdout_audience'));
 		$this->assertPublished($context, self::holdoutExposure(11, 'holdout_a', 0));
@@ -1111,7 +1111,9 @@ class ContextHoldoutTest extends TestCase {
 		return [$first, $second];
 	}
 
-	public function testThrowingHoldoutLoggerOnCoveredNotHeldOutVariableCandidateKeepsWalking(): void {
+	// A covered winner whose variant lacks the key ends the walk (main's shared key rule) even when its holdout logger
+	// throws: both of its exposures are queued, the later candidate is not, and the error reaches the caller.
+	public function testThrowingHoldoutLoggerOnCoveredWinnerWithoutTheKeyQueuesItsExposuresAndStops(): void {
 		$logger = new ThrowingExposureLogger();
 		$logger->throwWhen = fn($exposure) => $exposure->id === 12;
 		[$first, $second] = self::candidateWithoutKeyThenOneWithKey('covered_assigned');
@@ -1126,11 +1128,13 @@ class ContextHoldoutTest extends TestCase {
 			self::assertSame('boom', $exception->getMessage());
 		}
 
-		self::assertSame(3, $context->getPendingCount());
+		$logger->throwWhen = fn($exposure) => false;
+		$this->assertPublished($context, self::exposure(1, 'exp_var_first_covered_assigned', self::NORMAL_VARIANT),
+			self::holdoutExposure(12, 'holdout_b', 1));
 	}
 
-	// An overridden covered candidate still fires its holdout exposures, so it defers the error and keeps walking too.
-	public function testThrowingHoldoutLoggerOnOverriddenCoveredVariableCandidateKeepsWalking(): void {
+	// An overridden covered winner whose variant lacks the key also ends the walk after queuing its holdout exposure.
+	public function testThrowingHoldoutLoggerOnOverriddenCoveredWinnerQueuesItsExposuresAndStops(): void {
 		$logger = new ThrowingExposureLogger();
 		$logger->throwWhen = fn($exposure) => $exposure->id === 12;
 		[$first, $second] = self::candidateWithoutKeyThenOneWithKey('covered_overridden');
@@ -1145,20 +1149,24 @@ class ContextHoldoutTest extends TestCase {
 			self::assertSame('boom', $exception->getMessage());
 		}
 
-		self::assertSame(3, $context->getPendingCount());
+		$logger->throwWhen = fn($exposure) => false;
+		$this->assertPublished($context, self::exposure(1, 'exp_var_first_covered_overridden', 1, false, true),
+			self::holdoutExposure(12, 'holdout_b', 1));
 	}
 
-	// Any Throwable is deferred, not only an Exception: a logger TypeError still lets later candidates be queued.
+	// Any Throwable is deferred, not only an Exception: a held-out candidate's logger TypeError still lets the later
+	// winner be queued, and is re-thrown afterwards.
 	public function testThrowingHoldoutLoggerErrorIsDeferredOnTheVariablePath(): void {
 		$logger = new ThrowingExposureLogger();
 		$logger->throwWhen = function($exposure) {
-			if ($exposure->id === 12) {
+			if ($exposure->id === 11) {
 				throw new \TypeError('logger type error');
 			}
 			return false;
 		};
 		[$first, $second] = self::candidateWithoutKeyThenOneWithKey('covered_type_error');
-		$context = $this->createContext(self::data([self::holdout(12, 'holdout_b', self::HOLDOUT_B_SEED)], $first, $second),
+		$first->holdoutIds = [11];
+		$context = $this->createContext(self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)], $first, $second),
 			[self::UNIT_TYPE => self::UID], [], [], $logger);
 
 		try {
@@ -1169,7 +1177,8 @@ class ContextHoldoutTest extends TestCase {
 			self::assertSame('logger type error', $exception->getMessage());
 		}
 
-		self::assertSame(3, $context->getPendingCount());
+		$this->assertPublished($context, self::holdoutExposure(11, 'holdout_a', 0),
+			self::exposure(2, 'exp_var_second_covered_type_error', self::NORMAL_VARIANT));
 	}
 
 	// A logger Error on the experiment's own exposure still lets its holdout's exposure be queued.
@@ -1283,9 +1292,7 @@ class ContextHoldoutTest extends TestCase {
 	public function testRejectedRefreshPreservesThePreviousVariableExposureBehavior(bool $hadCoverage, bool $typeError): void {
 		$logger = new ThrowingExposureLogger();
 		$logger->throwWhen = fn($exposure) => $exposure->id === 1;
-		$first = self::experiment(1, 'exp_refresh_first');
-		$first->variants[0]->config = '{"refresh_key":"control"}';
-		$first->variants[1]->config = '{"other":"x"}';
+		$first = self::withVariables(self::experiment(1, 'exp_refresh_first'), 'refresh_key');
 		$second = self::withVariables(self::experiment(2, 'exp_refresh_second'), 'refresh_key');
 		$oldData = self::data([], $first, $second);
 		$holdout = self::holdout(11, 'holdout_refresh', self::HOLDOUT_A_SEED);
@@ -1296,22 +1303,19 @@ class ContextHoldoutTest extends TestCase {
 			$this->refresh($context, $oldData);
 		}
 
-		$malformed = self::experiment(4, 'exp_refresh_malformed');
-		if ($typeError) {
-			$malformed->variants = null;
-		}
-		else {
-			$malformed->audience = '{';
-		}
+		$failure = $typeError ? new \TypeError('mistyped field') : new \JsonException('malformed');
+		$this->dataProvider->error = $failure;
 		$logger->clear();
-		$this->refresh($context, self::data([$holdout], $covered, $malformed));
+		$context->refresh();
+		$this->dataProvider->error = null;
 
 		self::assertSame($oldData, $context->getContextData());
 		self::assertTrue($context->isReady());
 		self::assertFalse($context->isFailed());
+		self::assertSame($hadCoverage, self::property($context, 'hasHoldouts'));
 		self::assertCount(1, $logger->events);
 		self::assertSame(ContextEventLoggerEvent::Error, $logger->events[0]->getEvent());
-		self::assertInstanceOf($typeError ? \TypeError::class : \JsonException::class, $logger->events[0]->getData());
+		self::assertSame($failure, $logger->events[0]->getData());
 		try {
 			$context->getVariableValue('refresh_key', 'default');
 			self::fail('the logger error must reach the caller');
@@ -1320,12 +1324,8 @@ class ContextHoldoutTest extends TestCase {
 			self::assertSame('boom', $exception->getMessage());
 		}
 
-		$expected = [self::exposure(1, 'exp_refresh_first', self::NORMAL_VARIANT)];
-		if ($hadCoverage) {
-			$expected[] = self::exposure(2, 'exp_refresh_second', self::NORMAL_VARIANT);
-		}
-		self::assertSame(count($expected), $context->getPendingCount());
-		$this->assertPublished($context, ...$expected);
+		self::assertSame(1, $context->getPendingCount());
+		$this->assertPublished($context, self::exposure(1, 'exp_refresh_first', self::NORMAL_VARIANT));
 	}
 
 	public static function rejectedCoverageInstalls(): array {
@@ -1348,51 +1348,26 @@ class ContextHoldoutTest extends TestCase {
 		self::assertSame(1, $context->getPendingCount());
 	}
 
-	public function testThrowingLoggerOnUncoveredVariableCandidateKeepsWalkingWhenTheDataHasHoldouts(): void {
-		$logger = new ThrowingExposureLogger();
-		$logger->throwWhen = fn($exposure) => $exposure->id === 1;
-		$first = self::experiment(1, 'exp_var_uncovered_first');
-		$first->variants[1]->config = '{"shared_uncovered":"from_first"}';
-		$first->variants[1]->name = 'B';
-		$first->split = [1.0, 0.0];
-		$first->variants[0]->config = '{"other":"x"}';
-		$second = self::coveredBy(self::experiment(2, 'exp_var_uncovered_second'), 11);
-		$second->variants[1]->config = '{"shared_uncovered":"from_second"}';
-		$context = $this->createContext(self::data([self::holdout(11, 'holdout_b', self::HOLDOUT_B_SEED)], $first,
-			$second), [self::UNIT_TYPE => self::UID], [], [], $logger);
-
-		try {
-			$context->getVariableValue('shared_uncovered', 'default');
-			self::fail('the logger error must reach the caller');
-		}
-		catch (\RuntimeException $exception) {
-			self::assertSame('boom', $exception->getMessage());
-		}
-
-		self::assertSame(3, $context->getPendingCount());
-	}
-
 	/** @dataProvider loggerCloseOutcomes */
 	public function testVariableWalkStopsOnlyAfterASuccessfulLoggerClose(int $closeAt, bool $closeSucceeds, bool $closeThrows): void {
+		// Exposures in walk order: holdout 11 (experiment 1 held out), holdout 12 (experiment 2 held out), experiment 3.
+		$order = [11 => 0, 12 => 1, 3 => 2];
 		$logger = new ThrowingExposureLogger();
-		$logger->throwWhen = function($exposure) use (&$context, $closeAt, $closeThrows) {
-			if ($exposure->id === $closeAt) {
+		$logger->throwWhen = function($exposure) use (&$context, $order, $closeAt, $closeThrows) {
+			$at = $order[$exposure->id];
+			if ($at === $closeAt) {
 				$context->close();
 			}
-			if ($exposure->id < $closeAt || ($exposure->id === $closeAt && $closeThrows)) {
+			if ($at < $closeAt || ($at === $closeAt && $closeThrows)) {
 				throw new \RuntimeException('logger ' . $exposure->id);
 			}
 			return false;
 		};
-		$first = self::experiment(1, 'exp_close_first');
-		$first->variants[0]->config = '{"close_key":"control"}';
-		$first->variants[1]->config = '{"other":"x"}';
-		$second = self::experiment(2, 'exp_close_second');
-		$second->variants[0]->config = '{"close_key":"control"}';
-		$second->variants[1]->config = '{"other":"x"}';
+		$first = self::coveredBy(self::withVariables(self::experiment(1, 'exp_close_first'), 'close_key'), 11);
+		$second = self::coveredBy(self::withVariables(self::experiment(2, 'exp_close_second'), 'close_key'), 12);
 		$third = self::withVariables(self::experiment(3, 'exp_close_third'), 'close_key');
-		$context = $this->createContext(self::data([self::holdout(11, 'holdout_close', self::HOLDOUT_A_SEED)],
-			$first, $second, $third, self::coveredBy(self::experiment(4, 'exp_close_covered'), 11)),
+		$context = $this->createContext(self::data([self::holdout(11, 'holdout_close_a', self::HOLDOUT_A_SEED),
+			self::holdout(12, 'holdout_close_b', self::HOLDOUT_A_SEED)], $first, $second, $third),
 			[self::UNIT_TYPE => self::UID], [], [], $logger);
 		if (!$closeSucceeds) {
 			$this->eventHandler->prerun = static function() {
@@ -1405,23 +1380,23 @@ class ContextHoldoutTest extends TestCase {
 			self::fail('the first error must reach the caller');
 		}
 		catch (\RuntimeException $exception) {
-			self::assertSame($closeSucceeds || $closeAt > 1 ? 'logger 1' : 'publish failed', $exception->getMessage());
+			self::assertSame($closeSucceeds || $closeAt > 0 ? 'logger 11' : 'publish failed', $exception->getMessage());
 		}
 
 		self::assertSame($closeSucceeds, $context->isClosed());
 		self::assertSame($closeSucceeds ? 0 : 3, $context->getPendingCount());
-		self::assertSame($closeSucceeds ? array_slice(['exp_close_first', 'exp_close_second', 'exp_close_third'], 0, $closeAt)
+		self::assertSame($closeSucceeds ? array_slice(['exp_close_first', 'exp_close_second', 'exp_close_third'], 0, $closeAt + 1)
 			: ['exp_close_first', 'exp_close_second', 'exp_close_third'], array_keys(self::property($context, 'assignmentCache')));
 		$this->eventHandler->prerun = null;
 		$context->close();
 		self::assertSame(0, $context->getPendingCount());
 		self::assertCount(1, $this->eventHandler->submitted);
-		self::assertSame($closeSucceeds ? range(1, $closeAt) : [1, 2, 3],
+		self::assertSame($closeSucceeds ? array_slice([11, 12], 0, $closeAt + 1) : [11, 12, 3],
 			array_column($this->eventHandler->submitted[0]->exposures, 'id'));
 	}
 
-	// An attribute getter that closes the context while a logger error is pending also ends the walk, even when the
-	// closing candidate is already exposed and dispatches nothing.
+	// An attribute getter that closes the context while a logger error is pending also ends the walk, even though the
+	// closing candidate (no unit, so not a winner) dispatches nothing.
 	public function testVariableWalkStopsWhenAnAudienceCallbackClosesWithALoggerErrorPending(): void {
 		$probe = static function () {
 			return new class {
@@ -1445,28 +1420,20 @@ class ContextHoldoutTest extends TestCase {
 		$two = $probe();
 		$three = $probe();
 		$logger = new ThrowingExposureLogger();
-		$logger->throwWhen = fn($exposure) => $exposure->id === 1;
-		$first = self::experiment(1, 'exp_callback_first');
-		$first->variants[0]->config = '{"callback_key":"control"}';
-		$first->variants[1]->config = '{"other":"x"}';
-		$second = self::experiment(2, 'exp_callback_second');
-		$second->variants[0]->config = '{"callback_key":"control"}';
-		$second->variants[1]->config = '{"other":"x"}';
+		$logger->throwWhen = fn($exposure) => $exposure->id === 11;
+		$first = self::coveredBy(self::withVariables(self::experiment(1, 'exp_callback_first'), 'callback_key'), 11);
+		$second = self::withVariables(self::experiment(2, 'exp_callback_second', 'user_id'), 'callback_key');
 		$second->audience = '{"filter":[{"gte":[{"var":"two/score"},{"value":0}]}]}';
 		$third = self::withVariables(self::experiment(3, 'exp_callback_third'), 'callback_key');
 		$third->audience = '{"filter":[{"gte":[{"var":"three/score"},{"value":0}]}]}';
 		$context = $this->createContext(self::data([self::holdout(11, 'holdout_callback', self::HOLDOUT_A_SEED)],
-			$first, $second, $third, self::coveredBy(self::experiment(4, 'exp_callback_covered'), 11)),
-			[self::UNIT_TYPE => self::UID], [], [], $logger);
-		$context->setAttribute('two', $two);
-		$context->setAttribute('three', $three);
-		self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_callback_second'));
-		$context->setAttribute('bump', 1);
+			$first, $second, $third), [self::UNIT_TYPE => self::UID], [], [], $logger);
+		$context->setAttributeValue('two', $two);
+		$context->setAttributeValue('three', $three);
 		$two->onRead = function () use ($context, $two) {
 			$two->onRead = null;
 			$context->close();
 		};
-		$three->reads = 0;
 
 		try {
 			$context->getVariableValue('callback_key', 'default');
@@ -1478,164 +1445,88 @@ class ContextHoldoutTest extends TestCase {
 
 		self::assertTrue($context->isClosed());
 		self::assertSame(0, $context->getPendingCount());
+		self::assertSame(1, $two->reads);
 		self::assertSame(0, $three->reads);
-		self::assertSame([2, 1], array_column($this->eventHandler->submitted[0]->exposures, 'id'));
+		self::assertSame([11], array_column($this->eventHandler->submitted[0]->exposures, 'id'));
 	}
 
 	public static function loggerCloseOutcomes(): array {
 		return [
-			'first logger closes' => [1, true, true],
-			'later logger closes after an earlier error' => [2, true, true],
-			'later logger closes and returns after an earlier error' => [2, true, false],
-			'failed close keeps walking' => [1, false, true],
+			'first logger closes' => [0, true, true],
+			'later logger closes after an earlier error' => [1, true, true],
+			'later logger closes and returns after an earlier error' => [1, true, false],
+			'failed close keeps walking' => [0, false, true],
 		];
 	}
 
-	/** A logger that closes the context, then returns, on the first exposure of experiment 1. */
-	private static function closingLogger(): MockContextEventLoggerProxy {
-		return new class extends MockContextEventLoggerProxy {
-			public bool $closed = false;
-
-			public function handleEvent(Context $context, ContextEventLoggerEvent $event): void {
-				parent::handleEvent($context, $event);
-				if (!$this->closed && $event->getEvent() === ContextEventLoggerEvent::Exposure && $event->getData()->id === 1) {
-					$this->closed = true;
-					$context->close();
-				}
-			}
-		};
-	}
-
-	/** Experiment 1, whose UID variant lacks $key, then experiment 2, which assigns it. */
-	private static function closeCandidates(string $key): array {
-		$first = self::experiment(1, 'exp_close_first_' . $key);
-		$first->variants[1]->config = '{"unrelated":"x"}';
-		$first->variants[0]->config = json_encode([$key => 'control']);
-		$second = self::experiment(2, 'exp_close_second_' . $key);
+	/**
+	 * Experiment 1, held out by holdout 12 (its exposure is the refresh trigger) and defining $key only in variant 1,
+	 * so its control supplies no fallback; then experiment 2 covered by holdout 11, whose UID variant (1) has $key.
+	 */
+	private static function heldOutThenCovered(string $key): array {
+		$first = self::coveredBy(self::experiment(1, 'exp_first_' . $key), 12);
+		$first->variants[0]->config = '{"unrelated":"first-control"}';
+		$first->variants[1]->config = json_encode([$key => 'first-treatment']);
+		$second = self::coveredBy(self::experiment(2, 'exp_second_' . $key), 11);
 		$second->variants[1]->config = json_encode([$key => 'from_second']);
 		return [$first, $second];
 	}
 
-	// Holdouts that cover no experiment leave main's queueing too: the later candidate is still queued after a close.
-	public function testHoldoutCoveringNothingLoggerThatClosesTheContextKeepsMainQueueing(): void {
-		[$first, $second] = self::closeCandidates('close_uncovered');
-		$context = $this->createContext(self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)], $first, $second),
-			[self::UNIT_TYPE => self::UID], [], [], self::closingLogger());
-
-		self::assertSame('from_second', $context->getVariableValue('close_uncovered', 'default'));
-		self::assertTrue($context->isClosed());
-		self::assertSame(1, $context->getPendingCount());
+	private static function midWalkHoldouts(): array {
+		return [self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED), self::holdout(12, 'holdout_b', self::HOLDOUT_A_SEED),
+			self::holdout(13, 'holdout_c', self::HOLDOUT_A_SEED)];
 	}
 
-	// Once the data has covered an experiment, a refresh to data without holdouts keeps refusing post-close exposures.
-	public function testCoverageHistoryKeepsRefusingExposuresAfterCloseOnceDataHadHoldouts(): void {
-		[$first, $second] = self::closeCandidates('close_history');
-		$context = $this->createContext(self::data([self::holdout(11, 'holdout_b', self::HOLDOUT_B_SEED)],
-			self::coveredBy(self::experiment(3, 'exp_close_covered'), 11)), [self::UNIT_TYPE => self::UID], [], [],
-			self::closingLogger());
-		$this->dataProvider->next = self::data([], $first, $second);
-		$context->refresh();
-
-		self::assertSame('from_second', $context->getVariableValue('close_history', 'default'));
-		self::assertTrue($context->isClosed());
-		self::assertSame(0, $context->getPendingCount());
-	}
-
-	// Without holdouts a logger that closes the context and returns keeps main's (and JS's) queueing: the later
-	// candidate's exposure is still queued after the close.
-	public function testNoHoldoutLoggerThatClosesTheContextKeepsMainQueueing(): void {
-		$logger = self::closingLogger();
-		$first = self::experiment(1, 'exp_no_holdout_close_first');
-		$first->variants[1]->config = '{"unrelated":"x"}';
-		$first->variants[0]->config = '{"close_key":"control"}';
-		$second = self::experiment(2, 'exp_no_holdout_close_second');
-		$second->variants[1]->config = '{"close_key":"from_second"}';
-		$context = $this->createContext(self::data([], $first, $second), [self::UNIT_TYPE => self::UID], [], [], $logger);
-
-		self::assertSame('from_second', $context->getVariableValue('close_key', 'default'));
-		self::assertTrue($context->isClosed());
-		self::assertSame(1, $context->getPendingCount());
-	}
-
-	// An exposure logger that refreshes mid-walk and installs the first coverage hands the unvisited candidates to the
-	// holdout-aware path: the later, now held-out candidate gets control and its holdout exposure, not its own.
-	public function testRefreshThatInstallsFirstCoverageMidWalkUsesTheHoldoutPathForLaterCandidates(): void {
-		$logger = self::refreshingLogger(1);
-		[$first, $second] = self::closeCandidates('refresh_epoch');
-		$context = $this->createContext(self::data([], $first, $second), [self::UNIT_TYPE => self::UID], [], [], $logger);
-		[$first, $second] = self::closeCandidates('refresh_epoch');
-		$second->variants[0]->config = '{"refresh_epoch":"control"}';
-		$this->dataProvider->next = self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)], $first,
-			self::coveredBy($second, 11));
-		$logger->next = $this->dataProvider->next;
-
-		self::assertSame('control', $context->getVariableValue('refresh_epoch', 'default'));
-		self::assertSame(2, $context->getPendingCount());
-		self::assertSame(0, $context->peekTreatment('exp_close_second_refresh_epoch'));
-		$this->assertPublished($context, self::exposure(1, 'exp_close_first_refresh_epoch', self::NORMAL_VARIANT),
-			self::holdoutExposure(11, 'holdout_a', 0));
-	}
-
-	// An overridden candidate a mid-walk refresh removed keeps its override, as on main and in JS: it supplies the
+	// An overridden candidate a mid-walk refresh removed keeps its override, as on main and in JS: it wins with the
 	// override's value, its own (overridden) exposure and its holdout's exposure.
 	public function testOverriddenCandidateRemovedByAMidWalkRefreshKeepsItsOverride(): void {
-		$logger = self::refreshingLogger(1);
-		[$first, $second] = self::closeCandidates('refresh_override');
-		$context = $this->createContext(self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)], $first,
-			self::coveredBy($second, 11)), [self::UNIT_TYPE => self::UID], ['exp_close_second_refresh_override' => 1], [],
-			$logger);
-		self::assertSame(1, $context->peekTreatment('exp_close_second_refresh_override'));
-		[$first] = self::closeCandidates('refresh_override');
-		$this->dataProvider->next = self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)], $first);
+		$logger = self::refreshingLogger(12);
+		[$first, $second] = self::heldOutThenCovered('refresh_override');
+		$context = $this->createContext(self::data(self::midWalkHoldouts(), $first, $second), [self::UNIT_TYPE => self::UID],
+			['exp_second_refresh_override' => 1], [], $logger);
+		self::assertSame(1, $context->peekTreatment('exp_second_refresh_override'));
+		[$first] = self::heldOutThenCovered('refresh_override');
+		$this->dataProvider->next = self::data(self::midWalkHoldouts(), $first);
 		$logger->next = $this->dataProvider->next;
 
 		self::assertSame('from_second', $context->getVariableValue('refresh_override', 'default'));
-		$this->assertPublished($context, self::exposure(1, 'exp_close_first_refresh_override', self::NORMAL_VARIANT),
-			self::exposure(2, 'exp_close_second_refresh_override', 1, false, true),
-			self::holdoutExposure(11, 'holdout_a', 0));
+		$this->assertPublished($context, self::holdoutExposure(12, 'holdout_b', 0),
+			self::exposure(2, 'exp_second_refresh_override', 1, false, true), self::holdoutExposure(11, 'holdout_a', 0));
 	}
 
 	public function testWalkContinuesPastACandidateRemovedByAMidWalkRefresh(): void {
-		$logger = self::refreshingLogger(1);
-		[$first, $second] = self::closeCandidates('refresh_skip');
-		$second->variants[0]->config = '{"refresh_skip":"removed-control"}';
-		$third = self::coveredBy(self::experiment(3, 'exp_close_third_refresh_skip'), 11);
-		$third->variants[0]->config = '{"refresh_skip":"ctl3"}';
-		$context = $this->createContext(self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)], $first,
-			self::coveredBy($second, 11), $third), [self::UNIT_TYPE => self::UID], [], [], $logger);
-		self::assertSame(0, $context->peekTreatment('exp_close_second_refresh_skip'));
-		[$first] = self::closeCandidates('refresh_skip');
-		$third = self::coveredBy(self::experiment(3, 'exp_close_third_refresh_skip'), 11);
-		$third->variants[0]->config = '{"refresh_skip":"ctl3"}';
-		$this->dataProvider->next = self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)], $first, $third);
+		$logger = self::refreshingLogger(12);
+		[$first, $second] = self::heldOutThenCovered('refresh_skip');
+		$third = self::withVariables(self::experiment(3, 'exp_third_refresh_skip'), 'refresh_skip');
+		$context = $this->createContext(self::data(self::midWalkHoldouts(), $first, $second, $third),
+			[self::UNIT_TYPE => self::UID], [], [], $logger);
+		self::assertSame(0, $context->peekTreatment('exp_second_refresh_skip'));
+		[$first] = self::heldOutThenCovered('refresh_skip');
+		$third = self::withVariables(self::experiment(3, 'exp_third_refresh_skip'), 'refresh_skip');
+		$this->dataProvider->next = self::data(self::midWalkHoldouts(), $first, $third);
 		$logger->next = $this->dataProvider->next;
 
-		self::assertSame('ctl3', $context->getVariableValue('refresh_skip', 'default'));
-		$this->assertPublished($context, self::exposure(1, 'exp_close_first_refresh_skip', self::NORMAL_VARIANT),
-			self::holdoutExposure(11, 'holdout_a', 0));
+		self::assertSame('treatment', $context->getVariableValue('refresh_skip', 'default'));
+		$this->assertPublished($context, self::holdoutExposure(12, 'holdout_b', 0),
+			self::exposure(3, 'exp_third_refresh_skip', self::NORMAL_VARIANT));
 	}
 
 	public function testCandidateThatLosesTheKeyInAMidWalkRefreshIsSkipped(): void {
-		$logger = self::refreshingLogger(1);
-		[$first, $second] = self::closeCandidates('refresh_lost');
-		$second->variants[0]->config = '{"refresh_lost":"b-control"}';
-		$third = self::coveredBy(self::experiment(3, 'exp_close_third_refresh_lost'), 12);
-		$third->variants[0]->config = '{"refresh_lost":"live C"}';
-		$holdouts = [self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED), self::holdout(12, 'holdout_c', self::HOLDOUT_A_SEED)];
-		$context = $this->createContext(self::data($holdouts, $first, self::coveredBy($second, 11), $third),
+		$logger = self::refreshingLogger(12);
+		[$first, $second] = self::heldOutThenCovered('refresh_lost');
+		$third = self::withVariables(self::experiment(3, 'exp_third_refresh_lost'), 'refresh_lost');
+		$context = $this->createContext(self::data(self::midWalkHoldouts(), $first, $second, $third),
 			[self::UNIT_TYPE => self::UID], [], [], $logger);
-		[$first, $second] = self::closeCandidates('refresh_lost');
+		[$first, $second] = self::heldOutThenCovered('refresh_lost');
 		$second->iteration = 2;
-		$second->variants[0]->config = '{"other":"b-control"}';
 		$second->variants[1]->config = '{"other":"b-treatment"}';
-		$third = self::coveredBy(self::experiment(3, 'exp_close_third_refresh_lost'), 12);
-		$third->variants[0]->config = '{"refresh_lost":"live C"}';
-		$this->dataProvider->next = self::data($holdouts, $first, self::coveredBy($second, 11), $third);
+		$third = self::withVariables(self::experiment(3, 'exp_third_refresh_lost'), 'refresh_lost');
+		$this->dataProvider->next = self::data(self::midWalkHoldouts(), $first, $second, $third);
 		$logger->next = $this->dataProvider->next;
 
-		self::assertSame('live C', $context->getVariableValue('refresh_lost', 'default'));
-		$this->assertPublished($context, self::exposure(1, 'exp_close_first_refresh_lost', self::NORMAL_VARIANT),
-			self::holdoutExposure(12, 'holdout_c', 0));
+		self::assertSame('treatment', $context->getVariableValue('refresh_lost', 'default'));
+		$this->assertPublished($context, self::holdoutExposure(12, 'holdout_b', 0),
+			self::exposure(3, 'exp_third_refresh_lost', self::NORMAL_VARIANT));
 	}
 
 	/** A logger that refreshes to each of $steps in turn, on the exposure of the experiment id each is keyed by. */
@@ -1656,14 +1547,14 @@ class ContextHoldoutTest extends TestCase {
 		};
 	}
 
-	/** Experiments 1-4 for $key: 1 and 2 assigned to a variant without it, 3 covered by 11, 4 covered by 12. */
+	/**
+	 * Experiments 1-4 for $key: 1 and 2 held out by holdouts 12 and 13, 3 covered by 11 (without $key unless
+	 * $thirdKeepsKey), and 4, which wins.
+	 */
 	private static function fourCandidates(string $key, bool $thirdKeepsKey): array {
 		$candidates = [];
-		foreach ([1, 2] as $id) {
-			$experiment = self::experiment($id, 'exp_' . $id . '_' . $key);
-			$experiment->variants[0]->config = json_encode([$key => 'c' . $id]);
-			$experiment->variants[1]->config = '{"unrelated":"x"}';
-			$candidates[] = $experiment;
+		foreach ([1 => 12, 2 => 13] as $id => $holdoutId) {
+			$candidates[] = self::coveredBy(self::withVariables(self::experiment($id, 'exp_' . $id . '_' . $key), $key), $holdoutId);
 		}
 		$third = self::coveredBy(self::experiment(3, 'exp_3_' . $key), 11);
 		$third->variants[0]->config = json_encode($thirdKeepsKey ? [$key => 'c3'] : ['other' => 'c3']);
@@ -1672,66 +1563,43 @@ class ContextHoldoutTest extends TestCase {
 			$third->iteration = 2;
 		}
 		$candidates[] = $third;
-		$fourth = self::coveredBy(self::experiment(4, 'exp_4_' . $key), 12);
-		$fourth->variants[0]->config = json_encode([$key => 'c4']);
+		$fourth = self::experiment(4, 'exp_4_' . $key);
+		$fourth->variants[1]->config = json_encode([$key => 't4']);
 		$candidates[] = $fourth;
 		return $candidates;
 	}
 
 	public function testLiveCandidatesAreRebuiltOnEachMidWalkRefresh(): void {
 		$logger = self::multiRefreshingLogger();
-		$holdouts = [self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED), self::holdout(12, 'holdout_c', self::HOLDOUT_A_SEED)];
+		$holdouts = self::midWalkHoldouts();
 		$context = $this->createContext(self::data($holdouts, ...self::fourCandidates('twice', true)),
 			[self::UNIT_TYPE => self::UID], [], [], $logger);
 		$logger->provider = $this->dataProvider;
 		$logger->steps = [
-			1 => self::data($holdouts, ...self::fourCandidates('twice', true)),
-			2 => self::data($holdouts, ...self::fourCandidates('twice', false)),
+			12 => self::data($holdouts, ...self::fourCandidates('twice', true)),
+			13 => self::data($holdouts, ...self::fourCandidates('twice', false)),
 		];
 
-		self::assertSame('c4', $context->getVariableValue('twice', 'default'));
-		$this->assertPublished($context, self::exposure(1, 'exp_1_twice', self::NORMAL_VARIANT),
-			self::exposure(2, 'exp_2_twice', self::NORMAL_VARIANT), self::holdoutExposure(12, 'holdout_c', 0));
-	}
-
-	public function testHandoffRefreshThatStripsTheKeyIsSeenByTheHoldoutWalk(): void {
-		$logger = self::refreshingLogger(1);
-		[$first, $second] = self::closeCandidates('handoff_lost');
-		$third = self::experiment(3, 'exp_close_third_handoff_lost');
-		$third->variants[0]->config = '{"handoff_lost":"live C"}';
-		$context = $this->createContext(self::data([], $first, $second, $third), [self::UNIT_TYPE => self::UID], [], [],
-			$logger);
-		[$first, $second] = self::closeCandidates('handoff_lost');
-		$second->iteration = 2;
-		$second->variants[0]->config = '{"other":"b-control"}';
-		$second->variants[1]->config = '{"other":"b-treatment"}';
-		$third = self::coveredBy(self::experiment(3, 'exp_close_third_handoff_lost'), 12);
-		$third->variants[0]->config = '{"handoff_lost":"live C"}';
-		$this->dataProvider->next = self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED),
-			self::holdout(12, 'holdout_c', self::HOLDOUT_A_SEED)], $first, self::coveredBy($second, 11), $third);
-		$logger->next = $this->dataProvider->next;
-
-		self::assertSame('live C', $context->getVariableValue('handoff_lost', 'default'));
-		$this->assertPublished($context, self::exposure(1, 'exp_close_first_handoff_lost', self::NORMAL_VARIANT),
-			self::holdoutExposure(12, 'holdout_c', 0));
+		self::assertSame('t4', $context->getVariableValue('twice', 'default'));
+		$this->assertPublished($context, self::holdoutExposure(12, 'holdout_b', 0),
+			self::holdoutExposure(13, 'holdout_c', 0), self::exposure(4, 'exp_4_twice', self::NORMAL_VARIANT));
 	}
 
 	// A candidate the refresh removed takes no part in the rest of the walk, even when a peek cached its suppressed
-	// assignment: it neither supplies its control value nor queues its holdout exposure.
+	// assignment: it queues no holdout exposure.
 	public function testCandidateRemovedByAMidWalkRefreshIsSkippedEvenWhenItsSuppressedAssignmentIsCached(): void {
-		$logger = self::refreshingLogger(1);
-		[$first, $second] = self::closeCandidates('refresh_removed');
-		$second->variants[0]->config = '{"refresh_removed":"removed-control"}';
-		$context = $this->createContext(self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)], $first,
-			self::coveredBy($second, 11)), [self::UNIT_TYPE => self::UID], [], [], $logger);
-		self::assertSame(0, $context->peekTreatment('exp_close_second_refresh_removed'));
-		[$first] = self::closeCandidates('refresh_removed');
-		$this->dataProvider->next = self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)], $first);
+		$logger = self::refreshingLogger(12);
+		[$first, $second] = self::heldOutThenCovered('refresh_removed');
+		$context = $this->createContext(self::data(self::midWalkHoldouts(), $first, $second), [self::UNIT_TYPE => self::UID],
+			[], [], $logger);
+		self::assertSame(0, $context->peekTreatment('exp_second_refresh_removed'));
+		[$first] = self::heldOutThenCovered('refresh_removed');
+		$this->dataProvider->next = self::data(self::midWalkHoldouts(), $first);
 		$logger->next = $this->dataProvider->next;
 
 		self::assertSame('default', $context->getVariableValue('refresh_removed', 'default'));
-		self::assertSame(['exp_close_first_refresh_removed'], $context->getExperiments());
-		$this->assertPublished($context, self::exposure(1, 'exp_close_first_refresh_removed', self::NORMAL_VARIANT));
+		self::assertSame(['exp_first_refresh_removed'], $context->getExperiments());
+		$this->assertPublished($context, self::holdoutExposure(12, 'holdout_b', 0));
 	}
 
 	/** A logger that refreshes to $next on experiment $id's exposure, then throws if $throw. */
@@ -1759,72 +1627,6 @@ class ContextHoldoutTest extends TestCase {
 		};
 	}
 
-	/** @dataProvider variableWalkCoverageModes */
-	public function testLiveKeyFilteringAfterRefreshPreservesTheLegacyNoCoverageExposureRoute(bool $hasCoverage): void {
-		$logger = self::refreshingLogger(1);
-		[$first, $second] = self::closeCandidates('refresh_route');
-		$other = self::experiment(3, 'exp_refresh_route_other');
-		$holdouts = [];
-		if ($hasCoverage) {
-			$holdouts[] = self::holdout(11, 'holdout_route', self::HOLDOUT_B_SEED);
-			$other = self::coveredBy($other, 11);
-		}
-		$context = $this->createContext(self::data($holdouts, $first, $second, $other),
-			[self::UNIT_TYPE => self::UID], [], [], $logger);
-		$updatedSecond = clone $second;
-		$updatedSecond->variants = [
-			(object) ['config' => '{"unrelated":"control"}'],
-			(object) ['config' => '{"unrelated":"treatment"}'],
-		];
-		$this->dataProvider->next = self::data($holdouts, $first, $updatedSecond, $other);
-		$logger->next = $this->dataProvider->next;
-
-		self::assertSame('default', $context->getVariableValue('refresh_route', 'default'));
-		$expected = [self::exposure(1, 'exp_close_first_refresh_route', self::NORMAL_VARIANT)];
-		if (!$hasCoverage) {
-			$expected[] = self::exposure(2, 'exp_close_second_refresh_route', self::NORMAL_VARIANT);
-		}
-		$this->assertPublished($context, ...$expected);
-	}
-
-	public static function variableWalkCoverageModes(): array {
-		return ['legacy no coverage' => [false], 'holdout-aware' => [true]];
-	}
-
-	// When the first coverage arrives during the last candidate's exposure, visited candidates are not re-read: the
-	// read returns the caller default and publishes only the two ordinary exposures, as in JS.
-	public function testRefreshThatInstallsCoverageOnTheLastCandidateDoesNotRereadVisitedOnes(): void {
-		$logger = self::refreshingLogger(2);
-		[$first, $second] = self::closeCandidates('refresh_last');
-		$second->variants[1]->config = '{"unrelated":"y"}';
-		$second->variants[0]->config = '{"refresh_last":"from_second_control"}';
-		$context = $this->createContext(self::data([], $first, $second), [self::UNIT_TYPE => self::UID], [], [], $logger);
-		[$first, $second] = self::closeCandidates('refresh_last');
-		$second->variants[1]->config = '{"unrelated":"y"}';
-		$second->variants[0]->config = '{"refresh_last":"from_second_control"}';
-		$this->dataProvider->next = self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)],
-			self::coveredBy($first, 11), $second);
-		$logger->next = $this->dataProvider->next;
-
-		self::assertSame('default', $context->getVariableValue('refresh_last', 'default'));
-		$this->assertPublished($context, self::exposure(1, 'exp_close_first_refresh_last', self::NORMAL_VARIANT),
-			self::exposure(2, 'exp_close_second_refresh_last', self::NORMAL_VARIANT));
-	}
-
-	public function testRefreshThatCoversTheTriggeringCandidateDoesNotRereadIt(): void {
-		$logger = self::refreshingLogger(1);
-		[$first, $second] = self::closeCandidates('refresh_self');
-		$context = $this->createContext(self::data([], $first, $second), [self::UNIT_TYPE => self::UID], [], [], $logger);
-		[$first, $second] = self::closeCandidates('refresh_self');
-		$this->dataProvider->next = self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)],
-			self::coveredBy($first, 11), $second);
-		$logger->next = $this->dataProvider->next;
-
-		self::assertSame('from_second', $context->getVariableValue('refresh_self', 'default'));
-		$this->assertPublished($context, self::exposure(1, 'exp_close_first_refresh_self', self::NORMAL_VARIANT),
-			self::exposure(2, 'exp_close_second_refresh_self', self::NORMAL_VARIANT));
-	}
-
 	// A winner whose logger refreshes into coverage and then throws still sends that error to the caller, as on main.
 	public function testWinnerLoggerThatRefreshesIntoCoverageThenThrowsReachesTheCaller(): void {
 		$logger = self::refreshingLogger(1, true);
@@ -1842,29 +1644,6 @@ class ContextHoldoutTest extends TestCase {
 		catch (\RuntimeException $exception) {
 			self::assertSame('boom', $exception->getMessage());
 		}
-	}
-
-	// A logger that refreshes into the first coverage and then throws hands its error to the holdout walk: the later
-	// held-out candidate's holdout exposure is still queued and the error is re-thrown afterwards.
-	public function testRefreshIntoCoverageThenThrowStillQueuesLaterHoldoutExposures(): void {
-		$logger = self::refreshingLogger(1, true);
-		[$first, $second] = self::closeCandidates('refresh_throw');
-		$context = $this->createContext(self::data([], $first, $second), [self::UNIT_TYPE => self::UID], [], [], $logger);
-		[$first, $second] = self::closeCandidates('refresh_throw');
-		$this->dataProvider->next = self::data([self::holdout(11, 'holdout_a', self::HOLDOUT_A_SEED)], $first,
-			self::coveredBy($second, 11));
-		$logger->next = $this->dataProvider->next;
-
-		try {
-			$context->getVariableValue('refresh_throw', 'default');
-			self::fail('the logger error must reach the caller');
-		}
-		catch (\RuntimeException $exception) {
-			self::assertSame('boom', $exception->getMessage());
-		}
-
-		$this->assertPublished($context, self::exposure(1, 'exp_close_first_refresh_throw', self::NORMAL_VARIANT),
-			self::holdoutExposure(11, 'holdout_a', 0));
 	}
 
 	public function testCoveredTreatmentLoggerThatClosesTheContextQueuesNoHoldoutExposure(): void {

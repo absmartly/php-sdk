@@ -15,7 +15,7 @@ use ABSmartly\SDK\Context\ContextEventLoggerEvent;
 use ABSmartly\SDK\Exposure;
 use ABSmartly\SDK\GoalAchievement;
 use ABSmartly\SDK\PublishEvent;
-use ABSmartly\SDK;
+use ABSmartly\SDK\SDK;
 use ABSmartly\SDK\Tests\Mocks\ContextDataProviderMock;
 use ABSmartly\SDK\Tests\Mocks\ContextEventHandlerMock;
 use ABSmartly\SDK\Tests\Mocks\MockContextEventLoggerProxy;
@@ -378,7 +378,7 @@ class ContextTest extends TestCase {
 		// exp_test_ab has a non-strict audience (age >= 20). A mismatch still takes a custom variant, so setting one
 		// after a cached natural read must replace it.
 		$context = $this->createReadyContext('audience_context.json');
-		$context->setAttribute('age', 10);
+		$context->setAttributeValue('age', 10);
 		$natural = $context->getTreatment('exp_test_ab');
 
 		$custom = $natural === 1 ? 2 : 1;
@@ -401,7 +401,7 @@ class ContextTest extends TestCase {
 
 	public function testStrictAudienceExclusionWithCustomAssignmentDeduplicatesExposures(): void {
 		$context = $this->createReadyContext('audience_strict_context.json');
-		$context->setAttribute('age', 10);
+		$context->setAttributeValue('age', 10);
 		$context->setCustomAssignment('exp_test_ab', 0);
 
 		for ($i = 0; $i < 3; $i++) {
@@ -411,7 +411,7 @@ class ContextTest extends TestCase {
 
 		// An attribute change that now matches the audience still lets the custom variant apply.
 		$context->setCustomAssignment('exp_test_ab', 2);
-		$context->setAttribute('age', 25);
+		$context->setAttributeValue('age', 25);
 		self::assertSame(2, $context->getTreatment('exp_test_ab'));
 	}
 
@@ -497,7 +497,7 @@ class ContextTest extends TestCase {
 
 	public function testStrictAudienceMismatchGetAndPeekReturnDefault(): void {
 		$context = $this->createReadyContext('audience_strict_control_config.json');
-		$context->setAttribute('age', 10);
+		$context->setAttributeValue('age', 10);
 
 		self::assertSame('fallback', $context->peekVariableValue('banner.size', 'fallback'));
 		self::assertSame(0, $context->getPendingCount());
@@ -536,7 +536,7 @@ class ContextTest extends TestCase {
 
 	public function testGetVariableValueQueuesExposureWithAudienceMismatchFalseOnAudienceMatch(): void {
 		$context = $this->createReadyContext('audience_context.json');
-		$context->setAttribute('age', 21);
+		$context->setAttributeValue('age', 21);
 
 		self::assertSame("large", $context->getVariableValue('banner.size', 'small'));
 		self::assertSame(1, $context->getPendingCount());
@@ -567,7 +567,7 @@ class ContextTest extends TestCase {
 
 		self::assertSame("large", $context->getVariableValue('banner.size', 'small'));
 
-		$context->setAttribute('age', 21);
+		$context->setAttributeValue('age', 21);
 		self::assertSame("large", $context->getVariableValue('banner.size', 'small'));
 		self::assertSame(1, $context->getPendingCount());
 
@@ -576,17 +576,12 @@ class ContextTest extends TestCase {
 		self::assertFalse($this->eventHandler->submitted[0]->exposures[0]->audienceMismatch);
 	}
 
-	// Function name yikes!
-	public function testGetVariableValueQueuesExposureWithAudienceMismatchFalseAndControlVariantOnAudienceMismatchInStrictMode(): void {
+	// A strict audience mismatch is not a participant, so it never wins the key and is not exposed (as in Java).
+	public function testGetVariableValueDoesNotQueueExposureOnAudienceMismatchInStrictMode(): void {
 		$context = $this->createReadyContext('audience_strict_context.json');
 
 		self::assertSame("small", $context->getVariableValue('banner.size', 'small'));
-		self::assertSame(1, $context->getPendingCount());
-
-		$context->publish();
-		self::assertArrayHasKey(0, $this->eventHandler->submitted);
-		self::assertSame('exp_test_ab', $this->eventHandler->submitted[0]->exposures[0]->name);
-		self::assertTrue($this->eventHandler->submitted[0]->exposures[0]->audienceMismatch);
+		self::assertSame(0, $context->getPendingCount());
 	}
 
 	public function testGetVariableValueCallsEventLogger(): void {
@@ -609,8 +604,9 @@ class ContextTest extends TestCase {
 		self::assertEquals($this->variableExperiments, $context->getVariableKeys());
 	}
 
-	// Shared variable keys: ports the JS _resolveVariableValue rule. A key defined by more than one experiment is
-	// resolved by walking the experiments in ascending id order. See tests/Fixtures/json/shared_variables.json.
+	// Shared variable keys, as in the Java SDK's getVariableAssignment: the first experiment (ascending id) defining
+	// the key that the unit is in wins, and only it is exposed. See tests/Fixtures/json/shared_variables.json and
+	// ContextSharedVariableKeyTest.
 
 	public function testSharedKeyBothAssignedLowestIdWins(): void {
 		// (a) exp_low_a (id 1) and exp_high_a (id 2) both define "a.color".
@@ -625,74 +621,74 @@ class ContextTest extends TestCase {
 		self::assertSame('low', $context->getVariableValue('a.color', 'def'));
 	}
 
-	public function testSharedKeyFirstUnassignedFallsThroughAndBothExposed(): void {
-		// (c) exp_low_b (id 3, strict audience) is unassigned for age 5, so it falls through to exp_high_b (id 4).
-		// Both experiments are exposed, the first with assigned:false.
+	public function testSharedKeyFirstUnassignedIsSkippedAndOnlyTheWinnerExposed(): void {
+		// (c) exp_low_b (id 3, strict audience) is unassigned for age 5, so exp_high_b (id 4) wins. Only the winner
+		// is exposed: the unit never saw exp_low_b.
 		$context = $this->createReadyContext('shared_variables.json');
-		$context->setAttribute('age', 5);
+		$context->setAttributeValue('age', 5);
 
 		self::assertSame('highb', $context->getVariableValue('b.color', 'def'));
-		self::assertSame(2, $context->getPendingCount());
+		self::assertSame(1, $context->getPendingCount());
 
 		$context->publish();
 		$event = $this->eventHandler->submitted[0];
-		$byName = [];
-		foreach ($event->exposures as $exposure) {
-			$byName[$exposure->name] = $exposure;
-		}
-		self::assertArrayHasKey('exp_low_b', $byName);
-		self::assertArrayHasKey('exp_high_b', $byName);
-		self::assertFalse($byName['exp_low_b']->assigned);
-		self::assertTrue($byName['exp_high_b']->assigned);
+		self::assertCount(1, $event->exposures);
+		self::assertSame('exp_high_b', $event->exposures[0]->name);
+		self::assertTrue($event->exposures[0]->assigned);
 	}
 
 	public function testSharedKeyFirstUnassignedButOverriddenWins(): void {
 		// (d) exp_low_b is unassigned for age 5, but an override selects its variant 1, so the override wins.
 		$context = $this->createReadyContext('shared_variables.json');
-		$context->setAttribute('age', 5);
+		$context->setAttributeValue('age', 5);
 		$context->setOverride('exp_low_b', 1);
 
 		self::assertSame('lowb', $context->getVariableValue('b.color', 'def'));
 	}
 
-	public function testSharedKeyAssignedVariantLacksKeyFallsThrough(): void {
-		// (e) exp_low_c (id 5) is assigned a variant whose config lacks "c.color", so it falls through to
-		// exp_high_c (id 6).
+	public function testSharedKeyAssignedVariantLacksKeyReturnsTheDefault(): void {
+		// (e) exp_low_c (id 5) is assigned a variant whose config lacks "c.color". It still wins, so the default is
+		// returned and exp_high_c (id 6) is neither read nor exposed: falling through on the arm would bias exp_low_c.
 		$context = $this->createReadyContext('shared_variables.json');
-		self::assertSame('highc', $context->getVariableValue('c.color', 'def'));
+		self::assertSame('def', $context->getVariableValue('c.color', 'def'));
+
+		$context->publish();
+		self::assertSame(['exp_low_c'], array_map(fn($e) => $e->name, $this->eventHandler->submitted[0]->exposures));
 	}
 
 	public function testSharedKeyPeekReturnsSameValueAndQueuesNothing(): void {
 		$context = $this->createReadyContext('shared_variables.json');
-		$context->setAttribute('age', 5);
+		$context->setAttributeValue('age', 5);
 
 		self::assertSame('low', $context->peekVariableValue('a.color', 'def'));
 		self::assertSame('highb', $context->peekVariableValue('b.color', 'def'));
-		self::assertSame('highc', $context->peekVariableValue('c.color', 'def'));
+		self::assertSame('def', $context->peekVariableValue('c.color', 'def'));
 		self::assertSame(0, $context->getPendingCount());
 	}
 
-	public function testSharedKeyMissingUnitExperimentFallsThroughAndBothExposed(): void {
+	public function testSharedKeyMissingUnitExperimentIsSkippedAndOnlyTheWinnerExposed(): void {
 		// A running, non-full-on experiment (exp_missing_unit, id 10) whose unit type "device_id" is absent must
-		// stay unassigned/control rather than becoming assigned/full-on, so "shared.color" falls through to the
-		// next experiment (exp_present_unit, id 12). Its control variant A defines the key, so a lost assigned
-		// guard would wrongly return "control-a" and fail here.
+		// stay unassigned/control rather than becoming assigned/full-on, so the next experiment (exp_present_unit,
+		// id 12) wins "shared.color". Its control variant A defines the key, so a lost assigned guard would wrongly
+		// return "control-a" and fail here. The skipped experiment is not exposed.
 		$context = $this->createReadyContext('shared_variables_missing_unit.json');
 
 		self::assertSame('b', $context->getVariableValue('shared.color', 'def'));
-		self::assertSame(2, $context->getPendingCount());
+		self::assertSame(1, $context->getPendingCount());
 
 		$context->publish();
 		$event = $this->eventHandler->submitted[0];
-		$byName = [];
-		foreach ($event->exposures as $exposure) {
-			$byName[$exposure->name] = $exposure;
-		}
-		self::assertArrayHasKey('exp_missing_unit', $byName);
-		self::assertArrayHasKey('exp_present_unit', $byName);
-		self::assertFalse($byName['exp_missing_unit']->assigned);
-		self::assertFalse($byName['exp_missing_unit']->fullOn);
-		self::assertTrue($byName['exp_present_unit']->assigned);
+		self::assertCount(1, $event->exposures);
+		self::assertSame('exp_present_unit', $event->exposures[0]->name);
+		self::assertTrue($event->exposures[0]->assigned);
+
+		// getTreatment still exposes the skipped experiment, unassigned and not full-on.
+		self::assertSame(0, $context->getTreatment('exp_missing_unit'));
+		$context->publish();
+		$exposure = $this->eventHandler->submitted[1]->exposures[0];
+		self::assertSame('exp_missing_unit', $exposure->name);
+		self::assertFalse($exposure->assigned);
+		self::assertFalse($exposure->fullOn);
 	}
 
 	public function testSharedKeyPresentNullValueShadowsLaterExperiment(): void {
@@ -833,7 +829,7 @@ class ContextTest extends TestCase {
 
 	public function testGetTreatmentQueuesExposureWithAudienceMismatchFalseOnAudienceMatch(): void {
 		$context = $this->createReadyContext('audience_context.json');
-		$context->setAttribute('age', 21);
+		$context->setAttributeValue('age', 21);
 
 		self::assertSame(1, $context->getTreatment('exp_test_ab'));
 		self::assertSame(1, $context->getPendingCount());
@@ -885,10 +881,10 @@ class ContextTest extends TestCase {
 		$contextConfig->setUnits($this->units);
 		$context = (new SDK($config))->createContextWithData($contextConfig, new ContextData($data->experiments));
 
-		$context->setAttribute('age', 25);
+		$context->setAttributeValue('age', 25);
 		self::assertSame(1, $context->getTreatment('exp_test_ab'));
 
-		$context->setAttribute('age', 35);
+		$context->setAttributeValue('age', 35);
 		self::assertSame(0, $context->peekTreatment('exp_test_ab'));
 	}
 
@@ -1001,7 +997,7 @@ class ContextTest extends TestCase {
 	public function testPublishResetsInternalQueuesAndKeepsAttributesOverridesAndCustomAssignments(): void {
 		$context = $this->createReadyContext();
 
-		$context->setAttributes(
+		$context->setAttributeValues(
 			[
 				'attr1' => 'value1',
 				'attr2' => 2,
@@ -1483,7 +1479,7 @@ class ContextTest extends TestCase {
 		self::assertSame(0, $context->getPendingCount());
 	}
 
-	public function testRefreshOnFailedContextIsANoOp(): void {
+	public function testRefreshOnFailedContextRecoversDataButKeepsFailedFlag(): void {
 		$clientConfig = new ClientConfig('https://demo.absmartly.io/v1', '', '', '');
 		$client = new Client($clientConfig);
 		$config = new Config($client);
@@ -1513,16 +1509,20 @@ class ContextTest extends TestCase {
 
 		$logger->clear();
 
-		// refresh() on a context whose initial load failed is a no-op: it never fetches, stays failed,
-		// and emits no refresh or error event, matching the JS SDK's `_refresh` (`if (!this._failed)`).
 		$context->refresh();
-		self::assertSame(1, $callCount);
+		self::assertSame(2, $callCount);
 		self::assertTrue($context->isFailed());
 		self::assertTrue($context->isReady());
-		self::assertEmpty($context->getExperiments());
-		self::assertEmpty($logger->events);
-		// The original load error is preserved: refresh() neither clears nor replaces it.
+		self::assertNotEmpty($context->getExperiments());
 		self::assertSame($readyError, $context->readyError());
+		self::assertCount(1, $logger->events);
+		self::assertSame(ContextEventLoggerEvent::Refresh, $logger->events[0]->getEvent());
+		self::assertNotNull($context->getExperiment('exp_test_ab'));
+		$context->track('after_recovery');
+		self::assertSame(1, $context->getPendingCount());
+		$context->publish();
+		self::assertSame(0, $context->getPendingCount());
+		self::assertEmpty($eventHandler->submitted);
 	}
 
 	public function testFailedContextIsReadyWithEmptyData(): void {
@@ -1581,7 +1581,7 @@ class ContextTest extends TestCase {
 	public function testSetAttribute(): void {
 		$context = $this->createReadyContext();
 
-		$context->setAttribute('user_age', 25);
+		$context->setAttributeValue('user_age', 25);
 		self::assertSame(25, $context->getAttribute('user_age'));
 
 		$context->setAttribute('country', 'US');
@@ -1591,7 +1591,7 @@ class ContextTest extends TestCase {
 	public function testSetAttributes(): void {
 		$context = $this->createReadyContext();
 
-		$context->setAttributes([
+		$context->setAttributeValues([
 			'tier' => 'premium',
 			'score' => 100,
 			'active' => true,
@@ -1635,7 +1635,7 @@ class ContextTest extends TestCase {
 		$context = $this->createReadyContext();
 
 		$context->setAttribute('plan', 'enterprise');
-		$context->setAttribute('seats', 50);
+		$context->setAttributeValue('seats', 50);
 		$context->getTreatment('exp_test_ab');
 
 		$context->publish();
@@ -1876,13 +1876,13 @@ class ContextTest extends TestCase {
 	public function testAttributeUpdatesInTemplates(): void {
 		$context = $this->createReadyContext('audience_context.json');
 
-		$context->setAttribute('age', 15);
+		$context->setAttributeValue('age', 15);
 		$treatmentBefore = $context->getTreatment('exp_test_ab');
 
 		$context->publish();
 		$this->eventHandler->submitted = [];
 
-		$context->setAttribute('age', 25);
+		$context->setAttributeValue('age', 25);
 		$treatmentAfter = $context->getTreatment('exp_test_ab');
 		self::assertSame($treatmentBefore, $treatmentAfter);
 
@@ -1983,18 +1983,20 @@ class ContextTest extends TestCase {
 		$context = $this->createReadyContext();
 		$context->close();
 
-		$this->expectException(\LogicException::class);
-		$this->expectExceptionMessage('ABSmartly Context is closed');
 		$context->setUnit('new_unit', 'value');
+		$context->setUnits(['other_unit' => 'other']);
+		self::assertSame('value', $context->getUnit('new_unit'));
+		self::assertSame('other', $context->getUnit('other_unit'));
 	}
 
 	public function testSetAttributeAfterFinalized(): void {
 		$context = $this->createReadyContext();
 		$context->close();
 
-		$this->expectException(\LogicException::class);
-		$this->expectExceptionMessage('ABSmartly Context is closed');
 		$context->setAttribute('attr1', 'value1');
+		$context->setAttributes(['attr2' => 'value2']);
+		$context->setAttributeValue('attr3', 3);
+		self::assertSame(['attr1' => 'value1', 'attr2' => 'value2', 'attr3' => 3], $context->getAttributes());
 	}
 
 	public function testSetAttributeBeforeReady(): void {
@@ -2547,6 +2549,27 @@ class ContextTest extends TestCase {
 		self::assertNotNull($experiment->data->customFieldValues);
 	}
 
+	public function testEnumerationsExcludeRejectedExperiments(): void {
+		$existing = $this->createReadyContext('context_custom_fields.json');
+		$valid = clone $existing->getContextData()->experiments[0];
+		$valid->customFieldValues = [(object) ['name' => 'valid_field', 'type' => 'string', 'value' => 'yes']];
+		$rejected = clone $valid;
+		unset($rejected->name);
+		$rejected->customFieldValues = [(object) ['name' => 'rejected_field', 'type' => 'string', 'value' => 'no']];
+		$client = new Client(new ClientConfig('https://example.com', '', '', ''));
+		$config = new Config($client);
+		$logger = new MockContextEventLoggerProxy();
+		$contextConfig = new ContextConfig();
+		$contextConfig->setEventLogger($logger);
+		$context = (new SDK($config))->createContextWithData($contextConfig, new ContextData([$rejected, $valid]));
+
+		self::assertFalse($context->isFailed());
+		self::assertSame([$valid->name], $context->getExperiments());
+		self::assertSame(['valid_field'], $context->getCustomFieldKeys());
+		self::assertSame('yes', $context->customFieldValue($valid->name, 'valid_field'));
+		self::assertSame(ContextEventLoggerEvent::Error, $logger->events[0]->getEvent());
+	}
+
 	public function testCustomFieldValueReturnsStringField(): void {
 		$context = $this->createReadyContext('context_custom_fields.json');
 
@@ -2686,7 +2709,7 @@ class ContextTest extends TestCase {
 
 	public function testGetTreatmentQueuesExposureWithAudienceMatchTrueOnAudienceMatch(): void {
 		$context = $this->createReadyContext('audience_context.json');
-		$context->setAttribute('age', 21);
+		$context->setAttributeValue('age', 21);
 
 		self::assertSame(1, $context->getTreatment('exp_test_ab'));
 		self::assertSame(1, $context->getPendingCount());
@@ -2724,7 +2747,7 @@ class ContextTest extends TestCase {
 
 	public function testVariableValueQueuesExposureWithAudienceMatchTrueOnMatch(): void {
 		$context = $this->createReadyContext('audience_context.json');
-		$context->setAttribute('age', 21);
+		$context->setAttributeValue('age', 21);
 
 		self::assertSame('large', $context->getVariableValue('banner.size', 'small'));
 		self::assertSame(1, $context->getPendingCount());
@@ -2747,10 +2770,13 @@ class ContextTest extends TestCase {
 		self::assertTrue($event->exposures[0]->audienceMismatch);
 	}
 
-	public function testVariableValueQueuesExposureWithAudienceMatchFalseAndControlOnMismatchStrictMode(): void {
+	public function testVariableValueDoesNotQueueExposureOnMismatchStrictModeButTreatmentDoes(): void {
 		$context = $this->createReadyContext('audience_strict_context.json');
 
 		self::assertSame('small', $context->getVariableValue('banner.size', 'small'));
+		self::assertSame(0, $context->getPendingCount());
+
+		self::assertSame(0, $context->getTreatment('exp_test_ab'));
 		self::assertSame(1, $context->getPendingCount());
 
 		$context->publish();
@@ -2857,6 +2883,56 @@ class ContextTest extends TestCase {
 		self::assertCount(1, $this->eventHandler->submitted);
 		$events = array_map(fn($e) => $e->getEvent(), $logger->events);
 		self::assertSame([ContextEventLoggerEvent::Publish, ContextEventLoggerEvent::Close], $events);
+	}
+
+	/**
+	 * @dataProvider retainedEventCaps
+	 */
+	public function testRetainedQueueCapDefaultAndNonPositiveValues(?int $cap, int $goals, int $retained): void {
+		$context = $this->createReadyContext();
+		if ($cap !== null) {
+			$context->maxRetainedEvents = $cap;
+		}
+		$this->eventHandler->prerun = static function() {
+			throw new \RuntimeException('Server unavailable');
+		};
+
+		for ($i = 0; $i < $goals; ++$i) {
+			$context->track('goal');
+		}
+		$context->publish();
+
+		self::assertSame($retained, $context->getPendingCount());
+	}
+
+	public function testAQueueExactlyAtTheCapIsKeptWithoutADropEvent(): void {
+		$logger = new MockContextEventLoggerProxy();
+		$context = $this->createReadyContext('context.json', true, $logger);
+		$context->maxRetainedEvents = 3;
+		$this->eventHandler->prerun = static function() {
+			throw new \RuntimeException('Server unavailable');
+		};
+		$context->track('goal1');
+		$context->track('goal2');
+		$context->track('goal3');
+		$logger->clear();
+
+		$context->publish();
+
+		self::assertSame(3, $context->getPendingCount());
+		self::assertCount(0, array_filter(
+			$logger->events,
+			fn($e) => $e->getEvent() === ContextEventLoggerEvent::Error
+				&& strpos($e->getData()->getMessage(), 'Retained event queue exceeded') !== false
+		));
+	}
+
+	public static function retainedEventCaps(): array {
+		return [
+			'default is 10,000' => [null, 10001, 10000],
+			'0 means no cap' => [0, 5, 5],
+			'negative means no cap' => [-1, 5, 5],
+		];
 	}
 
 	public function testRetainedQueueIsCappedDroppingOldestAndLoggingError(): void {

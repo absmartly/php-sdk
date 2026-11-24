@@ -50,6 +50,21 @@ class JsonGoal implements \JsonSerializable {
 	}
 }
 
+class LegacyContext extends Context {
+	public array $attributeCalls = [];
+	public array $trackCalls = [];
+
+	public function setAttribute(string $name, string $value): Context {
+		$this->attributeCalls[] = [$name, $value];
+		return parent::setAttribute($name, $value);
+	}
+
+	public function track(string $goalName, ?object $properties = null): void {
+		$this->trackCalls[] = [$goalName, $properties];
+		parent::track($goalName, $properties);
+	}
+}
+
 class LegacyContextConfig extends ContextConfig {
 	public function setUnit(string $unitType, string $uid): ContextConfig {
 		return parent::setUnit($unitType, $uid);
@@ -71,18 +86,18 @@ class ThrowingOnPublishLogger extends MockContextEventLoggerProxy {
 	}
 }
 
+class MistypedContextData extends ContextData {
+	public function __construct() {
+		// `experiments` is left uninitialized, so reading it raises an Error (a Throwable, not an Exception).
+	}
+}
+
 class MistypedDataAsyncProvider extends AsyncContextDataProvider {
 	public function __construct() {
 	}
 
 	public function getContextDataAsync(): PromiseInterface {
-		// An experiment whose `variants` is not an array makes setData() raise a TypeError, not an Exception.
-		$experiment = (object) [
-			'id' => 1, 'name' => 'exp', 'unitType' => 'session_id', 'iteration' => 1, 'seedHi' => 0, 'seedLo' => 0,
-			'split' => [1], 'trafficSeedHi' => 0, 'trafficSeedLo' => 0, 'trafficSplit' => [0, 1], 'fullOnVariant' => 0,
-			'applications' => [], 'variants' => 'not-an-array',
-		];
-		return resolve(new ContextData([$experiment]));
+		return resolve(new MistypedContextData());
 	}
 }
 
@@ -225,17 +240,53 @@ class ContextConformanceTest extends TestCase {
 		$context->setUnit('user_id', 9007199254740993);
 	}
 
-	public function testInvalidUnitTypeIsRejected(): void {
+	public function testSetUnitKeepsTheV103StringParameter(): void {
+		// v1.0.3 declared `string $uid`: without strict_types PHP coerces scalars (true is "1", 125 is "125") and a
+		// customer subclass overriding setUnit(string, string) still loads.
 		$context = $this->context();
-		$this->expectExceptionMessage('Unit "x" must be a string or a number');
 		$context->setUnit('x', true);
+		self::assertSame('1', $context->getUnit('x'));
+		self::assertSame('string', (new \ReflectionParameter([Context::class, 'setUnit'], 'uid'))->getType()->getName());
+		$this->expectExceptionMessage('Unit "y" UID must not be blank');
+		$context->setUnit('y', false);
+	}
+
+	public function testSetUnitsKeepsTheV103MessageForNonScalars(): void {
+		$this->expectExceptionMessage('Unit set value with key "x" must be of type string, array passed');
+		$this->context()->setUnits(['x' => ['uid']]);
+	}
+
+	public function testLegacyContextSignaturesAndScalarCoercion(): void {
+		self::assertTrue(class_exists(LegacyContext::class));
+		self::assertSame('string', (new \ReflectionParameter([Context::class, 'setAttribute'], 'value'))->getType()->getName());
+		$trackType = (new \ReflectionParameter([Context::class, 'track'], 'properties'))->getType();
+		self::assertSame('object', $trackType->getName());
+		self::assertTrue($trackType->allowsNull());
+		$context = $this->context();
+		$context->setAttribute('number', 123);
+		$context->setAttributes(['other' => 42]);
+		self::assertSame('123', $context->getAttribute('number'));
+		self::assertSame('42', $context->getAttribute('other'));
+		$context->setAttributeValue('number', 123);
+		self::assertSame(123, $context->getAttribute('number'));
+	}
+
+	public function testAdditiveMethodsHonorLegacyHooks(): void {
+		$context = (new \ReflectionClass(LegacyContext::class))->newInstanceWithoutConstructor();
+		$context->setAttributeValues(['name' => 'Alice', 'age' => 25]);
+		$context->trackWithProperties('purchase', ['amount' => 42]);
+		self::assertSame([['name', 'Alice']], $context->attributeCalls);
+		self::assertSame(25, $context->getAttribute('age'));
+		self::assertSame('purchase', $context->trackCalls[0][0]);
+		self::assertSame(42, $context->trackCalls[0][1]->amount);
+		self::assertSame(1, $context->getPendingCount());
 	}
 
 	public function testTrackRejectsNonObjectProperties(): void {
 		foreach ([125.0, 'text', true, [1, 2], []] as $bad) {
 			$context = $this->context();
 			try {
-				$context->track('goal', $bad);
+				$context->trackWithProperties('goal', $bad);
 				self::fail('expected an error for ' . json_encode($bad));
 			} catch (\InvalidArgumentException $e) {
 				self::assertSame("Goal 'goal' properties must be of type object.", $e->getMessage());
@@ -244,10 +295,18 @@ class ContextConformanceTest extends TestCase {
 		}
 	}
 
+	public function testTrackWithPropertiesAfterCloseThrowsClosedBeforeValidating(): void {
+		$context = $this->context();
+		$context->close();
+		$this->expectException(\LogicException::class);
+		$this->expectExceptionMessage('ABSmartly Context is closed');
+		$context->trackWithProperties('goal', 'not-an-object');
+	}
+
 	public function testTrackAcceptsObjectsAndAssociativeArrays(): void {
 		$context = $this->context();
 		$context->track('a', (object) ['x' => 1]);
-		$context->track('b', ['x' => 1]);
+		$context->trackWithProperties('b', ['x' => 1]);
 		$context->track('d');
 		self::assertSame(3, $context->getPendingCount());
 	}
@@ -430,7 +489,8 @@ class ContextConformanceTest extends TestCase {
 		self::assertSame($context, $settled);
 		self::assertTrue($context->isReady());
 		self::assertTrue($context->isFailed());
-		self::assertInstanceOf(\TypeError::class, $context->readyError());
+		self::assertInstanceOf(\Error::class, $context->readyError());
+		self::assertNotInstanceOf(\Exception::class, $context->readyError());
 		self::assertSame(ContextEventLoggerEvent::Error, $logger->events[0]->getEvent());
 	}
 }

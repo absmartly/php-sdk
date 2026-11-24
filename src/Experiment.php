@@ -39,7 +39,7 @@ class Experiment {
 
 	public function __construct(object $data) {
 		$requiredFields = ['id', 'name', 'unitType', 'iteration', 'seedHi', 'seedLo', 'split',
-			'trafficSeedHi', 'trafficSeedLo', 'trafficSplit', 'fullOnVariant', 'applications', 'variants'];
+			'trafficSeedHi', 'trafficSeedLo', 'trafficSplit', 'fullOnVariant', 'variants'];
 
 		foreach ($requiredFields as $field) {
 			if (!property_exists($data, $field)) {

@@ -2,7 +2,7 @@
 
 namespace ABSmartly\SDK\Tests\Http;
 
-use ABSmartly\SDK;
+use ABSmartly\SDK\SDK;
 use ABSmartly\SDK\Client\Client;
 use ABSmartly\SDK\Client\ClientConfig;
 use ABSmartly\SDK\Config;
