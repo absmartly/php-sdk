@@ -1239,6 +1239,16 @@ class ContextHoldoutPayloadTest extends TestCase {
 		];
 	}
 
+	public function testHoldoutWithTheInt64LowerBoundAsAFloatIdIsServable(): void {
+		$holdout = self::holdout(11, 'holdout_min', 13, 111, [1.0, 0.0]);
+		$holdout->id = -9223372036854775808.0;
+		$experiment = self::experiment(1, 'exp', [PHP_INT_MIN]);
+		$context = $this->createContext(new ContextData([$experiment], [$holdout]));
+
+		self::assertSame(0, $context->getTreatment('exp'));
+		self::assertSame([[PHP_INT_MIN, 'holdout_min', 'session_id', 0]], $this->published($context));
+	}
+
 	/** @dataProvider uninitializedHoldoutFields */
 	public function testProviderHoldoutWithAnUninitializedTypedFieldIsIgnored(string $field): void {
 		$declarations = ['id' => 'public int $id', 'name' => 'public string $name', 'split' => 'public array $split'];

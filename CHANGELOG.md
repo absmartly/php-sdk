@@ -84,8 +84,9 @@
   the experiments defining the key: later ones are still exposed and the first error is re-thrown afterwards,
   as in the Java SDK. Once an event logger closes the context mid-read, whether or not it then throws, nothing
   more is queued from that read (`getTreatment()` or `getVariableValue()`), including the experiment's holdout
-  exposures, since a closed context can't publish them. A context whose data has never covered an experiment
-  with a holdout keeps the previous exception and queueing behaviour.
+  exposures, since a closed context can't publish them. If any callback closes the context while a logger error is
+  pending, `getVariableValue()` evaluates no later experiment and re-throws that first error. A context whose data
+  has never covered an experiment with a holdout keeps the previous exception and queueing behaviour.
 - If an event logger refreshes the context during `getVariableValue()`, the rest of the lookup uses the refreshed
   data. An experiment the refresh removed, or that no longer defines the key, is skipped unless it is overridden,
   even when an earlier peek cached its held-out assignment, so it supplies no control value and no holdout
