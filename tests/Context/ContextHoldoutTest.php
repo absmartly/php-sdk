@@ -1416,6 +1416,13 @@ class ContextHoldoutTest extends TestCase {
 
 		self::assertSame($closeSucceeds, $context->isClosed());
 		self::assertSame($closeSucceeds ? 0 : 3, $context->getPendingCount());
+		// A successful close stops the walk: no later candidate is even evaluated.
+		$cache = new \ReflectionProperty(Context::class, 'assignmentCache');
+		if (PHP_VERSION_ID < 80100) {
+			$cache->setAccessible(true);
+		}
+		self::assertSame($closeSucceeds ? array_slice(['exp_close_first', 'exp_close_second', 'exp_close_third'], 0, $closeAt)
+			: ['exp_close_first', 'exp_close_second', 'exp_close_third'], array_keys($cache->getValue($context)));
 		$this->eventHandler->prerun = null;
 		$context->close();
 		self::assertSame(0, $context->getPendingCount());

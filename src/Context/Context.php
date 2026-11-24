@@ -1003,8 +1003,9 @@ class Context {
 					}
 					catch (Throwable $exception) {
 						$error = $error ?? $exception;
-						// Coverage installed by the callback defers its error to the winner; otherwise retain fail-fast.
-						if (!$this->hasHoldouts) {
+						// Coverage installed by the callback defers its error to the winner; otherwise retain fail-fast. A
+						// logger that closed the context ends the walk: no later candidate is evaluated after close.
+						if (!$this->hasHoldouts || $this->isClosed()) {
 							throw $error;
 						}
 					}
