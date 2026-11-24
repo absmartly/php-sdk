@@ -2017,22 +2017,38 @@ class ContextHoldoutTest extends TestCase {
 
 	// An override set and exposed by a nested read during an audience re-check is the decision the outer read returns,
 	// exposed once.
-	public function testNestedReadDuringARecheckKeepsItsExposedDecision(): void {
-		$experiment = self::coveredBy(self::experiment(1, 'exp_nested'), 11);
-		$experiment->audience = '{"filter":[{"gte":[{"var":"probe/score"},{"value":0}]}]}';
-		$context = $this->createContext(self::data([self::holdout(11, 'holdout_nested', self::HOLDOUT_B_SEED)], $experiment));
+	/** @dataProvider nestedReadCoverage */
+	public function testNestedReadDuringARecheckKeepsItsExposedDecision(bool $covered): void {
+		$experiment = self::experiment(1, 'exp_nested');
+		$experiment->audience = '{"filter":[{"and":[{"gte":[{"var":"probe/score"},{"value":0}]},{"eq":[{"var":"flag"},{"value":1}]}]}]}';
+		$holdouts = [];
+		if ($covered) {
+			$experiment = self::coveredBy($experiment, 11);
+			$holdouts[] = self::holdout(11, 'holdout_nested', self::HOLDOUT_B_SEED);
+		}
+		$context = $this->createContext(self::data($holdouts, $experiment));
 		$probe = self::unitSettingProbe();
 		$context->setAttributeValue('probe', $probe);
+		$context->setAttributeValue('flag', 1);
 		self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_nested'));
-		$context->setAttributeValue('bump', 1);
+		// The re-check fails (the audience no longer matches), after the getter's nested read.
+		$context->setAttributeValue('flag', 2);
 		$probe->onRead = function () use ($context) {
 			$context->setOverride('exp_nested', 0);
 			$context->getTreatment('exp_nested');
 		};
 
 		self::assertSame(0, $context->getTreatment('exp_nested'));
-		$this->assertPublished($context, self::exposure(1, 'exp_nested', self::NORMAL_VARIANT),
-			self::holdoutExposure(11, 'holdout_nested', 1), self::exposure(1, 'exp_nested', 0, false, true));
+		$expected = [self::exposure(1, 'exp_nested', self::NORMAL_VARIANT)];
+		if ($covered) {
+			$expected[] = self::holdoutExposure(11, 'holdout_nested', 1);
+		}
+		$expected[] = self::exposure(1, 'exp_nested', 0, false, true);
+		$this->assertPublished($context, ...$expected);
+	}
+
+	public static function nestedReadCoverage(): array {
+		return ['without holdouts' => [false], 'covered by a holdout' => [true]];
 	}
 
 	public static function rejectedCoverageInstalls(): array {

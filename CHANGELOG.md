@@ -54,6 +54,8 @@
   while a logger error is pending, `getVariableValue()` evaluates no later experiment and re-throws that first
   error. A context whose data has never covered an experiment with a holdout keeps the 1.1.0 exception and queueing
   behaviour.
+- An audience attribute getter that overrides and reads an experiment while its cached decision is re-checked no
+  longer queues that read's exposure twice, with or without holdouts: the outer read returns the getter's decision.
 - If an event logger refreshes the context during `getVariableValue()`, the rest of the lookup uses the refreshed
   data. An experiment the refresh removed, or that no longer defines the key, is skipped unless it is overridden,
   even when an earlier peek cached its held-out assignment, so it queues no holdout exposure, unlike JS, which still
