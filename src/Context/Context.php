@@ -1555,11 +1555,12 @@ class Context {
 	/**
 	 * @param array<string, Assignment> $restored
 	 * @param array<string, Assignment> $rejected
-	 * @return array<string, Assignment> $restored, plus the entries of $rejected whose exposure was queued
+	 * @return array<string, Assignment> $restored, plus the entries of $rejected whose exposure was queued where
+	 * $restored has no exposed entry of its own (that one matches the restored data, so it is kept)
 	 */
 	private static function keepExposed(array $restored, array $rejected): array {
 		foreach ($rejected as $key => $assignment) {
-			if ($assignment->exposed) {
+			if ($assignment->exposed && !(isset($restored[$key]) && $restored[$key]->exposed)) {
 				$restored[$key] = $assignment;
 			}
 		}

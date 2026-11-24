@@ -1482,6 +1482,38 @@ class ContextHoldoutTest extends TestCase {
 			self::holdoutExposure(11, 'holdout_b', 1), self::exposure(3, 'exp_other', self::NORMAL_VARIANT));
 	}
 
+	// A decision exposed before the refresh wins over one an Error logger exposed from the rejected data: after the
+	// rollback the restored definitions match it, so later reads queue nothing again.
+	public function testRejectedRefreshKeepsTheDecisionExposedBeforeIt(): void {
+		$logger = new class extends MockContextEventLoggerProxy {
+			public bool $armed = false;
+
+			public function handleEvent(Context $context, ContextEventLoggerEvent $event): void {
+				parent::handleEvent($context, $event);
+				if ($this->armed && $event->getEvent() === ContextEventLoggerEvent::Error) {
+					$this->armed = false;
+					$context->getTreatment('exp_same');
+					throw new \RuntimeException('reject install');
+				}
+			}
+		};
+		$holdout = self::holdout(11, 'holdout_b', self::HOLDOUT_B_SEED);
+		$same = self::coveredBy(self::experiment(1, 'exp_same'), 11);
+		$other = self::coveredBy(self::experiment(3, 'exp_other'), 11);
+		$context = $this->createContext(self::data([$holdout], $same, $other), [self::UNIT_TYPE => self::UID], [], [], $logger);
+		self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_same'));
+		$bumped = clone $holdout;
+		$bumped->iteration = 2;
+		$logger->armed = true;
+
+		$this->refresh($context, self::data([$bumped], clone $same, self::malformedExperiment(2), clone $other));
+
+		$pending = $context->getPendingCount();
+		self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_same'));
+		self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_other'));
+		self::assertSame($pending + 1, $context->getPendingCount());
+	}
+
 	public static function rejectedExposureCoverage(): array {
 		return ['without holdouts' => [false], 'covered by a holdout' => [true]];
 	}
