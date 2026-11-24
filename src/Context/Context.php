@@ -958,6 +958,10 @@ class Context {
 		$suppressedFallback = null;
 		$liveCandidates = null;
 		foreach ($experiments as $experimentVariables) {
+			// Once a callback closes the context, a read already committed to throwing evaluates nothing more.
+			if ($error !== null && $this->isClosed()) {
+				throw $error;
+			}
 			$name = $experimentVariables->data->name;
 			$holdoutAware = $this->hasHoldouts;
 			if ($holdoutAware) {
@@ -993,9 +997,8 @@ class Context {
 					catch (Throwable $exception) {
 						$error = $error ?? $exception;
 					}
-					// Fail fast unless coverage exists (this callback may have just installed it); once closed, a read
-					// already committed to throwing evaluates nothing more.
-					if ($error !== null && (!$this->hasHoldouts || $this->isClosed())) {
+					// Fail fast unless coverage exists, even coverage this callback has just installed.
+					if ($error !== null && !$this->hasHoldouts) {
 						throw $error;
 					}
 				}

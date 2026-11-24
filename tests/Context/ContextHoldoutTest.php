@@ -1082,7 +1082,6 @@ class ContextHoldoutTest extends TestCase {
 		self::assertSame(2, $context->getPendingCount());
 	}
 
-	// With no winner the walk ends on the suppressed fallback, and the deferred logger error still reaches the caller.
 	public function testDeferredVariableCandidateLoggerErrorIsThrownWhenNoCandidateWins(): void {
 		$logger = new ThrowingExposureLogger();
 		$logger->throwWhen = fn($exposure) => $exposure->id === 11;
@@ -1255,7 +1254,6 @@ class ContextHoldoutTest extends TestCase {
 		self::assertSame(1, $context->getPendingCount());
 	}
 
-	// When several holdouts' loggers throw, the first holdout's error is re-thrown after all exposures are queued.
 	public function testFirstHoldoutLoggerErrorWinsOverALaterHoldoutError(): void {
 		$logger = new ThrowingExposureLogger();
 		$logger->throwWhen = function($exposure) {
@@ -1420,6 +1418,68 @@ class ContextHoldoutTest extends TestCase {
 		self::assertCount(1, $this->eventHandler->submitted);
 		self::assertSame($closeSucceeds ? range(1, $closeAt) : [1, 2, 3],
 			array_column($this->eventHandler->submitted[0]->exposures, 'id'));
+	}
+
+	// An attribute getter that closes the context while a logger error is pending also ends the walk, even when the
+	// closing candidate is already exposed and dispatches nothing.
+	public function testVariableWalkStopsWhenAnAudienceCallbackClosesWithALoggerErrorPending(): void {
+		$probe = static function () {
+			return new class {
+				public $score;
+				public ?\Closure $onRead = null;
+				public int $reads = 0;
+
+				public function __construct() {
+					unset($this->score);
+				}
+
+				public function __get(string $name) {
+					++$this->reads;
+					if ($this->onRead !== null) {
+						($this->onRead)();
+					}
+					return 1;
+				}
+			};
+		};
+		$two = $probe();
+		$three = $probe();
+		$logger = new ThrowingExposureLogger();
+		$logger->throwWhen = fn($exposure) => $exposure->id === 1;
+		$first = self::experiment(1, 'exp_callback_first');
+		$first->variants[0]->config = '{"callback_key":"control"}';
+		$first->variants[1]->config = '{"other":"x"}';
+		$second = self::experiment(2, 'exp_callback_second');
+		$second->variants[0]->config = '{"callback_key":"control"}';
+		$second->variants[1]->config = '{"other":"x"}';
+		$second->audience = '{"filter":[{"gte":[{"var":"two/score"},{"value":0}]}]}';
+		$third = self::withVariables(self::experiment(3, 'exp_callback_third'), 'callback_key');
+		$third->audience = '{"filter":[{"gte":[{"var":"three/score"},{"value":0}]}]}';
+		$context = $this->createContext(self::data([self::holdout(11, 'holdout_callback', self::HOLDOUT_A_SEED)],
+			$first, $second, $third, self::coveredBy(self::experiment(4, 'exp_callback_covered'), 11)),
+			[self::UNIT_TYPE => self::UID], [], [], $logger);
+		$context->setAttribute('two', $two);
+		$context->setAttribute('three', $three);
+		self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_callback_second'));
+		$context->setAttribute('bump', 1);
+		$two->onRead = function () use ($context, $two) {
+			$two->onRead = null;
+			$context->close();
+		};
+		$three->reads = 0;
+
+		try {
+			$context->getVariableValue('callback_key', 'default');
+			self::fail('the first logger error must reach the caller');
+		}
+		catch (\RuntimeException $exception) {
+			self::assertSame('boom', $exception->getMessage());
+		}
+
+		self::assertTrue($context->isClosed());
+		self::assertSame(0, $context->getPendingCount());
+		self::assertSame(0, $three->reads);
+		self::assertSame([2, 1], array_column($this->eventHandler->submitted[0]->exposures, 'id'));
 	}
 
 	public static function loggerCloseOutcomes(): array {
@@ -1860,7 +1920,6 @@ class ContextHoldoutTest extends TestCase {
 			$this->eventHandler->submitted[0]->exposures));
 	}
 
-	// A later candidate whose assignment itself fails must not replace the first deferred logger error.
 	public function testLaterCandidateAssignmentFailureDoesNotReplaceTheDeferredLoggerError(): void {
 		$logger = new ThrowingExposureLogger();
 		$logger->throwWhen = fn($exposure) => $exposure->id === 11;

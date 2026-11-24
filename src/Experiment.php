@@ -2,9 +2,6 @@
 
 namespace ABSmartly\SDK;
 
-use function array_filter;
-use function array_map;
-use function array_values;
 use function floor;
 use function get_object_vars as get_object_varsAlias;
 use function is_array;
