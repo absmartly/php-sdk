@@ -887,10 +887,9 @@ class ContextHoldoutTest extends TestCase {
 		$this->assertPublished($context, self::holdoutExposure(11, 'holdout_var_late', 0, 'user_id'));
 	}
 
-	// An audience getter that supplies the covered unit during a peek must not leave a treatment cached with the arm
-	// drawn while the unit was missing: the next exposing read honours the unit's holdout.
-	public function testUnitSetByAnAudienceGetterDuringAPeekIsHonouredByTheHoldout(): void {
-		$probe = new class {
+	/** An attribute object whose getter runs $onRead once, the next time a condition reads it. */
+	private static function unitSettingProbe(): object {
+		return new class {
 			public $score;
 			public ?\Closure $onRead = null;
 
@@ -907,11 +906,32 @@ class ContextHoldoutTest extends TestCase {
 				return 1;
 			}
 		};
+	}
+
+	// A condition getter that supplies the covered unit during a peek must not leave a decision cached with the arm
+	// drawn while the unit was missing: the next exposing read honours the unit's holdout.
+	/** @dataProvider unitSettingDecisions */
+	public function testUnitSetByAConditionGetterDuringAPeekIsHonouredByTheHoldout(string $shape, int $variant, array $own): void {
 		$experiment = self::coveredBy(self::experiment(1, 'exp_getter_unit'), 11);
-		$experiment->audience = '{"filter":[{"gte":[{"var":"probe/score"},{"value":0}]}]}';
+		$condition = '{"gte":[{"var":"probe/score"},{"value":0}]}';
+		if ($shape === 'rule') {
+			$experiment->assignmentRules = '{"rules":[{"name":"probe","type":"assign","conditions":{"and":[' . $condition
+				. ']},"environments":[],"variant":1}]}';
+		}
+		elseif ($shape === 'strict mismatch') {
+			$experiment->audienceStrict = true;
+			$experiment->audience = '{"filter":[{"lt":[{"var":"probe/score"},{"value":0}]}]}';
+		}
+		else {
+			$experiment->audience = '{"filter":[' . $condition . ']}';
+			if ($shape === 'full-on') {
+				$experiment->fullOnVariant = 1;
+			}
+		}
 		$holdout = self::holdout(11, 'holdout_getter', self::HOLDOUT_A_SEED);
 		$holdout->split = [1.0, 0.0];
 		$context = $this->createContext(self::data([$holdout], $experiment), []);
+		$probe = self::unitSettingProbe();
 		$context->setAttributeValue('probe', $probe);
 		$probe->onRead = function () use ($context) {
 			$context->setUnit(self::UNIT_TYPE, self::UID);
@@ -920,9 +940,47 @@ class ContextHoldoutTest extends TestCase {
 		$context->peekTreatment('exp_getter_unit');
 		self::assertSame(0, $context->getPendingCount());
 
-		self::assertSame(0, $context->getTreatment('exp_getter_unit'));
-		self::assertSame(0, $context->getTreatment('exp_getter_unit'));
-		$this->assertPublished($context, self::holdoutExposure(11, 'holdout_getter', 0));
+		self::assertSame($variant, $context->getTreatment('exp_getter_unit'));
+		self::assertSame($variant, $context->getTreatment('exp_getter_unit'));
+		$this->assertPublished($context, ...array_merge($own, [self::holdoutExposure(11, 'holdout_getter', 0)]));
+	}
+
+	public static function unitSettingDecisions(): array {
+		return [
+			'traffic split' => ['audience', 0, []],
+			'assignment rule' => ['rule', 1, [self::exposure(1, 'exp_getter_unit', 1, false, false, false, false, false, true)]],
+			'full-on' => ['full-on', 0, []],
+			'strict mismatch' => ['strict mismatch', 0, []],
+		];
+	}
+
+	// The same holds when the getter sets the unit while a cached decision is re-checked after an attribute change.
+	/** @dataProvider unitSettingRecheckSplits */
+	public function testUnitSetByAnAudienceGetterDuringARecheckIsHonouredByTheHoldout(array $split, int $variant, array $expected): void {
+		$experiment = self::coveredBy(self::experiment(1, 'exp_getter_unit'), 11);
+		$experiment->audience = '{"filter":[{"gte":[{"var":"probe/score"},{"value":0}]}]}';
+		$holdout = self::holdout(11, 'holdout_getter', self::HOLDOUT_A_SEED);
+		$holdout->split = $split;
+		$context = $this->createContext(self::data([$holdout], $experiment), []);
+		$probe = self::unitSettingProbe();
+		$context->setAttributeValue('probe', $probe);
+		$context->peekTreatment('exp_getter_unit');
+		$context->setAttributeValue('bump', 1);
+		$probe->onRead = function () use ($context) {
+			$context->setUnit(self::UNIT_TYPE, self::UID);
+		};
+
+		self::assertSame($variant, $context->getTreatment('exp_getter_unit'));
+		self::assertSame($variant, $context->getTreatment('exp_getter_unit'));
+		$this->assertPublished($context, ...$expected);
+	}
+
+	public static function unitSettingRecheckSplits(): array {
+		return [
+			'held out' => [[1.0, 0.0], 0, [self::holdoutExposure(11, 'holdout_getter', 0)]],
+			'not held out' => [[0.0, 1.0], self::NORMAL_VARIANT, [self::exposure(1, 'exp_getter_unit', self::NORMAL_VARIANT),
+				self::holdoutExposure(11, 'holdout_getter', 1)]],
+		];
 	}
 
 	public function testOverrideValueAndExposuresSurviveALateUnitAndItsHoldoutResolves(): void {

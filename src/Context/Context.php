@@ -697,7 +697,9 @@ class Context {
 					&& $experimentData->fullOnVariant === $assignment->fullOnVariant
 					&& $experimentData->trafficSplit === $assignment->trafficSplit
 					&& $this->audienceMatches($experimentData, $assignment)
-					&& (!$this->hasHoldouts || $this->holdoutSetMatches($experimentName, $assignment))) {
+					&& (!$this->hasHoldouts || $this->holdoutSetMatches($experimentName, $assignment))
+					// An audience getter that set the unit evicted this assignment while it was being checked.
+					&& ($this->assignmentCache[$experimentName] ?? null) === $assignment) {
 					// assignment up-to-date
 					return $assignment;
 				}
@@ -961,7 +963,8 @@ class Context {
 	 * that does not win still queues its holdouts' exposures.
 	 */
 	private function resolveVariableValue(string $key, $default, bool $exposeAssignment) {
-		$experiments = $this->indexVariables[$key] ?? [];
+		$indexVariables = $this->indexVariables;
+		$experiments = $indexVariables[$key] ?? [];
 		$candidates = $experiments;
 		$error = null;
 		$selectedVariables = null;
@@ -975,11 +978,15 @@ class Context {
 			// With holdouts, a refresh by a callback earlier in the walk drops the candidates it removed or that no longer
 			// define $key (an overridden one stays); without them the walk keeps main's snapshot of the candidates.
 			if ($this->hasHoldouts) {
-				if (($this->indexVariables[$key] ?? []) !== $candidates) {
-					$candidates = $this->indexVariables[$key] ?? [];
-					$liveCandidates = [];
-					foreach ($candidates as $live) {
-						$liveCandidates[$live->data->name] = true;
+				// The index only changes when a callback refreshes, so compare the key's candidates only then.
+				if ($this->indexVariables !== $indexVariables) {
+					$indexVariables = $this->indexVariables;
+					if (($indexVariables[$key] ?? []) !== $candidates) {
+						$candidates = $indexVariables[$key] ?? [];
+						$liveCandidates = [];
+						foreach ($candidates as $live) {
+							$liveCandidates[$live->data->name] = true;
+						}
 					}
 				}
 				if ($liveCandidates !== null && !isset($liveCandidates[$name]) && !array_key_exists($name, $this->overrides)) {
