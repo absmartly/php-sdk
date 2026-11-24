@@ -106,15 +106,17 @@ changes below before upgrading. It is not a guarantee that every 1.0.3 workload 
 - `Context::close()` no longer closes the SDK's shared HTTP client, so closing one context no longer breaks
   sibling contexts. `SDK::close()` still closes it.
 - **`getVariableValue()` exposes only the experiment whose value it uses.** 1.0.3 exposed the experiment
-  behind a key even when the unit was not in it: on a strict audience mismatch, or with no unit for its unit type
-  (exposed as `assigned`), recording units in an experiment they never saw and returning its control value. With
+  behind a key even when the unit was not in it: on a strict audience mismatch, or, for an experiment that is not
+  full-on, with no unit for its unit type (exposed as `assigned`), recording units in an experiment they never saw and returning its control value. With
   shared keys, the experiment picked could also be one the unit was not in while another one it was in was
   ignored. *Affects:* anyone with strict audiences or experiments on a unit type a context may lack, and anyone
   running two or more experiments whose variants define the same variable key. The rule now applied, as in the
   Java SDK:
   - The candidates are the experiments whose variants (any variant) define the key, by ascending experiment id.
-  - The winner is the first candidate the unit is assigned to (including outside the traffic split), overridden
-    into or rule-assigned to. If there is none, the caller default is returned and nothing is exposed.
+  - The winner is the first candidate the unit is assigned to (including outside the traffic split, and for a
+    full-on experiment even without its unit), overridden into or rule-assigned to. An override or a matching
+    assignment rule makes a candidate win even on a strict audience mismatch or without its unit. If there is no
+    winner, the caller default is returned and nothing is exposed.
   - If the winner's variant does not define the key, the caller default is returned; later candidates are not
     consulted, so the arm a unit got never decides which experiment it reads. A key present with a `null`,
     `false`, `0` or empty value is returned as is.

@@ -126,6 +126,34 @@ class ContextSharedVariableKeyTest extends TestCase {
 		self::assertSame(['exp_high'], $this->publishedExposureNames($context));
 	}
 
+	public function testAFullOnLowerIdWinsWithoutItsUnit(): void {
+		// Unlike a split experiment, a full-on one is assigned without its unit, so it wins and is the only exposure.
+		$context = $this->createContext([
+			self::loser(),
+			self::experiment(1, 'exp_low', [['shared' => 'low-control'], ['shared' => 'low']], ['unitType' => 'device_id']),
+			self::experiment(2, 'exp_high', [null, ['shared' => 'high']]),
+		]);
+
+		self::assertSame('low', $context->getVariableValue('shared', 'def'));
+		self::assertSame(['exp_low'], $this->publishedExposureNames($context));
+	}
+
+	public function testAnOverrideOrARuleWinsWithoutTheUnit(): void {
+		$experiments = [
+			self::experiment(1, 'exp_low', [['shared' => 'low-control'], ['shared' => 'low']], ['unitType' => 'device_id', 'fullOnVariant' => 0]),
+			self::experiment(2, 'exp_high', [null, ['shared' => 'high']]),
+		];
+		$context = $this->createContext($experiments);
+		$context->setOverride('exp_low', 1);
+		self::assertSame('low', $context->getVariableValue('shared', 'def'));
+		self::assertSame(['exp_low'], $this->publishedExposureNames($context));
+
+		$experiments[0] = self::experiment(1, 'exp_low', [['shared' => 'low-control'], ['shared' => 'low']], ['unitType' => 'device_id', 'fullOnVariant' => 0] + self::assignRule(0));
+		$context = $this->createContext($experiments);
+		self::assertSame('low-control', $context->getVariableValue('shared', 'def'));
+		self::assertSame(['exp_low'], $this->publishedExposureNames($context));
+	}
+
 	public function testWinnerVariantWithoutTheKeyReturnsTheDefaultAndExposesOnlyTheWinner(): void {
 		// exp_low is full-on to variant 1, which does not define the key; variant 0 does, so it is a candidate.
 		$context = $this->createContext([
