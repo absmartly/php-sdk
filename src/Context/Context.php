@@ -31,6 +31,7 @@ use function floor;
 use function get_object_vars;
 use function gettype;
 use function hash;
+use function in_array;
 use function is_array;
 use function is_float;
 use function is_int;
@@ -799,6 +800,14 @@ class Context {
 			$assignment->variables = $experiment->variables[$assignment->variant];
 		}
 
+		// A callback during the decision (an audience getter) may have set the unit after its holdout arms were drawn
+		// without it, before this assignment had a unit type that setUnit() could match. Decide again with the unit.
+		if ($assignment->holdoutAssignments !== null && in_array(null, $assignment->holdoutAssignments, true)
+			&& isset($this->units[$experiment->data->unitType])) {
+			unset($this->assignmentCache[$experimentName]);
+			return $this->getAssignment($experimentName);
+		}
+
 		$assignment->attrsSeq = $this->attrsSeq;
 
 		return $assignment;
@@ -952,10 +961,9 @@ class Context {
 	 * that does not win still queues its holdouts' exposures.
 	 */
 	private function resolveVariableValue(string $key, $default, bool $exposeAssignment) {
-		$indexVariables = $this->indexVariables;
-		$experiments = $indexVariables[$key] ?? [];
+		$experiments = $this->indexVariables[$key] ?? [];
+		$candidates = $experiments;
 		$error = null;
-		// With no winner, the first held-out candidate supplies its control value, even if it lacks the key (JS).
 		$selectedVariables = null;
 		$liveCandidates = null;
 		foreach ($experiments as $experimentVariables) {
@@ -967,10 +975,10 @@ class Context {
 			// With holdouts, a refresh by a callback earlier in the walk drops the candidates it removed or that no longer
 			// define $key (an overridden one stays); without them the walk keeps main's snapshot of the candidates.
 			if ($this->hasHoldouts) {
-				if ($this->indexVariables !== $indexVariables) {
-					$indexVariables = $this->indexVariables;
+				if (($this->indexVariables[$key] ?? []) !== $candidates) {
+					$candidates = $this->indexVariables[$key] ?? [];
 					$liveCandidates = [];
-					foreach ($indexVariables[$key] ?? [] as $live) {
+					foreach ($candidates as $live) {
 						$liveCandidates[$live->data->name] = true;
 					}
 				}

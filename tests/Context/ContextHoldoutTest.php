@@ -883,12 +883,49 @@ class ContextHoldoutTest extends TestCase {
 
 		$context->setUnit('user_id', self::UID);
 
-		// Suppressed: the control variant has no "my_var", so the caller's default is returned.
 		self::assertSame('default', $context->getVariableValue('my_var', 'default'));
 		$this->assertPublished($context, self::holdoutExposure(11, 'holdout_var_late', 0, 'user_id'));
 	}
 
-	public function testSetUnitDoesNotEvictOverrideAssignmentAndHoldoutResolvesAfterTheUnitIsSet(): void {
+	// An audience getter that supplies the covered unit during a peek must not leave a treatment cached with the arm
+	// drawn while the unit was missing: the next exposing read honours the unit's holdout.
+	public function testUnitSetByAnAudienceGetterDuringAPeekIsHonouredByTheHoldout(): void {
+		$probe = new class {
+			public $score;
+			public ?\Closure $onRead = null;
+
+			public function __construct() {
+				unset($this->score);
+			}
+
+			public function __get(string $name) {
+				if ($this->onRead !== null) {
+					$onRead = $this->onRead;
+					$this->onRead = null;
+					$onRead();
+				}
+				return 1;
+			}
+		};
+		$experiment = self::coveredBy(self::experiment(1, 'exp_getter_unit'), 11);
+		$experiment->audience = '{"filter":[{"gte":[{"var":"probe/score"},{"value":0}]}]}';
+		$holdout = self::holdout(11, 'holdout_getter', self::HOLDOUT_A_SEED);
+		$holdout->split = [1.0, 0.0];
+		$context = $this->createContext(self::data([$holdout], $experiment), []);
+		$context->setAttributeValue('probe', $probe);
+		$probe->onRead = function () use ($context) {
+			$context->setUnit(self::UNIT_TYPE, self::UID);
+		};
+
+		$context->peekTreatment('exp_getter_unit');
+		self::assertSame(0, $context->getPendingCount());
+
+		self::assertSame(0, $context->getTreatment('exp_getter_unit'));
+		self::assertSame(0, $context->getTreatment('exp_getter_unit'));
+		$this->assertPublished($context, self::holdoutExposure(11, 'holdout_getter', 0));
+	}
+
+	public function testOverrideValueAndExposuresSurviveALateUnitAndItsHoldoutResolves(): void {
 		$context = $this->createContext(self::data([self::holdout(11, 'holdout_override_late', self::HOLDOUT_B_SEED, 'user_id')],
 			self::coveredBy(self::experiment(1, 'exp_override_late_unit', 'user_id'), 11)), [], ['exp_override_late_unit' => 3]);
 
@@ -1240,7 +1277,6 @@ class ContextHoldoutTest extends TestCase {
 		self::assertSame(1, $context->getPendingCount());
 	}
 
-	// holdoutIds that name no holdout leave the data without holdouts, so a throwing logger stops the walk, as on main.
 	public function testUnknownHoldoutIdLeavesTheVariableCandidateUncovered(): void {
 		$logger = new ThrowingExposureLogger();
 		$logger->throwWhen = fn($exposure) => $exposure->id === 1;

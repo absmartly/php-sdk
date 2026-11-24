@@ -597,7 +597,8 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertSame([[11, 'holdout_a', 'session_id', 0]], $this->published($context));
 	}
 
-	private function contextWithProvider(ContextData $data, array $overrides = []): array {
+	private function contextWithProvider(ContextData $data, array $overrides = [], array $units = ['session_id' => self::UID],
+		?ContextEventLogger $logger = null): array {
 		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'test-api-key', 'website', 'production'));
 		$config = new Config($client);
 		$provider = new HoldoutDataProvider();
@@ -605,8 +606,11 @@ class ContextHoldoutPayloadTest extends TestCase {
 		$this->eventHandler = new ContextEventHandlerMock($client);
 		$config->setContextEventHandler($this->eventHandler);
 		$contextConfig = new ContextConfig();
-		$contextConfig->setUnits(['session_id' => self::UID]);
+		$contextConfig->setUnits($units);
 		$contextConfig->setOverrides($overrides);
+		if ($logger !== null) {
+			$contextConfig->setEventLogger($logger);
+		}
 		return [(new SDK($config))->createContextWithData($contextConfig, $data), $provider];
 	}
 
@@ -797,16 +801,8 @@ class ContextHoldoutPayloadTest extends TestCase {
 	// again for the new unit type, which publishes its own holdout exposure.
 	public function testOverrideRedrawsHoldoutArmsWhenTheUnitTypeChanges(): void {
 		$holdout = self::holdout(11, 'holdout_a', 13, 111);
-		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'test-api-key', 'website', 'production'));
-		$config = new Config($client);
-		$provider = new HoldoutDataProvider();
-		$config->setContextDataProvider($provider);
-		$this->eventHandler = new ContextEventHandlerMock($client);
-		$config->setContextEventHandler($this->eventHandler);
-		$contextConfig = new ContextConfig();
-		$contextConfig->setUnits(['session_id' => self::UID, 'user_id' => 'b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3']);
-		$contextConfig->setOverride('exp', 1);
-		$context = (new SDK($config))->createContextWithData($contextConfig, new ContextData([self::experiment(1, 'exp', [11])], [$holdout]));
+		[$context, $provider] = $this->contextWithProvider(new ContextData([self::experiment(1, 'exp', [11])], [$holdout]), ['exp' => 1],
+			['session_id' => self::UID, 'user_id' => 'b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3']);
 		self::assertSame(1, $context->getTreatment('exp'));
 
 		$provider->next = new ContextData([self::experiment(1, 'exp', [11], 'user_id')], [$holdout]);
@@ -834,17 +830,8 @@ class ContextHoldoutPayloadTest extends TestCase {
 				}
 			}
 		};
-		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'test-api-key', 'website', 'production'));
-		$config = new Config($client);
-		$provider = new HoldoutDataProvider();
-		$config->setContextDataProvider($provider);
-		$this->eventHandler = new ContextEventHandlerMock($client);
-		$config->setContextEventHandler($this->eventHandler);
-		$contextConfig = new ContextConfig();
-		$contextConfig->setUnits(['session_id' => self::UID]);
-		$contextConfig->setEventLogger($logger);
-		$context = (new SDK($config))->createContextWithData($contextConfig,
-			new ContextData([self::experiment(1, 'exp', [11])], [self::holdout(11, 'holdout_a', 1, 222)]));
+		[$context, $provider] = $this->contextWithProvider(
+			new ContextData([self::experiment(1, 'exp', [11])], [self::holdout(11, 'holdout_a', 1, 222)]), [], ['session_id' => self::UID], $logger);
 		self::assertSame(1, $context->peekTreatment('exp'));
 
 		// Same iteration, a seed that holds the unit out: only a fresh resolution against the new data sees it.
@@ -862,15 +849,8 @@ class ContextHoldoutPayloadTest extends TestCase {
 	// holdout publish an exposure for that unit type.
 	public function testCoveredExperimentIsReassignedWhenTheUnitTypeChanges(): void {
 		$holdout = self::holdout(11, 'holdout_a', 1, 222);
-		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'test-api-key', 'website', 'production'));
-		$config = new Config($client);
-		$provider = new HoldoutDataProvider();
-		$config->setContextDataProvider($provider);
-		$this->eventHandler = new ContextEventHandlerMock($client);
-		$config->setContextEventHandler($this->eventHandler);
-		$contextConfig = new ContextConfig();
-		$contextConfig->setUnits(['session_id' => self::UID, 'user_id' => self::UID]);
-		$context = (new SDK($config))->createContextWithData($contextConfig, new ContextData([self::experiment(1, 'exp', [11])], [$holdout]));
+		[$context, $provider] = $this->contextWithProvider(new ContextData([self::experiment(1, 'exp', [11])], [$holdout]), [],
+			['session_id' => self::UID, 'user_id' => self::UID]);
 		$context->getTreatment('exp');
 
 		$provider->next = new ContextData([self::experiment(1, 'exp', [11], 'user_id')], [$holdout]);
@@ -884,17 +864,9 @@ class ContextHoldoutPayloadTest extends TestCase {
 	// An override on an experiment no holdout covers is reused across a unit type change, as without holdouts.
 	public function testUncoveredOverrideIsReusedAcrossAUnitTypeChange(): void {
 		$holdout = self::holdout(11, 'holdout_a', 13, 111);
-		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'test-api-key', 'website', 'production'));
-		$config = new Config($client);
-		$provider = new HoldoutDataProvider();
-		$config->setContextDataProvider($provider);
-		$this->eventHandler = new ContextEventHandlerMock($client);
-		$config->setContextEventHandler($this->eventHandler);
-		$contextConfig = new ContextConfig();
-		$contextConfig->setUnits(['session_id' => self::UID, 'user_id' => self::UID]);
-		$contextConfig->setOverride('exp', 1);
-		$context = (new SDK($config))->createContextWithData($contextConfig,
-			new ContextData([self::experiment(1, 'exp', []), self::experiment(2, 'exp_covered', [11])], [$holdout]));
+		[$context, $provider] = $this->contextWithProvider(
+			new ContextData([self::experiment(1, 'exp', []), self::experiment(2, 'exp_covered', [11])], [$holdout]), ['exp' => 1],
+			['session_id' => self::UID, 'user_id' => self::UID]);
 		self::assertSame(1, $context->getTreatment('exp'));
 
 		$provider->next = new ContextData([self::experiment(1, 'exp', [], 'user_id'), self::experiment(2, 'exp_covered', [11])], [$holdout]);
@@ -921,16 +893,8 @@ class ContextHoldoutPayloadTest extends TestCase {
 				}
 			}
 		};
-		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'test-api-key', 'website', 'production'));
-		$config = new Config($client);
-		$provider = new HoldoutDataProvider();
-		$config->setContextDataProvider($provider);
-		$config->setContextEventHandler(new ContextEventHandlerMock($client));
-		$contextConfig = new ContextConfig();
-		$contextConfig->setUnits(['session_id' => self::UID]);
-		$contextConfig->setEventLogger($logger);
-		$context = (new SDK($config))->createContextWithData($contextConfig,
-			new ContextData([self::experiment(1, 'exp', [11])], [self::holdout(11, 'holdout_a', 1, 222)]));
+		[$context, $provider] = $this->contextWithProvider(
+			new ContextData([self::experiment(1, 'exp', [11])], [self::holdout(11, 'holdout_a', 1, 222)]), [], ['session_id' => self::UID], $logger);
 		$logger->armed = true;
 		$logger->events = [];
 		return [$context, $provider, $logger];
