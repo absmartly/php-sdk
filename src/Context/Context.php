@@ -321,27 +321,26 @@ class Context {
 	/**
 	 * A holdout entry is used only when it has the fields its arm is drawn from and a non-empty numeric split, as in
 	 * JS (`holdout.split && holdout.split.length > 0`); anything else gives null, so experiments it would have
-	 * covered assign normally. Integral floats (`11.0`) count as integers, since JS can't tell them apart; such an
-	 * entry is copied with integer fields rather than changed in place. Unknown fields are ignored.
+	 * covered assign normally. Integral floats (`11.0`) count as integers, since JS can't tell them apart. The result
+	 * is a plain copy the SDK owns, so a provider's typed or readonly properties never constrain it and the caller's
+	 * object is never changed. Unknown fields are ignored.
 	 */
 	private static function servableHoldout($holdout): ?object {
 		if (!is_object($holdout)) {
 			return null;
 		}
 
-		$integers = [];
+		$servable = [];
 		foreach (['id', 'iteration', 'seedHi', 'seedLo'] as $field) {
-			$value = property_exists($holdout, $field) ? self::integralValue($holdout->{$field}) : null;
+			$value = isset($holdout->{$field}) ? self::integralValue($holdout->{$field}) : null;
 			if ($value === null) {
 				return null;
 			}
-			if (!is_int($holdout->{$field})) {
-				$integers[$field] = $value;
-			}
+			$servable[$field] = $value;
 		}
 
-		if (!property_exists($holdout, 'name') || !is_string($holdout->name)
-			|| !property_exists($holdout, 'split') || !is_array($holdout->split) || $holdout->split === []) {
+		if (!isset($holdout->name, $holdout->split) || !is_string($holdout->name) || !is_array($holdout->split)
+			|| $holdout->split === []) {
 			return null;
 		}
 
@@ -351,15 +350,9 @@ class Context {
 			}
 		}
 
-		if ($integers === []) {
-			return $holdout;
-		}
-
-		$copy = clone $holdout;
-		foreach ($integers as $field => $value) {
-			$copy->{$field} = $value;
-		}
-		return $copy;
+		$servable['name'] = $holdout->name;
+		$servable['split'] = $holdout->split;
+		return (object) $servable;
 	}
 
 	/**
@@ -744,10 +737,7 @@ class Context {
 				$assignment->variant = $rule['variant'];
 				$assignment->ruleOverride = true;
 			}
-			elseif ($assignment->suppressed) {
-				$assignment->variant = 0;
-			}
-			else {
+			elseif (!$assignment->suppressed) {
 				if (!empty($experiment->data->audience) && !empty((array) $experiment->data->audience)) {
 					$result = $this->audienceMatcher->evaluate($experiment->data->audience, $this->getEvaluationAttributes());
 					if (is_bool($result)) {
@@ -1002,13 +992,10 @@ class Context {
 					}
 					catch (Throwable $exception) {
 						$error = $error ?? $exception;
-						// Fail fast unless coverage exists, even coverage this callback has just installed.
-						if (!$this->hasHoldouts) {
-							throw $error;
-						}
 					}
-					// The read is already committed to throwing, so after a close evaluate nothing more.
-					if ($error !== null && $this->isClosed()) {
+					// Fail fast unless coverage exists (this callback may have just installed it); once closed, a read
+					// already committed to throwing evaluates nothing more.
+					if ($error !== null && (!$this->hasHoldouts || $this->isClosed())) {
 						throw $error;
 					}
 				}
