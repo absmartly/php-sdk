@@ -152,9 +152,10 @@
   strings such as `"11"` do not), whose `name` is not a string, or whose `split` is not a non-empty array of
   numbers; and `holdoutIds` entries that are not such integers. Ids that name no holdout and unknown fields are
   ignored too. `new ContextData($experiments)` keeps working (no holdouts). Payloads without holdouts keep
-  the previous variable lookup results and exposures; `getVariableValue()` on them runs about 3% slower than before
-  holdouts, from the per-candidate coverage check that a logger refresh can change mid-walk. Cached assignment validation reads the experiment data once and
-  compares its fields inline, offsetting the additional holdout flag check on reads.
+  the previous variable lookup results and exposures. `getVariableValue()` on them is about 3% slower than before,
+  because coverage is checked per candidate (a logger refresh can install it mid-walk). Cached assignment
+  validation reads the experiment data once and compares its fields inline, offsetting the additional holdout flag
+  check on reads.
   A holdout exposure that the retained-event cap drops is queued again by the next exposing read of an experiment
   whose cached assignment still pins that arm, provided the arm was still current when it was dropped. An arm
   already replaced by a new draw when the cap drops it is not queued again; the cap is otherwise lossy.
