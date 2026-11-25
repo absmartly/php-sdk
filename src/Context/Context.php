@@ -27,7 +27,6 @@ use function array_slice;
 use function array_splice;
 use function array_values;
 use function count;
-use function floor;
 use function get_object_vars;
 use function gettype;
 use function hash;
@@ -331,7 +330,7 @@ class Context {
 		}
 
 		$hasHoldouts = $hasHoldouts || $this->hasHoldouts;
-		// Plain values again (no references left behind), installed together.
+		// Drop the first load's references before installing.
 		unset($this->index, $this->indexVariables, $this->ruleKeys, $this->experimentHoldouts, $this->hasHoldouts);
 		$this->data = $data;
 		$this->index = $index;
@@ -370,7 +369,7 @@ class Context {
 
 		$servable = [];
 		foreach (['id', 'iteration', 'seedHi', 'seedLo'] as $field) {
-			$value = isset($holdout->{$field}) ? self::integralValue($holdout->{$field}) : null;
+			$value = isset($holdout->{$field}) ? Experiment::integralValue($holdout->{$field}) : null;
 			if ($value === null) {
 				return null;
 			}
@@ -391,21 +390,6 @@ class Context {
 		$servable['name'] = $holdout->name;
 		$servable['split'] = $holdout->split;
 		return (object) $servable;
-	}
-
-	/**
-	 * $value as an int when it is an integer or an integral float within the int range (JSON `11.0`), else null.
-	 *
-	 * @param mixed $value
-	 */
-	private static function integralValue($value): ?int {
-		if (is_int($value)) {
-			return $value;
-		}
-		if (is_float($value) && floor($value) === $value && $value >= -9.2233720368547758E18 && $value < 9.2233720368547758E18) {
-			return (int) $value;
-		}
-		return null;
 	}
 
 	/**
@@ -753,6 +737,19 @@ class Context {
 			$experiment = $this->getExperiment($experimentName);
 		}
 		$this->assignmentCache[$experimentName] = $assignment = new Assignment();
+		try {
+			return $this->decide($experimentName, $experiment, $assignment);
+		}
+		catch (Throwable $exception) {
+			// An aborted decision (a throwing audience getter) must not be served, or supply holdout arms, later.
+			if (($this->assignmentCache[$experimentName] ?? null) === $assignment) {
+				unset($this->assignmentCache[$experimentName]);
+			}
+			throw $exception;
+		}
+	}
+
+	private function decide(string $experimentName, ?ExperimentVariables $experiment, Assignment $assignment): Assignment {
 
 		$assignment->name = $experimentName;
 		$assignment->eligible = true;
@@ -1046,6 +1043,18 @@ class Context {
 			}
 			catch (Throwable $exception) {
 				throw $error ?? $exception;
+			}
+			// An audience getter may have refreshed while this candidate was decided: skip it, with no exposures, if the
+			// installed data no longer has it define $key (unless overridden).
+			if ($this->hasHoldouts && ($this->indexVariables[$key] ?? []) !== $candidates) {
+				$candidates = $this->indexVariables[$key] ?? [];
+				$liveCandidates = [];
+				foreach ($candidates as $live) {
+					$liveCandidates[$live->data->name] = true;
+				}
+				if (!isset($liveCandidates[$name]) && !array_key_exists($name, $this->overrides)) {
+					continue;
+				}
 			}
 
 			$wins = $assignment->assigned || $assignment->overridden || $assignment->ruleOverride;

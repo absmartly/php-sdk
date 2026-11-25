@@ -56,10 +56,12 @@
   behaviour.
 - An audience attribute getter that overrides and reads an experiment while it is decided or re-checked no longer
   queues that read's exposure twice, with or without holdouts: the outer read returns the getter's decision.
-- If an event logger refreshes the context during `getVariableValue()`, the rest of the lookup uses the refreshed
-  data. An experiment the refresh removed, or that no longer defines the key, is skipped unless it is overridden,
-  even when an earlier peek cached its held-out assignment, so it queues no holdout exposure, unlike JS, which still
-  serves the cached assignment.
+- If an event logger (or an audience attribute getter) refreshes the context during `getVariableValue()`, the rest
+  of the lookup uses the refreshed data. An experiment the refresh removed, or that no longer defines the key,
+  including the one being decided when the getter refreshed, is skipped unless it is overridden, even when an
+  earlier peek cached its held-out assignment, so it queues no exposures, unlike JS, which still serves the cached
+  assignment. A decision that a throwing audience getter aborted is discarded, so it can't supply holdout
+  exposures later.
 - `refresh()` keeps the previous data and logs an `Error` event when fetching or installing the new data raises any
   `Throwable`, not only an `Exception`. A data provider that throws an `\Error`, or a mistyped field that raises a
   `TypeError` while installing, no longer escapes `refresh()` (which also left the experiment index cleared). Code

@@ -6,6 +6,7 @@ use function floor;
 use function get_object_vars as get_object_varsAlias;
 use function is_array;
 use function is_float;
+use function is_int;
 use function is_string;
 use function json_decode;
 use function property_exists;
@@ -36,6 +37,22 @@ class Experiment {
 	public ?array $holdoutIds = null;
 	/** The holdout's type ("full", "all_full_on") when this entry is a holdout; never read, arity comes from split. */
 	public ?string $holdoutType = null;
+
+	/**
+	 * $value as an int when it is an integer or an integral float within the int range (JSON `11.0`), else null.
+	 *
+	 * @internal Shared by the holdout validation; not part of the public API.
+	 * @param mixed $value
+	 */
+	public static function integralValue($value): ?int {
+		if (is_int($value)) {
+			return $value;
+		}
+		if (is_float($value) && floor($value) === $value && $value >= -9.2233720368547758E18 && $value < 9.2233720368547758E18) {
+			return (int) $value;
+		}
+		return null;
+	}
 
 	public function __construct(object $data) {
 		$requiredFields = ['id', 'name', 'unitType', 'iteration', 'seedHi', 'seedLo', 'split',
@@ -73,11 +90,8 @@ class Experiment {
 				if (is_array($value)) {
 					$this->holdoutIds = [];
 					foreach ($value as $id) {
-						if (is_int($id)) {
+						if (($id = self::integralValue($id)) !== null) {
 							$this->holdoutIds[] = $id;
-						}
-						elseif (is_float($id) && floor($id) === $id && $id >= -9.2233720368547758E18 && $id < 9.2233720368547758E18) {
-							$this->holdoutIds[] = (int) $id;
 						}
 					}
 				}
