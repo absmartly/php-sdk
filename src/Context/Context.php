@@ -115,6 +115,12 @@ class Context {
 	 * getter) builds its own decision rather than serving or exposing the unfinished one.
 	 */
 	private array $deciding = [];
+	/**
+	 * @var array<string, true> Experiments whose decision is already being made again because a callback installed new
+	 * data during it. A further install during that one serves the nested decision rather than revalidating again, so a
+	 * callback that refreshes on every read can't recurse without bound.
+	 */
+	private array $revalidating = [];
 	/** Counts data installs, so a decision can tell whether a callback installed new data while it was made. */
 	private int $installs = 0;
 	/** Set while the first load installs experiments, so a callback's refresh() can't be overwritten by the rest of it. */
@@ -858,7 +864,16 @@ class Context {
 		// again with the unit.
 		$cached = $this->assignmentCache[$experimentName] ?? null;
 		if ($cached !== null && $cached !== $assignment) {
-			return $this->installs === $installs ? $cached : $this->getAssignment($experimentName);
+			if ($this->installs === $installs || isset($this->revalidating[$experimentName])) {
+				return $cached;
+			}
+			$this->revalidating[$experimentName] = true;
+			try {
+				return $this->getAssignment($experimentName);
+			}
+			finally {
+				unset($this->revalidating[$experimentName]);
+			}
 		}
 		if ($cached === null || ($assignment->holdoutAssignments !== null && $assignment->holdoutAssignments[0] === null
 			&& isset($this->units[$experiment->data->unitType]))) {

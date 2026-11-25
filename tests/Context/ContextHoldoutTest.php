@@ -2429,6 +2429,55 @@ class ContextHoldoutTest extends TestCase {
 		self::assertSame(1, $calls);
 	}
 
+	// A getter that peeks the experiment and then refreshes to changed data on every read still finishes.
+	/** @dataProvider getterReadsThenSets */
+	public function testGetterThatPeeksThenRefreshesToChangingDataFinishes(bool $covered, bool $peek): void {
+		$holdouts = $covered ? [self::holdout(11, 'holdout_alternating', self::HOLDOUT_B_SEED)] : [];
+		$make = static function (int $iteration) use ($covered): object {
+			$experiment = self::experiment(1, 'exp_alternating');
+			$experiment->iteration = $iteration;
+			$experiment->audience = '{"filter":[{"gte":[{"var":"probe/score"},{"value":0}]}]}';
+			return $covered ? self::coveredBy($experiment, 11) : $experiment;
+		};
+		$context = $this->createContext(self::data($holdouts, $make(1)));
+		$calls = 0;
+		$probe = new class(function () use ($context, &$calls, $peek, $holdouts, $make) {
+			if (++$calls > 20) {
+				throw new \LogicException('getter loop');
+			}
+			if ($peek) {
+				$context->peekTreatment('exp_alternating');
+			}
+			else {
+				$context->getTreatment('exp_alternating');
+			}
+			$this->refresh($context, self::data($holdouts, $make($calls % 2 === 0 ? 1 : 2)));
+		}) {
+			public $score;
+			private \Closure $onRead;
+
+			public function __construct(\Closure $onRead) {
+				$this->onRead = $onRead;
+				unset($this->score);
+			}
+
+			public function __get(string $name) {
+				($this->onRead)();
+				return 1;
+			}
+		};
+		$context->setAttributeValue('probe', $probe);
+
+		set_error_handler(static fn(int $errno) => $errno === E_WARNING);
+		try {
+			self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_alternating'));
+		}
+		finally {
+			restore_error_handler();
+		}
+		self::assertLessThanOrEqual(3, $calls);
+	}
+
 	public static function getterReadsThenSets(): array {
 		return ['read without holdouts' => [false, false], 'read, covered' => [true, false],
 			'peek without holdouts' => [false, true], 'peek, covered' => [true, true]];
@@ -2473,6 +2522,44 @@ class ContextHoldoutTest extends TestCase {
 		else {
 			self::assertSame($read === 'variable' ? [] : [[0, 0]], $published);
 		}
+	}
+
+	// The revalidation bound is cleared after each read: a later read of the same experiment whose getter peeks and
+	// then refreshes to a suppressing holdout is revalidated, not served the stale peek.
+	public function testRevalidationBoundIsClearedAfterTheRead(): void {
+		$admitting = self::holdout(11, 'holdout_bound', self::HOLDOUT_A_SEED);
+		$admitting->split = [0.0, 1.0];
+		$suppressing = clone $admitting;
+		$suppressing->iteration = 3;
+		$suppressing->split = [1.0, 0.0];
+		$experiment = self::coveredBy(self::experiment(1, 'exp_bound'), 11);
+		$experiment->audience = '{"filter":[{"gte":[{"var":"probe/score"},{"value":0}]}]}';
+		$moved = clone $experiment;
+		$moved->iteration = 2;
+		$context = $this->createContext(self::data([$admitting], $experiment));
+		$probeThat = function (\Closure $onRead) use ($context): object {
+			$probe = self::unitSettingProbe();
+			$probe->onRead = function () use ($context, $onRead) {
+				$context->setAttributeValue('probe', (object) ['score' => 1]);
+				$onRead();
+			};
+			return $probe;
+		};
+		// First read: the getter peeks and refreshes (a new iteration), so the decision is revalidated once.
+		$context->setAttributeValue('probe', $probeThat(function () use ($context, $admitting, $moved) {
+			$context->peekTreatment('exp_bound');
+			$this->refresh($context, self::data([$admitting], $moved));
+		}));
+		self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_bound'));
+
+		// A later read of the same experiment, made again for a new iteration: its getter peeks, then refreshes to a
+		// suppressing holdout, so the peek must be revalidated.
+		$context->setAttributeValue('probe', $probeThat(function () use ($context, $suppressing, $experiment) {
+			$context->peekTreatment('exp_bound');
+			$this->refresh($context, self::data([$suppressing], $experiment));
+		}));
+		$this->refresh($context, self::data([$admitting], $experiment));
+		self::assertSame(0, $context->getTreatment('exp_bound'));
 	}
 
 	public static function peekThenRefreshes(): array {
