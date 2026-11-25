@@ -11,6 +11,11 @@ class ContextData {
 
 	public function __construct(array $experiments = [], array $holdouts = []) {
 		$this->experiments = $experiments;
-		$this->holdouts = $holdouts;
+		try {
+			$this->holdouts = $holdouts;
+		}
+		catch (\TypeError $exception) {
+			// A legacy subclass may reserve this name with an incompatible type.
+		}
 	}
 }

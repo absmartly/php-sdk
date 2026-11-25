@@ -328,9 +328,15 @@ class Context {
 			if ($experimentVariables->data->assignmentRules !== null) {
 				$ruleKeys[$experiment->name] = $experimentVariables->data->assignmentRules . ':' . $environment;
 			}
-			if (!empty($experimentVariables->data->holdoutIds) && $holdoutsById !== []) {
+			$holdoutIds = null;
+			try {
+				$holdoutIds = $experimentVariables->data->holdoutIds;
+			}
+			catch (\Error $exception) {
+			}
+			if (is_array($holdoutIds) && $holdoutIds !== [] && $holdoutsById !== []) {
 				$holdouts = [];
-				foreach ($experimentVariables->data->holdoutIds as $holdoutId) {
+				foreach ($holdoutIds as $holdoutId) {
 					if (isset($holdoutsById[$holdoutId])) {
 						$holdouts[$holdoutId] = $holdoutsById[$holdoutId];
 					}
@@ -705,7 +711,6 @@ class Context {
 						|| (($assignment->holdouts === null || $assignment->unitType === $experiment->data->unitType)
 							&& $this->holdoutSetMatches($experimentName, $assignment)))) {
 					// override up-to-date
-					$this->decidedOn[$experimentName] = [$assignment, $this->installs];
 					return $assignment;
 				}
 			}
@@ -715,7 +720,6 @@ class Context {
 				if (!$assignment->assigned && !$assignment->ruleOverride
 					&& (!$this->hasHoldouts || $assignment->id === 0 || $assignment->served)) {
 					// previously not-running experiment
-					$this->decidedOn[$experimentName] = [$assignment, $this->installs];
 					return $assignment;
 				}
 			} else if (!array_key_exists($experimentName, $this->cassignments)
@@ -737,7 +741,6 @@ class Context {
 					// assignment with holdout arms is evicted for a late unit, see invalidateAssignmentsMissingUnit).
 					&& (!$this->hasHoldouts || ($this->assignmentCache[$experimentName] ?? null) === $assignment)) {
 					// assignment up-to-date
-					$this->decidedOn[$experimentName] = [$assignment, $this->installs];
 					return $assignment;
 				}
 			}

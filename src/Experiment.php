@@ -38,8 +38,13 @@ class Experiment {
 
 
 	public function __construct(object $data) {
-		$this->holdoutIds = null;
-		$this->holdoutType = null;
+		try {
+			$this->holdoutIds = null;
+			$this->holdoutType = null;
+		}
+		catch (\TypeError $exception) {
+			// Legacy subclasses may reserve these names with incompatible types.
+		}
 		$requiredFields = ['id', 'name', 'unitType', 'iteration', 'seedHi', 'seedLo', 'split',
 			'trafficSeedHi', 'trafficSeedLo', 'trafficSplit', 'fullOnVariant', 'variants'];
 
