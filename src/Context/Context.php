@@ -115,6 +115,8 @@ class Context {
 	 * getter) builds its own decision rather than serving or exposing the unfinished one.
 	 */
 	private array $deciding = [];
+	/** Counts data installs, so a decision can tell whether a callback installed new data while it was made. */
+	private int $installs = 0;
 	/** Set while the first load installs experiments, so a callback's refresh() can't be overwritten by the rest of it. */
 	private bool $firstLoadInProgress = false;
 	private ?Throwable $readyError = null;
@@ -330,6 +332,7 @@ class Context {
 		}
 
 		$hasHoldouts = $hasHoldouts || $this->hasHoldouts;
+		++$this->installs;
 		unset($this->index, $this->indexVariables, $this->ruleKeys, $this->experimentHoldouts, $this->hasHoldouts);
 		$this->data = $data;
 		$this->index = $index;
@@ -738,7 +741,7 @@ class Context {
 		$this->assignmentCache[$experimentName] = $assignment = new Assignment();
 		$this->deciding[$experimentName] = true;
 		try {
-			return $this->decide($experimentName, $experiment, $assignment);
+			return $this->decide($experimentName, $experiment, $assignment, $this->installs);
 		}
 		catch (Throwable $exception) {
 			// An aborted decision (a throwing audience getter) must not be served, or supply holdout arms, later.
@@ -752,7 +755,7 @@ class Context {
 		}
 	}
 
-	private function decide(string $experimentName, ?ExperimentVariables $experiment, Assignment $assignment): Assignment {
+	private function decide(string $experimentName, ?ExperimentVariables $experiment, Assignment $assignment, int $installs): Assignment {
 
 		$assignment->name = $experimentName;
 		$assignment->eligible = true;
@@ -848,14 +851,14 @@ class Context {
 			$assignment->variables = $experiment->variables[$assignment->variant];
 		}
 
-		// A callback during the decision (an audience getter) may have read this experiment itself and then refreshed:
-		// validate its decision like any cached one, which keeps it (and its exposure) unless the installed data changed
-		// it. The callback may also have evicted this one, or set the unit after the holdout arms were drawn without it
-		// (all arms share the experiment's unit type, and this assignment had no unit type yet for setUnit() to match):
-		// decide again with the unit.
+		// A callback during the decision (an audience getter) may have read this experiment itself: use its decision
+		// (and its exposure), unless the callback then installed new data, when it is validated like any cached one. The
+		// callback may also have evicted this one, or set the unit after the holdout arms were drawn without it (all arms
+		// share the experiment's unit type, and this assignment had no unit type yet for setUnit() to match): decide
+		// again with the unit.
 		$cached = $this->assignmentCache[$experimentName] ?? null;
 		if ($cached !== null && $cached !== $assignment) {
-			return $this->getAssignment($experimentName);
+			return $this->installs === $installs ? $cached : $this->getAssignment($experimentName);
 		}
 		if ($cached === null || ($assignment->holdoutAssignments !== null && $assignment->holdoutAssignments[0] === null
 			&& isset($this->units[$experiment->data->unitType]))) {

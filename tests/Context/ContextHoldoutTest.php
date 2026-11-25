@@ -2379,6 +2379,102 @@ class ContextHoldoutTest extends TestCase {
 		}
 	}
 
+	// A getter that reads the experiment and then sets an attribute, on every read, finishes as in 1.1.0. The nested
+	// read finds no score on the same object (a warning PHP raises for the unset property), so it decides normally.
+	/** @dataProvider getterReadsThenSets */
+	public function testGetterThatReadsThenSetsAnAttributeFinishes(bool $covered, bool $peek): void {
+		$experiment = self::experiment(1, 'exp_read_set');
+		$experiment->audience = '{"filter":[{"gte":[{"var":"probe/score"},{"value":0}]}]}';
+		$holdouts = [];
+		if ($covered) {
+			$experiment = self::coveredBy($experiment, 11);
+			$holdouts[] = self::holdout(11, 'holdout_read_set', self::HOLDOUT_B_SEED);
+		}
+		$context = $this->createContext(self::data($holdouts, $experiment));
+		$calls = 0;
+		$probe = new class(function () use ($context, &$calls, $peek) {
+			if (++$calls > 20) {
+				throw new \LogicException('getter loop');
+			}
+			if ($peek) {
+				$context->peekTreatment('exp_read_set');
+			}
+			else {
+				$context->getTreatment('exp_read_set');
+			}
+			$context->setAttribute('other', (string) $calls);
+		}) {
+			public $score;
+			private \Closure $onRead;
+
+			public function __construct(\Closure $onRead) {
+				$this->onRead = $onRead;
+				unset($this->score);
+			}
+
+			public function __get(string $name) {
+				($this->onRead)();
+				return 1;
+			}
+		};
+		$context->setAttributeValue('probe', $probe);
+
+		set_error_handler(static fn(int $errno) => $errno === E_WARNING);
+		try {
+			self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_read_set'));
+		}
+		finally {
+			restore_error_handler();
+		}
+		self::assertSame(1, $calls);
+	}
+
+	public static function getterReadsThenSets(): array {
+		return ['read without holdouts' => [false, false], 'read, covered' => [true, false],
+			'peek without holdouts' => [false, true], 'peek, covered' => [true, true]];
+	}
+
+	// The re-check of a cached decision validates a nested peek against a refresh made after it, too.
+	/** @dataProvider peekThenRefreshes */
+	public function testNestedPeekDuringARecheckIsRevalidatedAfterARefresh(string $refresh, string $read): void {
+		$admitting = self::holdout(11, 'holdout_peek', self::HOLDOUT_A_SEED);
+		$admitting->split = [0.0, 1.0];
+		$suppressing = clone $admitting;
+		$suppressing->iteration = 2;
+		$suppressing->split = [1.0, 0.0];
+		$experiment = self::coveredBy(self::withVariables(self::experiment(1, 'exp_peek'), 'peek_key'), 11);
+		$experiment->audience = '{"filter":[{"and":[{"gte":[{"var":"probe/score"},{"value":0}]},{"eq":[{"var":"flag"},{"value":1}]}]}]}';
+		$context = $this->createContext(self::data([$admitting], $experiment));
+		$context->setAttributeValue('probe', (object) ['score' => 1]);
+		$context->setAttributeValue('flag', 1);
+		self::assertSame(self::NORMAL_VARIANT, $context->peekTreatment('exp_peek'));
+		$probe = self::unitSettingProbe();
+		$installed = $refresh === 'suppress'
+			? self::data([$suppressing], $experiment)
+			: self::data([$admitting], self::experiment(2, 'exp_other'));
+		$probe->onRead = function () use ($context, $installed) {
+			$context->setAttributeValue('probe', (object) ['score' => 1]);
+			$context->peekTreatment('exp_peek');
+			$this->refresh($context, $installed);
+		};
+		$context->setAttributeValue('probe', $probe);
+		$context->setAttributeValue('flag', 2);
+
+		if ($read === 'variable') {
+			self::assertSame($refresh === 'suppress' ? 'control' : 'default', $context->getVariableValue('peek_key', 'default'));
+		}
+		else {
+			self::assertSame(0, $context->getTreatment('exp_peek'));
+		}
+		$published = array_map(static fn($exposure) => [$exposure[0], $exposure[3]], $this->published($context));
+		if ($refresh === 'suppress') {
+			self::assertSame([[11, 0]], $published);
+		}
+		else {
+			self::assertSame($read === 'variable' ? [] : [[0, 0]], $published);
+		}
+	}
+
 	public static function peekThenRefreshes(): array {
 		return [
 			'suppressing refresh, variable read' => ['suppress', 'variable'],
