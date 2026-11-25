@@ -2301,6 +2301,54 @@ class ContextHoldoutTest extends TestCase {
 			$this->published($context)));
 	}
 
+	// A nested read whose own getter throws leaves the outer decision to be made again: the experiment is exposed once.
+	public function testNestedReadWhoseGetterThrowsLeavesTheOuterDecisionToBeMadeAgain(): void {
+		$experiment = self::coveredBy(self::experiment(1, 'exp_nested_throw'), 11);
+		$experiment->audience = '{"filter":[{"gte":[{"var":"probe/score"},{"value":0}]}]}';
+		$holdout = self::holdout(11, 'holdout_nested_throw', self::HOLDOUT_B_SEED);
+		$holdout->split = [0.0, 1.0];
+		$context = $this->createContext(self::data([$holdout], $experiment));
+		$outer = self::unitSettingProbe();
+		$inner = self::unitSettingProbe();
+		$inner->onRead = static function () {
+			throw new \RuntimeException('inner getter failed');
+		};
+		$context->setAttributeValue('probe', $outer);
+		$outer->onRead = function () use ($context, $inner) {
+			$context->setAttributeValue('probe', $inner);
+			try {
+				$context->getTreatment('exp_nested_throw');
+				self::fail('the inner getter error must reach the outer getter');
+			}
+			catch (\RuntimeException $exception) {
+				self::assertSame('inner getter failed', $exception->getMessage());
+			}
+		};
+
+		$variant = $context->getTreatment('exp_nested_throw');
+		self::assertSame($variant, $context->getTreatment('exp_nested_throw'));
+		$this->assertPublished($context, self::exposure(1, 'exp_nested_throw', $variant),
+			self::holdoutExposure(11, 'holdout_nested_throw', 1));
+	}
+
+	// Without holdouts too, a getter that refreshes the experiment away and then reads it serves the outer read the
+	// nested read's decision (the unknown-experiment control), exposed once.
+	public function testNestedReadOfAnExperimentTheGetterRemovedWithoutHoldouts(): void {
+		$experiment = self::experiment(1, 'exp_removed');
+		$experiment->audience = '{"filter":[{"gte":[{"var":"probe/score"},{"value":0}]}]}';
+		$context = $this->createContext(self::data([], $experiment));
+		$probe = self::unitSettingProbe();
+		$context->setAttributeValue('probe', $probe);
+		$probe->onRead = function () use ($context) {
+			$this->refresh($context, self::data([], self::experiment(2, 'exp_other')));
+			self::assertSame(0, $context->getTreatment('exp_removed'));
+		};
+
+		self::assertSame(0, $context->getTreatment('exp_removed'));
+		self::assertSame([[0, 'exp_removed']], array_map(static fn($exposure) => [$exposure[0], $exposure[1]],
+			$this->published($context)));
+	}
+
 	public static function getterFailures(): array {
 		return ['Exception' => [new \RuntimeException('getter failed')], 'Error' => [new \Error('getter broke')]];
 	}

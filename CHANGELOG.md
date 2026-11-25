@@ -36,7 +36,8 @@
   - **Cost.** Payloads without holdouts keep the 1.1.0 variable lookup results and exposures. On PHP 8.5 with no
     holdouts, context creation measured about 5-8% slower than 1.1.0 (extra holdout validation; the smaller
     figure with 50 experiments, the larger with 4), cached `getVariableValue()` about 3-5% slower (coverage is
-    checked per candidate, since a logger refresh can install it mid-walk) and `getTreatment()` level.
+    checked per candidate, since a logger refresh can install it mid-walk) and `getTreatment()` level with opcache
+    (about 5% slower without).
 
 ### Changed
 
@@ -54,8 +55,10 @@
   while a logger error is pending, `getVariableValue()` evaluates no later experiment and re-throws that first
   error. A context whose data has never covered an experiment with a holdout keeps the 1.1.0 exception and queueing
   behaviour.
-- An audience attribute getter that overrides and reads an experiment while it is decided or re-checked no longer
-  queues that read's exposure twice, with or without holdouts: the outer read returns the getter's decision.
+- An audience attribute getter that reads an experiment while it is decided or re-checked no longer queues that
+  read's exposure twice: with or without holdouts, the outer read returns the nested read's decision. So a getter
+  that refreshes the experiment away and then reads it gives both reads the unknown-experiment control (1.1.0 gave
+  the outer read the removed definition's variant and exposed both).
 - If an event logger (or an audience attribute getter) refreshes the context during `getVariableValue()`, the rest
   of the lookup uses the refreshed data. An experiment the refresh removed, or that no longer defines the key,
   including the one being decided when the getter refreshed, is skipped unless it is overridden, even when an
