@@ -33,10 +33,10 @@
     moves on to the next one. Each held-out candidate `getVariableValue()` checks before the winner still queues its
     holdouts' exposures (never its own), so the holdout counts the unit. When no candidate wins, the first held-out
     candidate's control value is returned if its control variant defines the key, else the caller default.
-  - **Cost.** Payloads without holdouts keep the 1.1.0 variable lookup results and exposures. On PHP 8.5 with 50
-    experiments and no holdouts, context creation measured about 5% slower than 1.1.0 (extra holdout validation),
-    `getVariableValue()` about 3% slower (coverage is checked per candidate, since a logger refresh can install it
-    mid-walk) and `getTreatment()` level.
+  - **Cost.** Payloads without holdouts keep the 1.1.0 variable lookup results and exposures. On PHP 8.5 with no
+    holdouts, context creation measured about 5-8% slower than 1.1.0 (extra holdout validation; the smaller
+    figure with 50 experiments, the larger with 4), cached `getVariableValue()` about 3-5% slower (coverage is
+    checked per candidate, since a logger refresh can install it mid-walk) and `getTreatment()` level.
 
 ### Changed
 
