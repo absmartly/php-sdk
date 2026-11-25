@@ -57,8 +57,8 @@
   behaviour.
 - An audience attribute getter that reads an experiment while its decision is being made (a first decision, or a
   re-check that replaces the cached one) no longer queues that read's exposure twice: with or without holdouts, the
-  outer read keeps the nested read's decision if it is still valid on the installed data, and decides again
-  otherwise, once: if a callback installs new data again during that, the outer read keeps the nested decision and
+  outer read keeps a nested decision made on the currently installed data without evaluating its audience again.
+  If data was installed after the nested decision, it validates that decision again, once: if a callback installs new data again during that, the outer read keeps the nested decision and
   the next read decides again (so a getter that refreshes on every read still finishes). So a getter that refreshes
   the experiment away and then reads it gives both reads the unknown-experiment control (1.1.0 gave the outer read
   the removed definition's variant and exposed both). A re-check whose cached decision still matches returns it as in

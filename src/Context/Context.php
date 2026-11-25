@@ -121,8 +121,13 @@ class Context {
 	 * callback that refreshes on every read can't recurse without bound.
 	 */
 	private array $revalidating = [];
-	/** Counts data installs, so a decision can tell whether a callback installed new data while it was made. */
+	/** Counts data installs, so a decision can tell whether a callback installed new data after another was made. */
 	private int $installs = 0;
+	/**
+	 * @var array<string, array{0: Assignment, 1: int}> Latest completed decision and the install count it was read on,
+	 * by experiment. A nested read followed by a refresh must be distinguished from a refresh followed by that read.
+	 */
+	private array $decidedOn = [];
 	/** Set while the first load installs experiments, so a callback's refresh() can't be overwritten by the rest of it. */
 	private bool $firstLoadInProgress = false;
 	private ?Throwable $readyError = null;
@@ -699,14 +704,17 @@ class Context {
 						|| (($assignment->holdouts === null || $assignment->unitType === $experiment->data->unitType)
 							&& $this->holdoutSetMatches($experimentName, $assignment)))) {
 					// override up-to-date
+					$this->decidedOn[$experimentName] = [$assignment, $this->installs];
 					return $assignment;
 				}
 			}
 			else if ($experiment === null) {
 				// A rule-won assignment is not "assigned" either, but its variant came from the
 				// experiment's rules, so it must be rebuilt once the experiment is gone.
-				if (!$assignment->assigned && !$assignment->ruleOverride) {
+				if (!$assignment->assigned && !$assignment->ruleOverride
+					&& (!$this->hasHoldouts || $assignment->id === 0 || $assignment->served)) {
 					// previously not-running experiment
+					$this->decidedOn[$experimentName] = [$assignment, $this->installs];
 					return $assignment;
 				}
 			} else if (!array_key_exists($experimentName, $this->cassignments)
@@ -728,6 +736,7 @@ class Context {
 					// assignment with holdout arms is evicted for a late unit, see invalidateAssignmentsMissingUnit).
 					&& (!$this->hasHoldouts || ($this->assignmentCache[$experimentName] ?? null) === $assignment)) {
 					// assignment up-to-date
+					$this->decidedOn[$experimentName] = [$assignment, $this->installs];
 					return $assignment;
 				}
 			}
@@ -735,7 +744,7 @@ class Context {
 			// A nested read during the check above (an audience getter) may have cached its own decision; validate that
 			// one instead of replacing it, so its exposure isn't lost or queued twice.
 			if (isset($this->assignmentCache[$experimentName]) && $this->assignmentCache[$experimentName] !== $assignment) {
-				return $this->getAssignment($experimentName);
+				return $this->revalidateNested($experimentName, $this->assignmentCache[$experimentName]);
 			}
 		}
 
@@ -745,9 +754,14 @@ class Context {
 			$experiment = $this->getExperiment($experimentName);
 		}
 		$this->assignmentCache[$experimentName] = $assignment = new Assignment();
+		$nested = isset($this->deciding[$experimentName]);
 		$this->deciding[$experimentName] = true;
 		try {
-			return $this->decide($experimentName, $experiment, $assignment, $this->installs);
+			$decided = $this->decide($experimentName, $experiment, $assignment);
+			if ($nested) {
+				$this->decidedOn[$experimentName] = [$decided, $this->installs];
+			}
+			return $decided;
 		}
 		catch (Throwable $exception) {
 			// An aborted decision (a throwing audience getter) must not be served, or supply holdout arms, later.
@@ -757,11 +771,28 @@ class Context {
 			throw $exception;
 		}
 		finally {
-			unset($this->deciding[$experimentName]);
+			if (!$nested) {
+				unset($this->deciding[$experimentName]);
+			}
 		}
 	}
 
-	private function decide(string $experimentName, ?ExperimentVariables $experiment, Assignment $assignment, int $installs): Assignment {
+	private function revalidateNested(string $experimentName, Assignment $cached): Assignment {
+		$stamp = $this->decidedOn[$experimentName] ?? null;
+		$cachedOn = $stamp !== null && $stamp[0] === $cached ? $stamp[1] : -1;
+		if ($cachedOn === $this->installs || isset($this->revalidating[$experimentName])) {
+			return $cached;
+		}
+		$this->revalidating[$experimentName] = true;
+		try {
+			return $this->getAssignment($experimentName);
+		}
+		finally {
+			unset($this->revalidating[$experimentName]);
+		}
+	}
+
+	private function decide(string $experimentName, ?ExperimentVariables $experiment, Assignment $assignment): Assignment {
 
 		$assignment->name = $experimentName;
 		$assignment->eligible = true;
@@ -858,23 +889,14 @@ class Context {
 		}
 
 		// A callback during the decision (an audience getter) may have read this experiment itself: use its decision
-		// (and its exposure), unless the callback then installed new data, when it is validated like any cached one,
-		// once: if a callback installs new data again during that, the nested decision is used and the next read decides
-		// again. The callback may also have evicted this one, or set the unit after the holdout arms were drawn without it
-		// (all arms share the experiment's unit type, and this assignment had no unit type yet for setUnit() to match):
-		// decide again with the unit.
+		// (and its exposure), unless the callback installed new data after that decision was made, when it is validated
+		// like any cached one, once: if a callback installs new data again during that, the nested decision is used and
+		// the next read decides again. The callback may also have evicted this one, or set the unit after the holdout arms
+		// were drawn without it (all arms share the experiment's unit type, and this assignment had no unit type yet for
+		// setUnit() to match): decide again with the unit.
 		$cached = $this->assignmentCache[$experimentName] ?? null;
 		if ($cached !== null && $cached !== $assignment) {
-			if ($this->installs === $installs || isset($this->revalidating[$experimentName])) {
-				return $cached;
-			}
-			$this->revalidating[$experimentName] = true;
-			try {
-				return $this->getAssignment($experimentName);
-			}
-			finally {
-				unset($this->revalidating[$experimentName]);
-			}
+			return $this->revalidateNested($experimentName, $cached);
 		}
 		if ($cached === null || ($assignment->holdoutAssignments !== null && $assignment->holdoutAssignments[0] === null
 			&& isset($this->units[$experiment->data->unitType]))) {
@@ -1036,12 +1058,11 @@ class Context {
 	 * that does not win still queues its holdouts' exposures.
 	 */
 	private function resolveVariableValue(string $key, $default, bool $exposeAssignment) {
-		$experiments = $this->indexVariables[$key] ?? [];
-		$candidates = $experiments;
+		$candidates = $this->indexVariables[$key] ?? [];
 		$error = null;
 		$selectedVariables = null;
 		$liveCandidates = null;
-		foreach ($experiments as $experimentVariables) {
+		foreach ($candidates as $experimentVariables) {
 			// Once a callback closes the context, a read already committed to throwing evaluates nothing more.
 			if ($error !== null && $this->isClosed()) {
 				throw $error;

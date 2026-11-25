@@ -2304,7 +2304,7 @@ class ContextHoldoutTest extends TestCase {
 			$this->published($context)));
 	}
 
-	public function testNestedReadWhoseGetterThrowsLeavesTheOuterDecisionToBeMadeAgain(): void {
+	public function testNestedGetterFailureDoesNotDuplicateTheOuterExposure(): void {
 		$experiment = self::coveredBy(self::experiment(1, 'exp_nested_throw'), 11);
 		$experiment->audience = '{"filter":[{"gte":[{"var":"probe/score"},{"value":0}]}]}';
 		$holdout = self::holdout(11, 'holdout_nested_throw', self::HOLDOUT_B_SEED);
@@ -2344,15 +2344,21 @@ class ContextHoldoutTest extends TestCase {
 	}
 
 	/** @dataProvider peekThenRefreshes */
-	public function testNestedPeekIsRevalidatedAfterARefresh(string $refresh, string $read): void {
+	public function testNestedPeekIsRevalidatedAfterARefresh(string $refresh, string $read, bool $warm = false): void {
 		$admitting = self::holdout(11, 'holdout_peek', self::HOLDOUT_A_SEED);
 		$admitting->split = [0.0, 1.0];
 		$suppressing = clone $admitting;
 		$suppressing->iteration = 2;
 		$suppressing->split = [1.0, 0.0];
 		$experiment = self::coveredBy(self::withVariables(self::experiment(1, 'exp_peek'), 'peek_key'), 11);
-		$experiment->audience = '{"filter":[{"gte":[{"var":"probe/score"},{"value":0}]}]}';
+		$experiment->audience = '{"filter":[{"and":[{"gte":[{"var":"probe/score"},{"value":0}]},{"eq":[{"var":"flag"},{"value":1}]}]}]}';
 		$context = $this->createContext(self::data([$admitting], $experiment));
+		$context->setAttributeValue('flag', 1);
+		if ($warm) {
+			$context->setAttributeValue('probe', (object) ['score' => 1]);
+			self::assertSame(self::NORMAL_VARIANT, $context->peekTreatment('exp_peek'));
+			$context->setAttributeValue('flag', 2);
+		}
 		$probe = self::unitSettingProbe();
 		$context->setAttributeValue('probe', $probe);
 		$installed = $refresh === 'suppress'
@@ -2429,7 +2435,6 @@ class ContextHoldoutTest extends TestCase {
 		self::assertSame(1, $calls);
 	}
 
-	// A getter that peeks the experiment and then refreshes to changed data on every read still finishes.
 	/** @dataProvider getterReadsThenSets */
 	public function testGetterThatPeeksThenRefreshesToChangingDataFinishes(bool $covered, bool $peek): void {
 		$holdouts = $covered ? [self::holdout(11, 'holdout_alternating', self::HOLDOUT_B_SEED)] : [];
@@ -2483,49 +2488,6 @@ class ContextHoldoutTest extends TestCase {
 			'peek without holdouts' => [false, true], 'peek, covered' => [true, true]];
 	}
 
-	// The re-check of a cached decision validates a nested peek against a refresh made after it, too.
-	/** @dataProvider peekThenRefreshes */
-	public function testNestedPeekDuringARecheckIsRevalidatedAfterARefresh(string $refresh, string $read): void {
-		$admitting = self::holdout(11, 'holdout_peek', self::HOLDOUT_A_SEED);
-		$admitting->split = [0.0, 1.0];
-		$suppressing = clone $admitting;
-		$suppressing->iteration = 2;
-		$suppressing->split = [1.0, 0.0];
-		$experiment = self::coveredBy(self::withVariables(self::experiment(1, 'exp_peek'), 'peek_key'), 11);
-		$experiment->audience = '{"filter":[{"and":[{"gte":[{"var":"probe/score"},{"value":0}]},{"eq":[{"var":"flag"},{"value":1}]}]}]}';
-		$context = $this->createContext(self::data([$admitting], $experiment));
-		$context->setAttributeValue('probe', (object) ['score' => 1]);
-		$context->setAttributeValue('flag', 1);
-		self::assertSame(self::NORMAL_VARIANT, $context->peekTreatment('exp_peek'));
-		$probe = self::unitSettingProbe();
-		$installed = $refresh === 'suppress'
-			? self::data([$suppressing], $experiment)
-			: self::data([$admitting], self::experiment(2, 'exp_other'));
-		$probe->onRead = function () use ($context, $installed) {
-			$context->setAttributeValue('probe', (object) ['score' => 1]);
-			$context->peekTreatment('exp_peek');
-			$this->refresh($context, $installed);
-		};
-		$context->setAttributeValue('probe', $probe);
-		$context->setAttributeValue('flag', 2);
-
-		if ($read === 'variable') {
-			self::assertSame($refresh === 'suppress' ? 'control' : 'default', $context->getVariableValue('peek_key', 'default'));
-		}
-		else {
-			self::assertSame(0, $context->getTreatment('exp_peek'));
-		}
-		$published = array_map(static fn($exposure) => [$exposure[0], $exposure[3]], $this->published($context));
-		if ($refresh === 'suppress') {
-			self::assertSame([[11, 0]], $published);
-		}
-		else {
-			self::assertSame($read === 'variable' ? [] : [[0, 0]], $published);
-		}
-	}
-
-	// The revalidation bound is cleared after each read: a later read of the same experiment whose getter peeks and
-	// then refreshes to a suppressing holdout is revalidated, not served the stale peek.
 	public function testRevalidationBoundIsClearedAfterTheRead(): void {
 		$admitting = self::holdout(11, 'holdout_bound', self::HOLDOUT_A_SEED);
 		$admitting->split = [0.0, 1.0];
@@ -2562,8 +2524,6 @@ class ContextHoldoutTest extends TestCase {
 		self::assertSame(0, $context->getTreatment('exp_bound'));
 	}
 
-	// Revalidation happens once: when the revalidated decision's getter installs new data again (a suppressing holdout),
-	// the outer read keeps that nested decision, and the next read decides on the installed data.
 	public function testSecondInstallDuringRevalidationKeepsTheNestedDecisionUntilTheNextRead(): void {
 		$admitting = self::holdout(11, 'holdout_twice', self::HOLDOUT_A_SEED);
 		$admitting->split = [0.0, 1.0];
@@ -2583,6 +2543,7 @@ class ContextHoldoutTest extends TestCase {
 				$this->refresh($context, self::data([$admitting], $moved));
 			}
 			elseif ($reads === 2) {
+				$context->peekTreatment('exp_twice');
 				$this->refresh($context, self::data([$suppressing], $moved));
 			}
 		}) {
@@ -2611,12 +2572,108 @@ class ContextHoldoutTest extends TestCase {
 		}
 	}
 
+	/** A getter whose every read runs $onRead (no one-shot), for callbacks that repeat; $calls counts the reads. */
+	private static function repeatingProbe(\Closure $onRead): object {
+		return new class($onRead) {
+			public $score;
+			private \Closure $onRead;
+
+			public function __construct(\Closure $onRead) {
+				$this->onRead = $onRead;
+				unset($this->score);
+			}
+
+			public function __get(string $name) {
+				($this->onRead)();
+				return 1;
+			}
+		};
+	}
+
+	// A getter that peeks, flips an audience flag and refreshes the same data on every re-check still finishes.
+	public function testGetterThatPeeksFlipsAndRefreshesDuringARecheckFinishes(): void {
+		$holdout = self::holdout(11, 'holdout_flip', self::HOLDOUT_B_SEED);
+		$experiment = self::coveredBy(self::experiment(1, 'exp_flip'), 11);
+		$experiment->audience = '{"filter":[{"and":[{"gte":[{"var":"probe/score"},{"value":0}]},{"eq":[{"var":"flag"},{"value":1}]}]}]}';
+		$context = $this->createContext(self::data([$holdout], $experiment));
+		$context->setAttributeValue('probe', (object) ['score' => 1]);
+		$context->setAttributeValue('flag', 1);
+		self::assertSame(self::NORMAL_VARIANT, $context->peekTreatment('exp_flip'));
+		$calls = 0;
+		$probe = null;
+		$probe = self::repeatingProbe(function () use ($context, &$calls, &$probe, $holdout, $experiment) {
+			if (++$calls > 10) {
+				throw new \LogicException('getter loop');
+			}
+			$context->setAttributeValue('probe', (object) ['score' => 1]);
+			$context->peekTreatment('exp_flip');
+			$context->setAttributeValue('probe', $probe);
+			$context->setAttributeValue('flag', $calls % 2 === 1 ? 1 : 2);
+			$this->refresh($context, self::data([$holdout], $experiment));
+		});
+		$context->setAttributeValue('probe', $probe);
+		$context->setAttributeValue('flag', 2);
+
+		self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_flip'));
+		self::assertLessThanOrEqual(3, $calls);
+	}
+
+	// A nested read made after the getter's refresh is current: the outer read uses it without calling the getter again.
+	public function testNestedReadAfterTheGettersRefreshIsUsedAsIs(): void {
+		$holdout = self::holdout(11, 'holdout_after', self::HOLDOUT_B_SEED);
+		$experiment = self::coveredBy(self::experiment(1, 'exp_after'), 11);
+		$experiment->audience = '{"filter":[{"gte":[{"var":"probe/score"},{"value":0}]}]}';
+		$moved = clone $experiment;
+		$moved->iteration = 2;
+		$context = $this->createContext(self::data([$holdout], $experiment));
+		$calls = 0;
+		$probe = null;
+		$probe = self::repeatingProbe(function () use ($context, &$calls, &$probe, $holdout, $moved) {
+			if (++$calls > 1) {
+				throw new \LogicException('getter called again');
+			}
+			$this->refresh($context, self::data([$holdout], $moved));
+			$context->setAttributeValue('probe', (object) ['score' => 1]);
+			$context->getTreatment('exp_after');
+			$context->setAttributeValue('probe', $probe);
+		});
+		$context->setAttributeValue('probe', $probe);
+
+		self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_after'));
+		self::assertSame(1, $calls);
+		$this->assertPublished($context, self::exposure(1, 'exp_after', self::NORMAL_VARIANT),
+			self::holdoutExposure(11, 'holdout_after', 1));
+	}
+
+	// An unserved strict-audience peek of an experiment the getter then removed publishes nothing of that experiment:
+	// the outer read gets the unknown-experiment fallback.
+	public function testUnservedStrictPeekOfARemovedExperimentIsNotExposed(): void {
+		$holdout = self::holdout(11, 'holdout_strict', self::HOLDOUT_B_SEED);
+		$experiment = self::coveredBy(self::experiment(1, 'exp_strict'), 11);
+		$experiment->audienceStrict = true;
+		$experiment->audience = '{"filter":[{"lt":[{"var":"probe/score"},{"value":0}]}]}';
+		$context = $this->createContext(self::data([$holdout], $experiment));
+		$probe = self::unitSettingProbe();
+		$probe->onRead = function () use ($context, $holdout) {
+			$context->setAttributeValue('probe', (object) ['score' => 1]);
+			$context->peekTreatment('exp_strict');
+			$this->refresh($context, self::data([$holdout], self::experiment(2, 'exp_other')));
+		};
+		$context->setAttributeValue('probe', $probe);
+
+		self::assertSame(0, $context->getTreatment('exp_strict'));
+		self::assertSame([[0, 'exp_strict']], array_map(static fn($exposure) => [$exposure[0], $exposure[1]],
+			$this->published($context)));
+	}
+
 	public static function peekThenRefreshes(): array {
-		return [
-			'suppressing refresh, variable read' => ['suppress', 'variable'],
-			'suppressing refresh, treatment read' => ['suppress', 'treatment'],
-			'experiment removed, treatment read' => ['remove', 'treatment'],
-		];
+		$rows = [];
+		foreach ([false, true] as $warm) {
+			foreach ([['suppress', 'variable'], ['suppress', 'treatment'], ['remove', 'treatment']] as [$refresh, $read]) {
+				$rows[($warm ? 'recheck' : 'first decision') . ": $refresh, $read"] = [$refresh, $read, $warm];
+			}
+		}
+		return $rows;
 	}
 
 	public function testOuterDecisionIsMadeAgainAfterANestedReadAbortsOnRefreshedData(): void {
