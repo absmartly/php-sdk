@@ -37,11 +37,6 @@ class Experiment {
 	/** The holdout's type ("full", "all_full_on") when this entry is a holdout; never read, arity comes from split. */
 
 
-	/** @internal */
-	public function sdkHoldoutIds(): ?array { try { $v = $this->holdoutIds; return is_array($v) ? $v : null; } catch (\Throwable $e) { return null; } }
-	/** @internal */
-	public function sdkHoldoutType(): ?string { try { $v = $this->holdoutType; return is_string($v) ? $v : null; } catch (\Throwable $e) { return null; } }
-
 	public function __construct(object $data) {
 		$holdoutIds = null;
 		$holdoutType = null;

@@ -7,21 +7,16 @@ use stdClass;
 #[\AllowDynamicProperties]
 class Assignment {
 	public function __construct() {
-		$this->setSDKState('served', false);
-		$this->setSDKState('suppressed', false);
-		$this->setSDKState('holdouts', null);
-		$this->setSDKState('holdoutAssignments', null);
-		$this->setSDKState('holdoutArmCount', 0);
-	}
-
-	/** @internal */
-	public function getSDKState(string $name, $default = null) {
-		try { return $this->{$name}; } catch (\Throwable $e) { return $default; }
-	}
-
-	/** @internal */
-	public function setSDKState(string $name, $value): void {
-		try { $this->{$name} = $value; } catch (\Throwable $e) { }
+		// Holdout bookkeeping lives in dynamic fields, so a customer subclass that declares these names (typed or not)
+		// still loads; the SDK only writes them on the Assignment objects it creates.
+		foreach (['served' => false, 'suppressed' => false, 'holdouts' => null, 'holdoutAssignments' => null,
+			'holdoutArmCount' => 0] as $name => $value) {
+			try {
+				$this->{$name} = $value;
+			}
+			catch (\TypeError $exception) {
+			}
+		}
 	}
 
 	public int $id = 0;

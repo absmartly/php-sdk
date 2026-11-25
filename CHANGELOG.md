@@ -43,8 +43,9 @@
 
 - Ready and Refresh event logger data (`ContextData`) now has a `holdouts` property, an empty array when there are
   none.
-- Holdout data and bookkeeping are stored as SDK-managed dynamic fields on the model objects rather than new declared
-  properties, so existing subclasses that declare those names (typed or untyped) still load.
+- No new declared properties or methods on the public model classes: a subclass of `ContextData`, `Experiment` or
+  `Assignment` that already declares a property or method with one of the new holdout names (typed or untyped) still
+  loads and works.
 - With holdouts in the data, an exposure logger error on a held-out candidate during `getVariableValue()` no longer
   stops the walk over the experiments defining the key: the winner is still found and exposed, and the first error
   is re-thrown afterwards, as in the Java SDK. Once an event logger closes the context mid-read, whether or not it
@@ -56,8 +57,9 @@
 - An audience attribute getter that reads an experiment while its decision is being made (a first decision, or a
   re-check that replaces the cached one) no longer queues that read's exposure twice: with or without holdouts, the
   outer read keeps a nested decision made on the currently installed data without evaluating its audience again.
-  If data was installed after the nested decision, it validates that decision again, once: if a callback installs new data again during that, the outer read keeps the nested decision and
-  the next read decides again (so a getter that refreshes on every read still finishes). So a getter that refreshes
+  If data was installed after the nested decision, it validates that decision again, once: if a callback installs new
+  data again during that, the outer read keeps the nested decision and the next read decides again (so a getter that
+  refreshes on every read still finishes). So a getter that refreshes
   the experiment away and then reads it gives both reads the unknown-experiment control (1.1.0 gave the outer read
   the removed definition's variant and exposed both). A re-check whose cached decision still matches returns it as in
   1.1.0.
