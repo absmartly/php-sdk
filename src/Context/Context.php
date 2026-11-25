@@ -288,7 +288,8 @@ class Context {
 		$holdoutsById = [];
 		$environment = $this->sdk->getClient()->getEnvironment();
 
-		foreach ($data->holdouts as $holdout) {
+		$holdouts = property_exists($data, 'holdouts') && is_array($data->holdouts) ? $data->holdouts : [];
+		foreach ($holdouts as $holdout) {
 			if (($servable = self::servableHoldout($holdout)) !== null) {
 				$holdoutsById[$servable->id] = $servable;
 			}

@@ -43,9 +43,8 @@
 
 - Ready and Refresh event logger data (`ContextData`) now has a `holdouts` property, an empty array when there are
   none.
-- New public properties: `ContextData::$holdouts`; `Experiment::$holdoutIds` and `$holdoutType`; and
-  `Assignment::$suppressed`, `$served`, `$holdouts`, `$holdoutAssignments` and `$holdoutArmCount`. They are
-  intentionally untyped so existing subclasses that redeclare public model properties without types continue to load.
+- Holdout data and bookkeeping are stored as SDK-managed dynamic fields on the model objects rather than new declared
+  properties, so existing subclasses that declare those names (typed or untyped) still load.
 - With holdouts in the data, an exposure logger error on a held-out candidate during `getVariableValue()` no longer
   stops the walk over the experiments defining the key: the winner is still found and exposed, and the first error
   is re-thrown afterwards, as in the Java SDK. Once an event logger closes the context mid-read, whether or not it

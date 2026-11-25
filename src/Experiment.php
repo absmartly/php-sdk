@@ -11,6 +11,7 @@ use function property_exists;
 
 use const JSON_THROW_ON_ERROR;
 
+#[\AllowDynamicProperties]
 class Experiment {
 	public int $id;
 	public string $name;
@@ -32,11 +33,13 @@ class Experiment {
 	/** JSON of the experiment's assignment rules ({"rules": [...]}), or null when it has none. */
 	public ?string $assignmentRules = null;
 	/** @var int[]|null Ids of the holdouts in ContextData::$holdouts that cover this experiment. */
-	public $holdoutIds = null;
+
 	/** The holdout's type ("full", "all_full_on") when this entry is a holdout; never read, arity comes from split. */
-	public $holdoutType = null;
+
 
 	public function __construct(object $data) {
+		$this->holdoutIds = null;
+		$this->holdoutType = null;
 		$requiredFields = ['id', 'name', 'unitType', 'iteration', 'seedHi', 'seedLo', 'split',
 			'trafficSeedHi', 'trafficSeedLo', 'trafficSplit', 'fullOnVariant', 'variants'];
 
