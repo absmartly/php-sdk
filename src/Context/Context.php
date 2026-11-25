@@ -110,6 +110,11 @@ class Context {
 	 * while the holdout's iteration is unchanged, so a same-iteration seed or split edit never re-randomizes a unit.
 	 */
 	private array $holdoutAssignmentCache = [];
+	/**
+	 * @var array<string, true> Experiments whose decision is being made. A nested read from a callback (an audience
+	 * getter) builds its own decision rather than serving or exposing the unfinished one.
+	 */
+	private array $deciding = [];
 	/** Set while the first load installs experiments, so a callback's refresh() can't be overwritten by the rest of it. */
 	private bool $firstLoadInProgress = false;
 	private ?Throwable $readyError = null;
@@ -330,7 +335,6 @@ class Context {
 		}
 
 		$hasHoldouts = $hasHoldouts || $this->hasHoldouts;
-		// Drop the first load's references before installing.
 		unset($this->index, $this->indexVariables, $this->ruleKeys, $this->experimentHoldouts, $this->hasHoldouts);
 		$this->data = $data;
 		$this->index = $index;
@@ -680,7 +684,7 @@ class Context {
 	private function getAssignment(string $experimentName): Assignment {
 		$experiment = $this->getExperiment($experimentName);
 
-		if (isset($this->assignmentCache[$experimentName])) {
+		if (isset($this->assignmentCache[$experimentName]) && !isset($this->deciding[$experimentName])) {
 			$assignment = $this->assignmentCache[$experimentName];
 			if (array_key_exists($experimentName, $this->overrides)) {
 				$override = $this->overrides[$experimentName];
@@ -737,6 +741,7 @@ class Context {
 			$experiment = $this->getExperiment($experimentName);
 		}
 		$this->assignmentCache[$experimentName] = $assignment = new Assignment();
+		$this->deciding[$experimentName] = true;
 		try {
 			return $this->decide($experimentName, $experiment, $assignment);
 		}
@@ -746,6 +751,9 @@ class Context {
 				unset($this->assignmentCache[$experimentName]);
 			}
 			throw $exception;
+		}
+		finally {
+			unset($this->deciding[$experimentName]);
 		}
 	}
 
@@ -845,15 +853,16 @@ class Context {
 			$assignment->variables = $experiment->variables[$assignment->variant];
 		}
 
-		// A callback during the decision (an audience getter) may have read this experiment itself, so its own decision
-		// (possibly exposed) is the cached one: use that. Or it may have set the unit after the holdout arms were drawn
-		// without it (all arms share the experiment's unit type, and this assignment had no unit type yet for setUnit()
-		// to match): decide again with the unit.
-		if (($this->assignmentCache[$experimentName] ?? null) !== $assignment) {
-			return $this->getAssignment($experimentName);
+		// A callback during the decision (an audience getter) may have read this experiment itself: its decision, made
+		// on the installed data and possibly exposed, is the cached one, so use that. Or it may have evicted this one, or
+		// set the unit after the holdout arms were drawn without it (all arms share the experiment's unit type, and this
+		// assignment had no unit type yet for setUnit() to match): decide again with the unit.
+		$cached = $this->assignmentCache[$experimentName] ?? null;
+		if ($cached !== null && $cached !== $assignment) {
+			return $cached;
 		}
-		if ($assignment->holdoutAssignments !== null && $assignment->holdoutAssignments[0] === null
-			&& isset($this->units[$experiment->data->unitType])) {
+		if ($cached === null || ($assignment->holdoutAssignments !== null && $assignment->holdoutAssignments[0] === null
+			&& isset($this->units[$experiment->data->unitType]))) {
 			unset($this->assignmentCache[$experimentName]);
 			return $this->getAssignment($experimentName);
 		}
@@ -1029,10 +1038,7 @@ class Context {
 				// Unchanged unless a callback refreshed: the same array compares identical without a scan.
 				if (($this->indexVariables[$key] ?? []) !== $candidates) {
 					$candidates = $this->indexVariables[$key] ?? [];
-					$liveCandidates = [];
-					foreach ($candidates as $live) {
-						$liveCandidates[$live->data->name] = true;
-					}
+					$liveCandidates = self::candidateNames($candidates);
 				}
 				if ($liveCandidates !== null && !isset($liveCandidates[$name]) && !array_key_exists($name, $this->overrides)) {
 					continue;
@@ -1048,10 +1054,7 @@ class Context {
 			// installed data no longer has it define $key (unless overridden).
 			if ($this->hasHoldouts && ($this->indexVariables[$key] ?? []) !== $candidates) {
 				$candidates = $this->indexVariables[$key] ?? [];
-				$liveCandidates = [];
-				foreach ($candidates as $live) {
-					$liveCandidates[$live->data->name] = true;
-				}
+				$liveCandidates = self::candidateNames($candidates);
 				if (!isset($liveCandidates[$name]) && !array_key_exists($name, $this->overrides)) {
 					continue;
 				}
@@ -1094,6 +1097,18 @@ class Context {
 		}
 
 		return $default;
+	}
+
+	/**
+	 * @param ExperimentVariables[] $candidates
+	 * @return array<string, true>
+	 */
+	private static function candidateNames(array $candidates): array {
+		$names = [];
+		foreach ($candidates as $candidate) {
+			$names[$candidate->data->name] = true;
+		}
+		return $names;
 	}
 
 	public function getVariableKeys(): array {

@@ -1913,7 +1913,6 @@ class ContextHoldoutTest extends TestCase {
 			$context->publish();
 			$this->eventHandler->prerun = null;
 			$context->maxRetainedEvents = 10000;
-			// Only the goal is left queued: the holdout exposure was dropped.
 			$context->publish();
 		});
 		$holdout = self::holdout(11, 'holdout_retry', self::HOLDOUT_A_SEED);
@@ -2177,8 +2176,6 @@ class ContextHoldoutTest extends TestCase {
 		$this->assertPublished($context, self::holdoutExposure(12, 'holdout_suppress', 0, 'user_id'));
 	}
 
-	// With holdouts, a candidate whose own audience re-check refreshes to data where it no longer defines the key is
-	// skipped, with no exposures, unless it is overridden; without holdouts the walk keeps 1.1.0's snapshot.
 	/** @dataProvider ownRecheckCases */
 	public function testCandidateThatLosesTheKeyDuringItsOwnRecheckIsSkipped(bool $covered, bool $overridden, array $values,
 		array $expected): void {
@@ -2270,6 +2267,34 @@ class ContextHoldoutTest extends TestCase {
 			self::assertSame($failure, $exception);
 		}
 		self::assertSame(0, $context->getPendingCount());
+
+		self::assertSame(0, $context->getTreatment('exp_aborted'));
+		self::assertSame([[0, 'exp_aborted']], array_map(static fn($exposure) => [$exposure[0], $exposure[1]],
+			$this->published($context)));
+	}
+
+	// A nested read of the experiment the aborting getter removed gets the unknown-experiment decision, not the outer
+	// unfinished one with its holdout arm, and the next read doesn't expose that decision again.
+	public function testNestedReadOfARemovedExperimentDuringAnAbortedDecision(): void {
+		$holdout = self::holdout(11, 'holdout_aborted', self::HOLDOUT_B_SEED);
+		$experiment = self::coveredBy(self::experiment(1, 'exp_aborted'), 11);
+		$experiment->audience = '{"filter":[{"gte":[{"var":"probe/score"},{"value":0}]}]}';
+		$context = $this->createContext(self::data([$holdout], $experiment));
+		$probe = self::unitSettingProbe();
+		$context->setAttributeValue('probe', $probe);
+		$probe->onRead = function () use ($context, $holdout) {
+			$this->refresh($context, self::data([$holdout], self::experiment(2, 'exp_other')));
+			self::assertSame(0, $context->getTreatment('exp_aborted'));
+			throw new \RuntimeException('getter failed');
+		};
+
+		try {
+			$context->getTreatment('exp_aborted');
+			self::fail('the getter error must reach the caller');
+		}
+		catch (\RuntimeException $exception) {
+			self::assertSame('getter failed', $exception->getMessage());
+		}
 
 		self::assertSame(0, $context->getTreatment('exp_aborted'));
 		self::assertSame([[0, 'exp_aborted']], array_map(static fn($exposure) => [$exposure[0], $exposure[1]],

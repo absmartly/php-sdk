@@ -61,7 +61,8 @@
   including the one being decided when the getter refreshed, is skipped unless it is overridden, even when an
   earlier peek cached its held-out assignment, so it queues no exposures, unlike JS, which still serves the cached
   assignment. A decision that a throwing audience getter aborted is discarded, so it can't supply holdout
-  exposures later.
+  exposures later, and a read of the same experiment from inside that getter makes its own decision rather than
+  serving the unfinished one.
 - `refresh()` keeps the previous data and logs an `Error` event when fetching or installing the new data raises any
   `Throwable`, not only an `Exception`. A data provider that throws an `\Error`, or a mistyped field that raises a
   `TypeError` while installing, no longer escapes `refresh()` (which also left the experiment index cleared). Code
