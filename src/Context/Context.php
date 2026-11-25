@@ -858,10 +858,11 @@ class Context {
 		}
 
 		// A callback during the decision (an audience getter) may have read this experiment itself: use its decision
-		// (and its exposure), unless the callback then installed new data, when it is validated like any cached one. The
-		// callback may also have evicted this one, or set the unit after the holdout arms were drawn without it (all arms
-		// share the experiment's unit type, and this assignment had no unit type yet for setUnit() to match): decide
-		// again with the unit.
+		// (and its exposure), unless the callback then installed new data, when it is validated like any cached one,
+		// once: if a callback installs new data again during that, the nested decision is used and the next read decides
+		// again. The callback may also have evicted this one, or set the unit after the holdout arms were drawn without it
+		// (all arms share the experiment's unit type, and this assignment had no unit type yet for setUnit() to match):
+		// decide again with the unit.
 		$cached = $this->assignmentCache[$experimentName] ?? null;
 		if ($cached !== null && $cached !== $assignment) {
 			if ($this->installs === $installs || isset($this->revalidating[$experimentName])) {

@@ -58,9 +58,11 @@
 - An audience attribute getter that reads an experiment while its decision is being made (a first decision, or a
   re-check that replaces the cached one) no longer queues that read's exposure twice: with or without holdouts, the
   outer read keeps the nested read's decision if it is still valid on the installed data, and decides again
-  otherwise. So a getter that refreshes the experiment away and then reads it gives both reads the
-  unknown-experiment control (1.1.0 gave the outer read the removed definition's variant and exposed both). A
-  re-check whose cached decision still matches returns it as in 1.1.0.
+  otherwise, once: if a callback installs new data again during that, the outer read keeps the nested decision and
+  the next read decides again (so a getter that refreshes on every read still finishes). So a getter that refreshes
+  the experiment away and then reads it gives both reads the unknown-experiment control (1.1.0 gave the outer read
+  the removed definition's variant and exposed both). A re-check whose cached decision still matches returns it as in
+  1.1.0.
 - If an event logger (or an audience attribute getter) refreshes the context during `getVariableValue()`, the rest
   of the lookup uses the refreshed data. An experiment the refresh removed, or that no longer defines the key,
   including the one being decided when the getter refreshed, is skipped unless it is overridden, even when an

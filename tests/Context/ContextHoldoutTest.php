@@ -2562,6 +2562,55 @@ class ContextHoldoutTest extends TestCase {
 		self::assertSame(0, $context->getTreatment('exp_bound'));
 	}
 
+	// Revalidation happens once: when the revalidated decision's getter installs new data again (a suppressing holdout),
+	// the outer read keeps that nested decision, and the next read decides on the installed data.
+	public function testSecondInstallDuringRevalidationKeepsTheNestedDecisionUntilTheNextRead(): void {
+		$admitting = self::holdout(11, 'holdout_twice', self::HOLDOUT_A_SEED);
+		$admitting->split = [0.0, 1.0];
+		$suppressing = clone $admitting;
+		$suppressing->iteration = 2;
+		$suppressing->split = [1.0, 0.0];
+		$experiment = self::coveredBy(self::experiment(1, 'exp_twice'), 11);
+		$experiment->audience = '{"filter":[{"gte":[{"var":"probe/score"},{"value":0}]}]}';
+		$moved = clone $experiment;
+		$moved->iteration = 2;
+		$context = $this->createContext(self::data([$admitting], $experiment));
+		$reads = 0;
+		$probe = new class(function () use ($context, &$reads, $admitting, $suppressing, $moved) {
+			++$reads;
+			if ($reads === 1) {
+				$context->peekTreatment('exp_twice');
+				$this->refresh($context, self::data([$admitting], $moved));
+			}
+			elseif ($reads === 2) {
+				$this->refresh($context, self::data([$suppressing], $moved));
+			}
+		}) {
+			public $score;
+			private \Closure $onRead;
+
+			public function __construct(\Closure $onRead) {
+				$this->onRead = $onRead;
+				unset($this->score);
+			}
+
+			public function __get(string $name) {
+				($this->onRead)();
+				return 1;
+			}
+		};
+		$context->setAttributeValue('probe', $probe);
+
+		set_error_handler(static fn(int $errno) => $errno === E_WARNING);
+		try {
+			self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_twice'));
+			self::assertSame(0, $context->getTreatment('exp_twice'));
+		}
+		finally {
+			restore_error_handler();
+		}
+	}
+
 	public static function peekThenRefreshes(): array {
 		return [
 			'suppressing refresh, variable read' => ['suppress', 'variable'],
