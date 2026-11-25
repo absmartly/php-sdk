@@ -30,6 +30,22 @@ use function unpack;
  */
 final class Utils {
 
+	/**
+	 * $value as an int when it is an integer or an integral float within the int range (JSON `11.0`), else null.
+	 *
+	 * @internal Shared by the holdout validation.
+	 * @param mixed $value
+	 */
+	public static function integralValue($value): ?int {
+		if (is_int($value)) {
+			return $value;
+		}
+		if (is_float($value) && floor($value) === $value && $value >= -9.2233720368547758E18 && $value < 9.2233720368547758E18) {
+			return (int) $value;
+		}
+		return null;
+	}
+
 	public static function base64UrlNoPadding(string $bytes): string {
 		return strtr(base64_encode($bytes), [
 			'+' => '-',

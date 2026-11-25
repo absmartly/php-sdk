@@ -369,7 +369,7 @@ class Context {
 
 		$servable = [];
 		foreach (['id', 'iteration', 'seedHi', 'seedLo'] as $field) {
-			$value = isset($holdout->{$field}) ? Experiment::integralValue($holdout->{$field}) : null;
+			$value = isset($holdout->{$field}) ? Utils::integralValue($holdout->{$field}) : null;
 			if ($value === null) {
 				return null;
 			}

@@ -2177,11 +2177,16 @@ class ContextHoldoutTest extends TestCase {
 		$this->assertPublished($context, self::holdoutExposure(12, 'holdout_suppress', 0, 'user_id'));
 	}
 
-	// A candidate whose own audience re-check refreshes to data where it no longer defines the key is skipped, with no
-	// exposures; the key resolves on the installed data.
-	public function testCandidateThatLosesTheKeyDuringItsOwnRecheckIsSkipped(): void {
+	// With holdouts, a candidate whose own audience re-check refreshes to data where it no longer defines the key is
+	// skipped, with no exposures, unless it is overridden; without holdouts the walk keeps 1.1.0's snapshot.
+	/** @dataProvider ownRecheckCases */
+	public function testCandidateThatLosesTheKeyDuringItsOwnRecheckIsSkipped(bool $covered, bool $overridden, array $values,
+		array $expected): void {
 		$holdout = self::holdout(11, 'holdout_own', self::HOLDOUT_B_SEED);
-		$a = self::coveredBy(self::experiment(1, 'exp_a', self::UNIT_TYPE, 1), 11);
+		$a = self::experiment(1, 'exp_a', self::UNIT_TYPE, 1);
+		if ($covered) {
+			$a = self::coveredBy($a, 11);
+		}
 		$a->variants[0]->config = '{"k":"A0"}';
 		$a->variants[1]->config = '{"k":"A"}';
 		$a->audience = '{"filter":[{"gte":[{"var":"probe/score"},{"value":0}]}]}';
@@ -2195,41 +2200,62 @@ class ContextHoldoutTest extends TestCase {
 		$moved->iteration = 2;
 		$moved->variants = [(object) ['name' => 'A', 'config' => '{"other":"A0"}'], (object) ['name' => 'B', 'config' => '{"other":"A"}']];
 		$context->setAttributeValue('bump', 1);
-		$probe->onRead = function () use ($context, $holdout, $moved, $b) {
+		$probe->onRead = function () use ($context, $holdout, $moved, $b, $overridden) {
+			if ($overridden) {
+				$context->setOverride('exp_a', 1);
+			}
 			$this->refresh($context, self::data([$holdout], $moved, $b));
 		};
 
-		self::assertSame('B', $context->getVariableValue('k', 'default'));
-		self::assertSame('B', $context->getVariableValue('k', 'default'));
-		$this->assertPublished($context, self::exposure(2, 'exp_b', 1, true, false, true));
+		self::assertSame($values[0], $context->getVariableValue('k', 'default'));
+		self::assertSame($values[1], $context->getVariableValue('k', 'default'));
+		$this->assertPublished($context, ...$expected);
+	}
+
+	public static function ownRecheckCases(): array {
+		$a = self::exposure(1, 'exp_a', 1, true, false, true);
+		$b = self::exposure(2, 'exp_b', 1, true, false, true);
+		return [
+			'covered' => [true, false, ['B', 'B'], [$b]],
+			// The getter's override is set during the read, after the decision began, so the read keeps its full-on
+			// decision; the next read starts from the override, which no longer defines the key there.
+			'covered and overridden by the getter' => [true, true, ['A', 'B'],
+				[$a, self::holdoutExposure(11, 'holdout_own', 1), $b]],
+			'without holdouts' => [false, false, ['A', 'B'], [$a, $b]],
+		];
 	}
 
 	// A decision a throwing audience getter aborted leaves nothing behind: a later read of the experiment the getter
 	// removed publishes no holdout exposure.
-	public function testAbortedDecisionLeavesNoHoldoutExposure(): void {
+	/** @dataProvider getterFailures */
+	public function testAbortedDecisionLeavesNoHoldoutExposure(\Throwable $failure): void {
 		$holdout = self::holdout(11, 'holdout_aborted', self::HOLDOUT_B_SEED);
 		$experiment = self::coveredBy(self::experiment(1, 'exp_aborted'), 11);
 		$experiment->audience = '{"filter":[{"gte":[{"var":"probe/score"},{"value":0}]}]}';
 		$context = $this->createContext(self::data([$holdout], $experiment));
 		$probe = self::unitSettingProbe();
 		$context->setAttributeValue('probe', $probe);
-		$probe->onRead = function () use ($context, $holdout) {
+		$probe->onRead = function () use ($context, $holdout, $failure) {
 			$this->refresh($context, self::data([$holdout], self::experiment(2, 'exp_other')));
-			throw new \RuntimeException('getter failed');
+			throw $failure;
 		};
 
 		try {
 			$context->getTreatment('exp_aborted');
 			self::fail('the getter error must reach the caller');
 		}
-		catch (\RuntimeException $exception) {
-			self::assertSame('getter failed', $exception->getMessage());
+		catch (\Throwable $exception) {
+			self::assertSame($failure, $exception);
 		}
 		self::assertSame(0, $context->getPendingCount());
 
 		self::assertSame(0, $context->getTreatment('exp_aborted'));
 		self::assertSame([[0, 'exp_aborted']], array_map(static fn($exposure) => [$exposure[0], $exposure[1]],
 			$this->published($context)));
+	}
+
+	public static function getterFailures(): array {
+		return ['Exception' => [new \RuntimeException('getter failed')], 'Error' => [new \Error('getter broke')]];
 	}
 
 	// A decision a nested read made and exposed before the getter threw is kept: the next read doesn't expose it again.
