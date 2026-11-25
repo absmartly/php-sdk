@@ -2212,6 +2212,28 @@ class ContextHoldoutTest extends TestCase {
 		$this->assertPublished($context, ...$expected);
 	}
 
+	// Without holdouts, a refresh by an earlier candidate's audience getter that takes the key away from a later one
+	// leaves the walk on 1.1.0's snapshot, so the later candidate still wins and is exposed.
+	public function testWalkWithoutHoldoutsKeepsItsSnapshotAfterAGetterRefresh(): void {
+		$a = self::experiment(1, 'exp_a');
+		$a->audienceStrict = true;
+		$a->audience = '{"filter":[{"lt":[{"var":"probe/score"},{"value":0}]}]}';
+		$a->variants[1]->config = '{"k":"A"}';
+		$b = self::experiment(2, 'exp_b', self::UNIT_TYPE, 1);
+		$b->variants[1]->config = '{"k":"B"}';
+		$context = $this->createContext(self::data([], $a, $b));
+		$probe = self::unitSettingProbe();
+		$context->setAttributeValue('probe', $probe);
+		$moved = clone $b;
+		$moved->variants = [(object) ['name' => 'A', 'config' => '{"other":"B0"}'], (object) ['name' => 'B', 'config' => '{"other":"B"}']];
+		$probe->onRead = function () use ($context, $a, $moved) {
+			$this->refresh($context, self::data([], $a, $moved));
+		};
+
+		self::assertSame('d', $context->getVariableValue('k', 'd'));
+		$this->assertPublished($context, self::exposure(2, 'exp_b', 1, true, false, true));
+	}
+
 	public static function ownRecheckCases(): array {
 		$a = self::exposure(1, 'exp_a', 1, true, false, true);
 		$b = self::exposure(2, 'exp_b', 1, true, false, true);
