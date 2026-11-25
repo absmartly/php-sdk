@@ -31,7 +31,6 @@ use function floor;
 use function get_object_vars;
 use function gettype;
 use function hash;
-use function in_array;
 use function is_array;
 use function is_float;
 use function is_int;
@@ -205,9 +204,6 @@ class Context {
 
 		if ($pending) {
 			$this->ready = false;
-			$this->data = null;
-			$this->index = [];
-			$this->indexVariables = [];
 			return;
 		}
 
@@ -246,18 +242,14 @@ class Context {
 	 * context), and a failure (or a logger that throws) leaves the previous data and its decisions in use.
 	 */
 	private function setData(ContextData $data, bool $initial = false): void {
-		// A nested initial load from a callback must not clear the flag the outer one set.
-		$outermost = $initial && !$this->firstLoadInProgress;
-		if ($outermost) {
-			$this->firstLoadInProgress = true;
-		}
+		// Restored, not cleared, so a nested initial load from a callback leaves the outer one's flag set.
+		$wasInProgress = $this->firstLoadInProgress;
+		$this->firstLoadInProgress = $wasInProgress || $initial;
 		try {
 			$this->indexData($data, $initial);
 		}
 		finally {
-			if ($outermost) {
-				$this->firstLoadInProgress = false;
-			}
+			$this->firstLoadInProgress = $wasInProgress;
 		}
 	}
 
@@ -338,7 +330,6 @@ class Context {
 			}
 		}
 
-		// Coverage history is read at install time: a refresh a callback made while this data was processed may have set it.
 		$hasHoldouts = $hasHoldouts || $this->hasHoldouts;
 		// Plain values again (no references left behind), installed together.
 		unset($this->index, $this->indexVariables, $this->ruleKeys, $this->experimentHoldouts, $this->hasHoldouts);
@@ -852,10 +843,16 @@ class Context {
 			$assignment->variables = $experiment->variables[$assignment->variant];
 		}
 
-		// A callback during the decision (an audience getter) may have set the unit after its holdout arms were drawn
-		// without it, before this assignment had a unit type that setUnit() could match. Decide again with the unit.
-		if ($assignment->holdoutAssignments !== null && in_array(null, $assignment->holdoutAssignments, true)
-			&& isset($this->units[$experiment->data->unitType])) {
+		// A callback during the decision (an audience getter) may have read this experiment itself, so its own decision
+		// (possibly exposed) is the cached one: use that. Or it may have refreshed the experiment's definition, or set
+		// the unit after the holdout arms were drawn without it (all arms share the experiment's unit type, and this
+		// assignment had no unit type yet for setUnit() to match): decide again, on the installed definition.
+		if (($this->assignmentCache[$experimentName] ?? null) !== $assignment) {
+			return $this->getAssignment($experimentName);
+		}
+		if ($this->getExperiment($experimentName) !== $experiment
+			|| ($assignment->holdoutAssignments !== null && $assignment->holdoutAssignments[0] === null
+				&& isset($this->units[$experiment->data->unitType]))) {
 			unset($this->assignmentCache[$experimentName]);
 			return $this->getAssignment($experimentName);
 		}
@@ -1014,8 +1011,7 @@ class Context {
 	 * that does not win still queues its holdouts' exposures.
 	 */
 	private function resolveVariableValue(string $key, $default, bool $exposeAssignment) {
-		$indexVariables = $this->indexVariables;
-		$experiments = $indexVariables[$key] ?? [];
+		$experiments = $this->indexVariables[$key] ?? [];
 		$candidates = $experiments;
 		$error = null;
 		$selectedVariables = null;
@@ -1029,15 +1025,12 @@ class Context {
 			// With holdouts, a refresh by a callback earlier in the walk drops the candidates it removed or that no longer
 			// define $key (an overridden one stays); without them the walk keeps main's snapshot of the candidates.
 			if ($this->hasHoldouts) {
-				// The index only changes when a callback refreshes, so compare the key's candidates only then.
-				if ($this->indexVariables !== $indexVariables) {
-					$indexVariables = $this->indexVariables;
-					if (($indexVariables[$key] ?? []) !== $candidates) {
-						$candidates = $indexVariables[$key] ?? [];
-						$liveCandidates = [];
-						foreach ($candidates as $live) {
-							$liveCandidates[$live->data->name] = true;
-						}
+				// Unchanged unless a callback refreshed: the same array compares identical without a scan.
+				if (($this->indexVariables[$key] ?? []) !== $candidates) {
+					$candidates = $this->indexVariables[$key] ?? [];
+					$liveCandidates = [];
+					foreach ($candidates as $live) {
+						$liveCandidates[$live->data->name] = true;
 					}
 				}
 				if ($liveCandidates !== null && !isset($liveCandidates[$name]) && !array_key_exists($name, $this->overrides)) {
@@ -1083,7 +1076,6 @@ class Context {
 			throw $error;
 		}
 
-		// property_exists (not isset) preserves a present null value.
 		if ($selectedVariables !== null && property_exists($selectedVariables, $key)) {
 			return $selectedVariables->{$key};
 		}
@@ -1220,12 +1212,7 @@ class Context {
 	public function getTreatment(string $experimentName): int {
 		$this->checkReady();
 		$assignment = $this->getAssignment($experimentName);
-		if (!$this->hasHoldouts) {
-			if (empty($assignment->exposed)) {
-				$this->queueExposure($assignment);
-			}
-		}
-		else if (!$assignment->exposed || $this->droppedHoldoutArms !== []) {
+		if (!$assignment->exposed || ($this->hasHoldouts && $this->droppedHoldoutArms !== [])) {
 			$this->triggerExposures($assignment);
 		}
 

@@ -179,7 +179,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertSame([11, 12], array_map(fn($holdout) => $holdout->id, $data->holdouts));
 	}
 
-	// Without an async HTTP client the async fetch resolves the blocking fetch, which keeps the holdouts too.
 	public function testClientDecodesHoldoutsOnAsyncFetchWithABlockingHttpClient(): void {
 		$json = file_get_contents(__DIR__ . '/../Fixtures/json/holdouts_context.json');
 		$client = new Client(new ClientConfig('endpoint', 'key', 'app', 'env'), self::httpClient($json));
@@ -383,7 +382,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 		}
 	}
 
-	// A holdout id listed twice covers the experiment once and exposes once (JS insertUniqueSorted).
 	public function testDuplicateHoldoutIdsCoverOnceAndExposeOnce(): void {
 		$context = $this->createContext(new ContextData([self::experiment(1, 'exp', [12, 11, 12, 11])],
 			[self::holdout(11, 'holdout_a', 1, 222), self::holdout(12, 'holdout_b', 1, 222)]));
@@ -644,7 +642,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 		$this->eventHandler->prerun = null;
 	}
 
-	// Queuing a retired arm that an override still pins must not hide the live arm's dropped exposure.
 	public function testRetiredArmDoesNotClearTheLiveArmsDroppedExposure(): void {
 		[$context, $provider] = $this->contextWithProvider(
 			new ContextData([self::experiment(1, 'exp_override', [11]), self::experiment(2, 'exp', [11])], [self::holdout(11, 'holdout_a', 1, 222)]),
@@ -666,7 +663,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 			$this->published($context));
 	}
 
-	// An experiment whose id and unit type match a dropped holdout's is not that holdout's arm.
 	public function testExperimentWithAHoldoutsIdDoesNotClearItsDroppedExposure(): void {
 		[$context] = $this->contextWithProvider(new ContextData(
 			[self::experiment(1, 'exp', [11]), self::experiment(11, 'exp_eleven', [])], [self::holdout(11, 'holdout_a', 13, 111)]));
@@ -747,7 +743,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 		}
 	}
 
-	// A refresh while a mark is outstanding skips the null arms of an assignment whose unit isn't set.
 	public function testRefreshWithADroppedMarkToleratesAnAssignmentWithAMissingUnit(): void {
 		$holdout = self::holdout(11, 'holdout_a', 13, 111);
 		$data = new ContextData([self::experiment(1, 'exp', [11]), self::experiment(2, 'exp_user', [11], 'user_id')], [$holdout]);
@@ -861,7 +856,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertSame([[1, 'session_id'], [11, 'session_id'], [1, 'user_id'], [11, 'user_id']], $units);
 	}
 
-	// An override on an experiment no holdout covers is reused across a unit type change, as without holdouts.
 	public function testUncoveredOverrideIsReusedAcrossAUnitTypeChange(): void {
 		$holdout = self::holdout(11, 'holdout_a', 13, 111);
 		[$context, $provider] = $this->contextWithProvider(
@@ -940,8 +934,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertSame([11], $context->getContextData()->experiments[0]->holdoutIds);
 	}
 
-	// While another experiment's holdout arm is dropped, re-reading an exposed covered experiment re-queues nothing of
-	// its own: only the dropped arm comes back, on its own experiment's next read.
 	public function testExposedCoveredExperimentIsNotQueuedAgainWhileAnotherArmIsDropped(): void {
 		[$context] = $this->contextWithProvider(new ContextData(
 			[self::experiment(1, 'exp1', [11]), self::experiment(2, 'exp2', [12])],
@@ -957,8 +949,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertSame([[2, 'exp2', 'session_id', 1], [12, 'holdout_b', 'session_id', 1]], $this->published($context));
 	}
 
-	// When the logger throws on both the experiment's exposure and a holdout's, the experiment's error is re-thrown,
-	// after both exposures were queued.
 	public function testOwnExposureErrorIsRethrownBeforeAHoldoutError(): void {
 		$logger = new class implements ContextEventLogger {
 			public function handleEvent(Context $context, ContextEventLoggerEvent $event): void {
@@ -1076,7 +1066,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 	// control value is never the fallback: the winner's variant lacks the key, so the read returns the default.
 	public function testRuleWonExperimentIsNeverTheSuppressedFallback(): void {
 		$ruleWon = self::experiment(1, 'exp_rule_won', [11]);
-		// The key is indexed through the control variant, while the rule wins variant B, which lacks it.
 		$ruleWon->variants = [(object) ['name' => 'A', 'config' => '{"color":"c1"}'], (object) ['name' => 'B', 'config' => '{"other":2}']];
 		$ruleWon->assignmentRules = '{"rules":[{"name":"all","type":"assign","conditions":null,"environments":[],"variant":1}]}';
 		$suppressed = self::experiment(2, 'exp_suppressed', [11]);
@@ -1093,7 +1082,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 	// control value is never the fallback: the override's variant lacks the key, so the read returns the default.
 	public function testOverriddenHeldOutCandidateIsNeverTheSuppressedFallback(): void {
 		$overridden = self::experiment(1, 'exp_overridden', [11]);
-		// The key is indexed through the control variant, while the override selects variant B, which lacks it.
 		$overridden->variants = [(object) ['name' => 'A', 'config' => '{"color":"c1"}'], (object) ['name' => 'B', 'config' => '{"other":2}']];
 		$suppressed = self::experiment(2, 'exp_suppressed', [11]);
 		$suppressed->variants = [(object) ['name' => 'A', 'config' => '{"color":"c2"}'], (object) ['name' => 'B', 'config' => '{"color":"t2"}']];

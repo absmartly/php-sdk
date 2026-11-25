@@ -1529,7 +1529,6 @@ class ContextHoldoutTest extends TestCase {
 		return $malformed;
 	}
 
-	// On the first load an Error logger for a malformed experiment can read the context, which then loads the rest.
 	public function testErrorLoggerDuringTheFirstLoadCanReadTheContext(): void {
 		$logger = new class extends MockContextEventLoggerProxy {
 			public ?array $seen = null;
@@ -1550,7 +1549,6 @@ class ContextHoldoutTest extends TestCase {
 		self::assertSame(['exp_valid'], $context->getExperiments());
 	}
 
-	// An Error logger reads the experiments the first load installed before the malformed one, and their holdouts.
 	/** @dataProvider firstLoadCoverage */
 	public function testErrorLoggerDuringTheFirstLoadReadsTheExperimentsLoadedBeforeIt(bool $covered): void {
 		$logger = new class extends MockContextEventLoggerProxy {
@@ -1765,7 +1763,6 @@ class ContextHoldoutTest extends TestCase {
 		$this->assertPublished($context, ...$expected);
 	}
 
-	// The holdout arm a rejecting Error logger exposed (from the previous data) isn't exposed again by another experiment.
 	public function testRejectedRefreshKeepsAHoldoutArmAnErrorLoggerExposed(): void {
 		$logger = self::throwOnceOnErrorLogger(static function (Context $context) {
 			$context->getTreatment('exp_same');
@@ -1783,7 +1780,6 @@ class ContextHoldoutTest extends TestCase {
 			self::holdoutExposure(11, 'holdout_b', 1), self::exposure(3, 'exp_other', self::NORMAL_VARIANT));
 	}
 
-	// The rejecting Error logger reads the decision exposed before the refresh, so later reads queue nothing again.
 	public function testRejectedRefreshKeepsTheDecisionExposedBeforeIt(): void {
 		$logger = self::throwOnceOnErrorLogger(static function (Context $context) {
 			$context->getTreatment('exp_same');
@@ -1805,7 +1801,6 @@ class ContextHoldoutTest extends TestCase {
 		self::assertSame($pending + 1, $context->getPendingCount());
 	}
 
-	// A rejecting Error logger that exposes an experiment only peeked before keeps that decision for the next read.
 	public function testRejectedRefreshKeepsAnExposedDecisionOverARestoredPeek(): void {
 		$logger = self::throwOnceOnErrorLogger(static function (Context $context) {
 			$context->getTreatment('exp_same');
@@ -1830,8 +1825,6 @@ class ContextHoldoutTest extends TestCase {
 		return ['without holdouts' => [false], 'covered by a holdout' => [true]];
 	}
 
-	// An Error logger that exposes the experiment during a rejected refresh whose iteration differs exposes it from the
-	// previous data, so the next read reuses that decision and nothing is queued twice.
 	public function testErrorLoggerExposureDuringARejectedRefreshIsNotQueuedAgain(): void {
 		$logger = self::throwOnceOnErrorLogger(static function (Context $context) {
 			$context->getTreatment('exp_covered');
@@ -1984,6 +1977,10 @@ class ContextHoldoutTest extends TestCase {
 
 		$context->refresh();
 
+		// The refresh ran: its malformed experiment reached the logger, which rejected it.
+		self::assertFalse($logger->armed);
+		self::assertSame([ContextEventLoggerEvent::Error, ContextEventLoggerEvent::Error],
+			array_map(static fn($event) => $event->getEvent(), $logger->events));
 		self::assertFalse($context->isReady());
 		self::assertNull(self::property($context, 'data'));
 		self::assertSame([], self::property($context, 'index'));
@@ -1993,8 +1990,6 @@ class ContextHoldoutTest extends TestCase {
 		self::assertSame(['exp_initial'], $context->getExperiments());
 	}
 
-	// The cap dropping a served decision's exposure lets the exposure be queued again, but a later unit doesn't change
-	// the treatment already served.
 	public function testDroppedExposureKeepsTheServedTreatmentForALateUnit(): void {
 		$holdout = self::holdout(11, 'holdout_cap', self::HOLDOUT_A_SEED);
 		$holdout->split = [1.0, 0.0];
@@ -2009,14 +2004,16 @@ class ContextHoldoutTest extends TestCase {
 		$context->publish();
 		$this->eventHandler->prerun = null;
 		$context->maxRetainedEvents = 10000;
+		// Only the goal is left: the exposure was dropped.
+		self::assertSame(1, $context->getPendingCount());
 
 		$context->setUnit(self::UNIT_TYPE, self::UID);
+		self::assertSame(1, $context->getPendingCount());
 		self::assertSame(1, $context->getTreatment('exp_full_on'));
+		self::assertSame(2, $context->getPendingCount());
 		$this->assertPublished($context, self::exposure(1, 'exp_full_on', 1, true, false, true, false, false, false));
 	}
 
-	// An override set and exposed by a nested read during an audience re-check is the decision the outer read returns,
-	// exposed once.
 	/** @dataProvider nestedReadCoverage */
 	public function testNestedReadDuringARecheckKeepsItsExposedDecision(bool $covered): void {
 		$experiment = self::experiment(1, 'exp_nested');
@@ -2031,7 +2028,6 @@ class ContextHoldoutTest extends TestCase {
 		$context->setAttributeValue('probe', $probe);
 		$context->setAttributeValue('flag', 1);
 		self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_nested'));
-		// The re-check fails (the audience no longer matches), after the getter's nested read.
 		$context->setAttributeValue('flag', 2);
 		$probe->onRead = function () use ($context) {
 			$context->setOverride('exp_nested', 0);
@@ -2049,6 +2045,63 @@ class ContextHoldoutTest extends TestCase {
 
 	public static function nestedReadCoverage(): array {
 		return ['without holdouts' => [false], 'covered by a holdout' => [true]];
+	}
+
+	/** @dataProvider nestedFirstReads */
+	public function testNestedReadDuringAFirstDecisionRetryKeepsItsExposedDecision(string $outer): void {
+		$experiment = self::coveredBy(self::experiment(1, 'exp_nested_first', self::UNIT_TYPE, 1), 11);
+		$experiment->variants[0]->config = '{"nested_key":"control"}';
+		$experiment->variants[1]->config = '{"nested_key":"treatment"}';
+		$experiment->audience = '{"filter":[{"gte":[{"var":"probe/score"},{"value":0}]}]}';
+		$holdout = self::holdout(11, 'holdout_nested_first', self::HOLDOUT_A_SEED);
+		$holdout->split = [1.0, 0.0];
+		$context = $this->createContext(self::data([$holdout], $experiment), []);
+		$probe = self::unitSettingProbe();
+		$context->setAttributeValue('probe', $probe);
+		$probe->onRead = function () use ($context) {
+			$context->setUnit(self::UNIT_TYPE, self::UID);
+			$context->setOverride('exp_nested_first', 0);
+			$context->getTreatment('exp_nested_first');
+		};
+
+		if ($outer === 'peek then treatment') {
+			$context->peekTreatment('exp_nested_first');
+			self::assertSame(0, $context->getTreatment('exp_nested_first'));
+		}
+		elseif ($outer === 'variable') {
+			self::assertSame('control', $context->getVariableValue('nested_key', 'default'));
+		}
+		else {
+			self::assertSame(0, $context->getTreatment('exp_nested_first'));
+		}
+		$this->assertPublished($context, self::exposure(1, 'exp_nested_first', 0, false, true),
+			self::holdoutExposure(11, 'holdout_nested_first', 0));
+	}
+
+	public static function nestedFirstReads(): array {
+		return ['treatment' => ['treatment'], 'variable' => ['variable'], 'peek then treatment' => ['peek then treatment']];
+	}
+
+	public function testRefreshDuringARecheckNeverMixesExperimentAndHoldoutDefinitions(): void {
+		$admit = self::holdout(11, 'holdout_admit', self::HOLDOUT_B_SEED);
+		$suppress = self::holdout(12, 'holdout_suppress', self::HOLDOUT_A_SEED, 'user_id');
+		$suppress->split = [1.0, 0.0];
+		$experiment = self::coveredBy(self::experiment(1, 'exp_mixed'), 11);
+		$experiment->audience = '{"filter":[{"gte":[{"var":"probe/score"},{"value":0}]}]}';
+		$context = $this->createContext(self::data([$admit], $experiment), [self::UNIT_TYPE => self::UID, 'user_id' => self::UID]);
+		$probe = self::unitSettingProbe();
+		$context->setAttributeValue('probe', $probe);
+		self::assertSame(self::NORMAL_VARIANT, $context->peekTreatment('exp_mixed'));
+		$moved = self::coveredBy(self::experiment(1, 'exp_mixed', 'user_id'), 12);
+		$moved->audience = $experiment->audience;
+		$context->setAttributeValue('bump', 1);
+		$probe->onRead = function () use ($context, $moved, $admit, $suppress) {
+			$this->refresh($context, self::data([$admit, $suppress], $moved));
+		};
+
+		self::assertSame(0, $context->getTreatment('exp_mixed'));
+		self::assertSame(0, $context->getTreatment('exp_mixed'));
+		$this->assertPublished($context, self::holdoutExposure(12, 'holdout_suppress', 0, 'user_id'));
 	}
 
 	public static function rejectedCoverageInstalls(): array {
