@@ -2048,14 +2048,19 @@ class ContextHoldoutTest extends TestCase {
 	}
 
 	/** @dataProvider nestedFirstReads */
-	public function testNestedReadDuringAFirstDecisionRetryKeepsItsExposedDecision(string $outer): void {
-		$experiment = self::coveredBy(self::experiment(1, 'exp_nested_first', self::UNIT_TYPE, 1), 11);
+	public function testNestedReadDuringAFirstDecisionRetryKeepsItsExposedDecision(string $outer, bool $covered = true): void {
+		$experiment = self::experiment(1, 'exp_nested_first', self::UNIT_TYPE, 1);
 		$experiment->variants[0]->config = '{"nested_key":"control"}';
 		$experiment->variants[1]->config = '{"nested_key":"treatment"}';
 		$experiment->audience = '{"filter":[{"gte":[{"var":"probe/score"},{"value":0}]}]}';
-		$holdout = self::holdout(11, 'holdout_nested_first', self::HOLDOUT_A_SEED);
-		$holdout->split = [1.0, 0.0];
-		$context = $this->createContext(self::data([$holdout], $experiment), []);
+		$holdouts = [];
+		if ($covered) {
+			$experiment = self::coveredBy($experiment, 11);
+			$holdout = self::holdout(11, 'holdout_nested_first', self::HOLDOUT_A_SEED);
+			$holdout->split = [1.0, 0.0];
+			$holdouts[] = $holdout;
+		}
+		$context = $this->createContext(self::data($holdouts, $experiment), []);
 		$probe = self::unitSettingProbe();
 		$context->setAttributeValue('probe', $probe);
 		$probe->onRead = function () use ($context) {
@@ -2074,12 +2079,79 @@ class ContextHoldoutTest extends TestCase {
 		else {
 			self::assertSame(0, $context->getTreatment('exp_nested_first'));
 		}
-		$this->assertPublished($context, self::exposure(1, 'exp_nested_first', 0, false, true),
-			self::holdoutExposure(11, 'holdout_nested_first', 0));
+		$expected = [self::exposure(1, 'exp_nested_first', 0, false, true)];
+		if ($covered) {
+			$expected[] = self::holdoutExposure(11, 'holdout_nested_first', 0);
+		}
+		$this->assertPublished($context, ...$expected);
 	}
 
 	public static function nestedFirstReads(): array {
-		return ['treatment' => ['treatment'], 'variable' => ['variable'], 'peek then treatment' => ['peek then treatment']];
+		return ['treatment' => ['treatment'], 'variable' => ['variable'], 'peek then treatment' => ['peek then treatment'],
+			'treatment without holdouts' => ['treatment', false]];
+	}
+
+	// Without holdouts, a refresh from an audience getter during a re-check leaves the decision on the definition the
+	// read started with, as in 1.1.0.
+	public function testRefreshDuringARecheckWithoutHoldoutsKeepsTheReadsDefinition(): void {
+		$experiment = self::experiment(1, 'exp_recheck');
+		$experiment->audience = '{"filter":[{"and":[{"gte":[{"var":"probe/score"},{"value":0}]},{"eq":[{"var":"flag"},{"value":1}]}]}]}';
+		$context = $this->createContext(self::data([], $experiment));
+		$probe = self::unitSettingProbe();
+		$context->setAttributeValue('probe', $probe);
+		$context->setAttributeValue('flag', 1);
+		self::assertSame(self::NORMAL_VARIANT, $context->peekTreatment('exp_recheck'));
+		$flipped = clone $experiment;
+		$flipped->split = [1.0, 0.0];
+		$context->setAttributeValue('flag', 2);
+		$probe->onRead = function () use ($context, $flipped) {
+			$this->refresh($context, self::data([], $flipped));
+		};
+
+		self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_recheck'));
+	}
+
+	// A getter that refreshes on every read still lets the read finish, deciding once on the data it installed.
+	/** @dataProvider nestedReadCoverage */
+	public function testGetterThatRefreshesOnEveryReadFinishes(bool $covered): void {
+		$experiment = self::experiment(1, 'exp_refreshing');
+		$experiment->audience = '{"filter":[{"gte":[{"var":"probe/score"},{"value":0}]}]}';
+		$holdouts = [];
+		if ($covered) {
+			$experiment = self::coveredBy($experiment, 11);
+			$holdouts[] = self::holdout(11, 'holdout_refreshing', self::HOLDOUT_B_SEED);
+		}
+		$data = self::data($holdouts, $experiment);
+		$context = $this->createContext($data);
+		$reads = 0;
+		$probe = new class(function () use ($context, $data, &$reads) {
+			if (++$reads > 50) {
+				throw new \LogicException('read loop');
+			}
+			$this->refresh($context, $data);
+		}) {
+			public $score;
+			private \Closure $onRead;
+
+			public function __construct(\Closure $onRead) {
+				$this->onRead = $onRead;
+				unset($this->score);
+			}
+
+			public function __get(string $name) {
+				($this->onRead)();
+				return 1;
+			}
+		};
+		$context->setAttributeValue('probe', $probe);
+
+		self::assertSame(self::NORMAL_VARIANT, $context->getTreatment('exp_refreshing'));
+		self::assertLessThanOrEqual(2, $reads);
+		$expected = [self::exposure(1, 'exp_refreshing', self::NORMAL_VARIANT)];
+		if ($covered) {
+			$expected[] = self::holdoutExposure(11, 'holdout_refreshing', 1);
+		}
+		$this->assertPublished($context, ...$expected);
 	}
 
 	public function testRefreshDuringARecheckNeverMixesExperimentAndHoldoutDefinitions(): void {

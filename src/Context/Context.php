@@ -747,6 +747,11 @@ class Context {
 			}
 		}
 
+		// With holdouts, a callback during the cache check above (an audience getter) may have refreshed: build from the
+		// installed experiment, so it and the holdouts read below come from the same data.
+		if ($this->hasHoldouts) {
+			$experiment = $this->getExperiment($experimentName);
+		}
 		$this->assignmentCache[$experimentName] = $assignment = new Assignment();
 
 		$assignment->name = $experimentName;
@@ -844,15 +849,14 @@ class Context {
 		}
 
 		// A callback during the decision (an audience getter) may have read this experiment itself, so its own decision
-		// (possibly exposed) is the cached one: use that. Or it may have refreshed the experiment's definition, or set
-		// the unit after the holdout arms were drawn without it (all arms share the experiment's unit type, and this
-		// assignment had no unit type yet for setUnit() to match): decide again, on the installed definition.
+		// (possibly exposed) is the cached one: use that. Or it may have set the unit after the holdout arms were drawn
+		// without it (all arms share the experiment's unit type, and this assignment had no unit type yet for setUnit()
+		// to match): decide again with the unit.
 		if (($this->assignmentCache[$experimentName] ?? null) !== $assignment) {
 			return $this->getAssignment($experimentName);
 		}
-		if ($this->getExperiment($experimentName) !== $experiment
-			|| ($assignment->holdoutAssignments !== null && $assignment->holdoutAssignments[0] === null
-				&& isset($this->units[$experiment->data->unitType]))) {
+		if ($assignment->holdoutAssignments !== null && $assignment->holdoutAssignments[0] === null
+			&& isset($this->units[$experiment->data->unitType])) {
 			unset($this->assignmentCache[$experimentName]);
 			return $this->getAssignment($experimentName);
 		}
