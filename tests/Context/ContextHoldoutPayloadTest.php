@@ -255,7 +255,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertSame([], $errors);
 		self::assertTrue($context->isReady());
 		self::assertFalse($context->isFailed());
-		// holdout_a holds the unit out; holdout_b (3 arms, arm 2) doesn't; the dangling id 999 is ignored.
 		self::assertSame(0, $context->getTreatment('exp_covered'));
 		self::assertSame(1, $context->getTreatment('exp_uncovered'));
 		self::assertSame([
@@ -394,7 +393,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 		], $this->published($context));
 	}
 
-	// Scenario 505: one holdout covering experiments with two unit types publishes one exposure per unit type.
 	public function testSharedHoldoutAcrossUnitTypesPublishesOneExposurePerUnitType(): void {
 		$context = $this->createContext(new ContextData([
 			self::experiment(1, 'exp_session', [11]),
@@ -410,7 +408,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertSame([[11, 'holdout_a', 'session_id', 1], [11, 'holdout_a', 'user_id', 1]], $holdoutExposures);
 	}
 
-	// Scenario 506: a strict audience mismatch on a covered experiment that isn't held out still exposes the holdout.
 	public function testStrictAudienceMismatchStillExposesTheHoldout(): void {
 		$experiment = self::experiment(1, 'exp', [11]);
 		$experiment->audienceStrict = true;
@@ -422,7 +419,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertSame([[1, 'exp', 'session_id', 0], [11, 'holdout_a', 'session_id', 1]], $this->published($context));
 	}
 
-	// Scenarios 507 and 226: a suppressed candidate falls back to its control value only when nothing assigned wins.
 	public function testSuppressedVariableFallsBackToControlOnlyWhenNothingAssignedWins(): void {
 		$suppressed = self::experiment(1, 'exp_suppressed', [11]);
 		$suppressed->variants = [(object) ['name' => 'A', 'config' => '{"color":"control_1"}'],
@@ -467,7 +463,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertSame([[11, 'holdout_a', 'session_id', 0], [2, 'exp_winner', 'session_id', 1]], $this->published($context));
 	}
 
-	// A suppressed candidate that lacks the key still blocks a later suppressed candidate's control value (JS).
 	public function testOnlyTheFirstSuppressedCandidateProvidesTheFallback(): void {
 		$first = self::experiment(1, 'exp_first', [11]);
 		$first->variants = [(object) ['name' => 'A', 'config' => '{"other":1}'], (object) ['name' => 'B', 'config' => '{"color":"t1"}']];
@@ -908,8 +903,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 		return $lines;
 	}
 
-	// A throwing Refresh logger, Exception or Error, is ignored: nothing goes to the error log or back to that logger as
-	// an Error event, and the refreshed data stays installed.
 	public function testThrowingRefreshLoggerIsIgnoredAndKeepsTheRefreshedData(): void {
 		foreach ([new \RuntimeException('logger failed'), new \Error('logger broke')] as $throwable) {
 			[$context, $provider, $logger] = $this->contextWithThrowingRefreshLogger($throwable);
@@ -1045,7 +1038,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 		return $reflection->invoke($context, ...$args);
 	}
 
-	// Scenario 222: arity comes from the split, so a 3-arm split marked "full" (or unmarked) is still a 3-arm holdout.
 	public function testThreeArmArityComesFromTheSplitNotHoldoutType(): void {
 		foreach (['full', null] as $holdoutType) {
 			$holdout = self::holdout(21, 'holdout_three_arm', 0, 3, [0.3, 0.3, 0.4]);
@@ -1137,7 +1129,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertSame([[11, 'holdout_a', 'session_id', 0]], $this->published($context));
 	}
 
-	// The holdout exposure carries the name of the holdout definition the exposing decision was made from, as JS does.
 	public function testHoldoutExposureUsesTheNameTheExposingDecisionSaw(): void {
 		[$context, $provider] = $this->contextWithProvider(
 			new ContextData([self::experiment(1, 'exp', [11])], [self::holdout(11, 'holdout_old_name', 1, 222)]));

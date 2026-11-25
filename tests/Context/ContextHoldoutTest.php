@@ -337,7 +337,6 @@ class ContextHoldoutTest extends TestCase {
 		self::assertSame(0, $context->peekTreatment('exp_user_holdout'));
 		self::assertSame(0, $context->getTreatment('exp_user_holdout'));
 		self::assertSame(1, $context->getPendingCount());
-		// The experiment's own exposure (unassigned, the unit is missing) is the only one: the holdout can't fire.
 		$this->assertPublished($context, self::exposure(1, 'exp_user_holdout', 0, false, false, false, false, false, false, 'user_id'));
 	}
 
@@ -2244,20 +2243,33 @@ class ContextHoldoutTest extends TestCase {
 		];
 	}
 
-	// A decision a throwing audience getter aborted leaves nothing behind: a later read of the experiment the getter
-	// removed publishes no holdout exposure.
-	/** @dataProvider getterFailures */
-	public function testAbortedDecisionLeavesNoHoldoutExposure(\Throwable $failure): void {
-		$holdout = self::holdout(11, 'holdout_aborted', self::HOLDOUT_B_SEED);
-		$experiment = self::coveredBy(self::experiment(1, 'exp_aborted'), 11);
+	/**
+	 * A context whose experiment $name (covered by a holdout unless $covered is false) has an audience getter that
+	 * refreshes the experiment away and then runs $then.
+	 */
+	private function contextWhoseGetterRemoves(string $name, \Closure $then, bool $covered = true): Context {
+		$holdouts = [];
+		$experiment = self::experiment(1, $name);
+		if ($covered) {
+			$holdouts[] = self::holdout(11, 'holdout_aborted', self::HOLDOUT_B_SEED);
+			$experiment = self::coveredBy($experiment, 11);
+		}
 		$experiment->audience = '{"filter":[{"gte":[{"var":"probe/score"},{"value":0}]}]}';
-		$context = $this->createContext(self::data([$holdout], $experiment));
+		$context = $this->createContext(self::data($holdouts, $experiment));
 		$probe = self::unitSettingProbe();
 		$context->setAttributeValue('probe', $probe);
-		$probe->onRead = function () use ($context, $holdout, $failure) {
-			$this->refresh($context, self::data([$holdout], self::experiment(2, 'exp_other')));
-			throw $failure;
+		$probe->onRead = function () use ($context, $holdouts, $then) {
+			$this->refresh($context, self::data($holdouts, self::experiment(2, 'exp_other')));
+			$then($context);
 		};
+		return $context;
+	}
+
+	/** @dataProvider getterFailures */
+	public function testAbortedDecisionLeavesNoHoldoutExposure(\Throwable $failure): void {
+		$context = $this->contextWhoseGetterRemoves('exp_aborted', static function () use ($failure) {
+			throw $failure;
+		});
 
 		try {
 			$context->getTreatment('exp_aborted');
@@ -2273,20 +2285,11 @@ class ContextHoldoutTest extends TestCase {
 			$this->published($context)));
 	}
 
-	// A nested read of the experiment the aborting getter removed gets the unknown-experiment decision, not the outer
-	// unfinished one with its holdout arm, and the next read doesn't expose that decision again.
 	public function testNestedReadOfARemovedExperimentDuringAnAbortedDecision(): void {
-		$holdout = self::holdout(11, 'holdout_aborted', self::HOLDOUT_B_SEED);
-		$experiment = self::coveredBy(self::experiment(1, 'exp_aborted'), 11);
-		$experiment->audience = '{"filter":[{"gte":[{"var":"probe/score"},{"value":0}]}]}';
-		$context = $this->createContext(self::data([$holdout], $experiment));
-		$probe = self::unitSettingProbe();
-		$context->setAttributeValue('probe', $probe);
-		$probe->onRead = function () use ($context, $holdout) {
-			$this->refresh($context, self::data([$holdout], self::experiment(2, 'exp_other')));
+		$context = $this->contextWhoseGetterRemoves('exp_aborted', static function (Context $context) {
 			self::assertSame(0, $context->getTreatment('exp_aborted'));
 			throw new \RuntimeException('getter failed');
-		};
+		});
 
 		try {
 			$context->getTreatment('exp_aborted');
@@ -2301,7 +2304,6 @@ class ContextHoldoutTest extends TestCase {
 			$this->published($context)));
 	}
 
-	// A nested read whose own getter throws leaves the outer decision to be made again: the experiment is exposed once.
 	public function testNestedReadWhoseGetterThrowsLeavesTheOuterDecisionToBeMadeAgain(): void {
 		$experiment = self::coveredBy(self::experiment(1, 'exp_nested_throw'), 11);
 		$experiment->audience = '{"filter":[{"gte":[{"var":"probe/score"},{"value":0}]}]}';
@@ -2331,29 +2333,95 @@ class ContextHoldoutTest extends TestCase {
 			self::holdoutExposure(11, 'holdout_nested_throw', 1));
 	}
 
-	// Without holdouts too, a getter that refreshes the experiment away and then reads it serves the outer read the
-	// nested read's decision (the unknown-experiment control), exposed once.
 	public function testNestedReadOfAnExperimentTheGetterRemovedWithoutHoldouts(): void {
-		$experiment = self::experiment(1, 'exp_removed');
-		$experiment->audience = '{"filter":[{"gte":[{"var":"probe/score"},{"value":0}]}]}';
-		$context = $this->createContext(self::data([], $experiment));
-		$probe = self::unitSettingProbe();
-		$context->setAttributeValue('probe', $probe);
-		$probe->onRead = function () use ($context) {
-			$this->refresh($context, self::data([], self::experiment(2, 'exp_other')));
+		$context = $this->contextWhoseGetterRemoves('exp_removed', static function (Context $context) {
 			self::assertSame(0, $context->getTreatment('exp_removed'));
-		};
+		}, false);
 
 		self::assertSame(0, $context->getTreatment('exp_removed'));
 		self::assertSame([[0, 'exp_removed']], array_map(static fn($exposure) => [$exposure[0], $exposure[1]],
 			$this->published($context)));
 	}
 
+	/** @dataProvider peekThenRefreshes */
+	public function testNestedPeekIsRevalidatedAfterARefresh(string $refresh, string $read): void {
+		$admitting = self::holdout(11, 'holdout_peek', self::HOLDOUT_A_SEED);
+		$admitting->split = [0.0, 1.0];
+		$suppressing = clone $admitting;
+		$suppressing->iteration = 2;
+		$suppressing->split = [1.0, 0.0];
+		$experiment = self::coveredBy(self::withVariables(self::experiment(1, 'exp_peek'), 'peek_key'), 11);
+		$experiment->audience = '{"filter":[{"gte":[{"var":"probe/score"},{"value":0}]}]}';
+		$context = $this->createContext(self::data([$admitting], $experiment));
+		$probe = self::unitSettingProbe();
+		$context->setAttributeValue('probe', $probe);
+		$installed = $refresh === 'suppress'
+			? self::data([$suppressing], $experiment)
+			: self::data([$admitting], self::experiment(2, 'exp_other'));
+		$probe->onRead = function () use ($context, $installed) {
+			$context->setAttributeValue('probe', (object) ['score' => 1]);
+			$context->peekTreatment('exp_peek');
+			$this->refresh($context, $installed);
+		};
+
+		if ($read === 'variable') {
+			self::assertSame($refresh === 'suppress' ? 'control' : 'default', $context->getVariableValue('peek_key', 'default'));
+		}
+		else {
+			self::assertSame(0, $context->getTreatment('exp_peek'));
+		}
+		$published = array_map(static fn($exposure) => [$exposure[0], $exposure[3]], $this->published($context));
+		if ($refresh === 'suppress') {
+			self::assertSame([[11, 0]], $published);
+		}
+		else {
+			self::assertSame($read === 'variable' ? [] : [[0, 0]], $published);
+		}
+	}
+
+	public static function peekThenRefreshes(): array {
+		return [
+			'suppressing refresh, variable read' => ['suppress', 'variable'],
+			'suppressing refresh, treatment read' => ['suppress', 'treatment'],
+			'experiment removed, treatment read' => ['remove', 'treatment'],
+		];
+	}
+
+	public function testOuterDecisionIsMadeAgainAfterANestedReadAbortsOnRefreshedData(): void {
+		$admitting = self::holdout(11, 'holdout_retry_abort', self::HOLDOUT_A_SEED);
+		$admitting->split = [0.0, 1.0];
+		$suppressing = clone $admitting;
+		$suppressing->iteration = 2;
+		$suppressing->split = [1.0, 0.0];
+		$experiment = self::coveredBy(self::experiment(1, 'exp_retry_abort'), 11);
+		$experiment->audience = '{"filter":[{"gte":[{"var":"probe/score"},{"value":0}]}]}';
+		$context = $this->createContext(self::data([$admitting], $experiment));
+		$outer = self::unitSettingProbe();
+		$inner = self::unitSettingProbe();
+		$inner->onRead = function () use ($context, $suppressing, $experiment) {
+			$this->refresh($context, self::data([$suppressing], $experiment));
+			throw new \RuntimeException('inner getter failed');
+		};
+		$context->setAttributeValue('probe', $outer);
+		$outer->onRead = function () use ($context, $inner) {
+			$context->setAttributeValue('probe', $inner);
+			try {
+				$context->getTreatment('exp_retry_abort');
+				self::fail('the inner getter error must reach the outer getter');
+			}
+			catch (\RuntimeException $exception) {
+				self::assertSame('inner getter failed', $exception->getMessage());
+			}
+		};
+
+		self::assertSame(0, $context->getTreatment('exp_retry_abort'));
+		$this->assertPublished($context, self::holdoutExposure(11, 'holdout_retry_abort', 0));
+	}
+
 	public static function getterFailures(): array {
 		return ['Exception' => [new \RuntimeException('getter failed')], 'Error' => [new \Error('getter broke')]];
 	}
 
-	// A decision a nested read made and exposed before the getter threw is kept: the next read doesn't expose it again.
 	public function testAbortedDecisionKeepsTheNestedReadsExposedDecision(): void {
 		$experiment = self::coveredBy(self::experiment(1, 'exp_nested_abort'), 11);
 		$experiment->audience = '{"filter":[{"gte":[{"var":"probe/score"},{"value":0}]}]}';

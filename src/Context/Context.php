@@ -289,12 +289,7 @@ class Context {
 				$experimentVariables->variables = [];
 
 				foreach ($experiment->variants as $variant) {
-					if (empty($variant->config)) {
-						$experimentVariables->variables[] = (object) [];
-						continue;
-					}
-
-					$parsed = $this->variableParser->parse($experiment->name, $variant->config);
+					$parsed = empty($variant->config) ? null : $this->variableParser->parse($experiment->name, $variant->config);
 					if (!$parsed) {
 						$experimentVariables->variables[] = (object) [];
 						continue;
@@ -853,13 +848,14 @@ class Context {
 			$assignment->variables = $experiment->variables[$assignment->variant];
 		}
 
-		// A callback during the decision (an audience getter) may have read this experiment itself: its decision, made
-		// on the installed data and possibly exposed, is the cached one, so use that. Or it may have evicted this one, or
-		// set the unit after the holdout arms were drawn without it (all arms share the experiment's unit type, and this
-		// assignment had no unit type yet for setUnit() to match): decide again with the unit.
+		// A callback during the decision (an audience getter) may have read this experiment itself and then refreshed:
+		// validate its decision like any cached one, which keeps it (and its exposure) unless the installed data changed
+		// it. The callback may also have evicted this one, or set the unit after the holdout arms were drawn without it
+		// (all arms share the experiment's unit type, and this assignment had no unit type yet for setUnit() to match):
+		// decide again with the unit.
 		$cached = $this->assignmentCache[$experimentName] ?? null;
 		if ($cached !== null && $cached !== $assignment) {
-			return $cached;
+			return $this->getAssignment($experimentName);
 		}
 		if ($cached === null || ($assignment->holdoutAssignments !== null && $assignment->holdoutAssignments[0] === null
 			&& isset($this->units[$experiment->data->unitType]))) {
