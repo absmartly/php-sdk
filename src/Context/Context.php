@@ -700,7 +700,9 @@ class Context {
 	private function initializeAssignmentState(Assignment $assignment): void {
 		foreach (['served' => false, 'suppressed' => false, 'holdouts' => null, 'holdoutAssignments' => null,
 			'holdoutArmCount' => 0] as $name => $value) {
-			try { $assignment->{$name} = $value; } catch (\TypeError $exception) { }
+			if (!(property_exists($assignment, $name) && (new \ReflectionProperty($assignment, $name))->isInitialized($assignment))) {
+				try { $assignment->{$name} = $value; } catch (\TypeError $exception) { }
+			}
 		}
 	}
 

@@ -11,11 +11,8 @@ class ContextData {
 
 	public function __construct(array $experiments = [], array $holdouts = []) {
 		$this->experiments = $experiments;
-		try {
-			$this->holdouts = $holdouts;
-		}
-		catch (\TypeError $exception) {
-			// A legacy subclass may reserve this name with an incompatible type.
+		if (!(property_exists($this, 'holdouts') && (new \ReflectionProperty($this, 'holdouts'))->isInitialized($this))) {
+			try { $this->holdouts = $holdouts; } catch (\TypeError $exception) { }
 		}
 	}
 }

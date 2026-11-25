@@ -56,6 +56,6 @@ class HoldoutSubclassCompatibilityTest extends TestCase {
 		self::assertSame(3, $experiment->sdkHoldoutIds(3));
 
 		self::assertSame('customer', (new TypedHoldoutContextData([], [(object) ['id' => 11]]))->holdouts);
-		self::assertSame([], (new UntypedHoldoutContextData([], []))->holdouts);
+		self::assertNull((new UntypedHoldoutContextData([], []))->holdouts);
 	}
 }

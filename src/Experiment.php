@@ -88,7 +88,7 @@ class Experiment {
 				$this->{$field} = $value;
 			}
 		}
-		try { $this->holdoutIds = $holdoutIds; } catch (\Throwable $e) { }
-		try { $this->holdoutType = $holdoutType; } catch (\Throwable $e) { }
+		if (!(property_exists($this, 'holdoutIds') && (new \ReflectionProperty($this, 'holdoutIds'))->isInitialized($this))) { try { $this->holdoutIds = $holdoutIds; } catch (\Throwable $e) { } }
+		if (!(property_exists($this, 'holdoutType') && (new \ReflectionProperty($this, 'holdoutType'))->isInitialized($this))) { try { $this->holdoutType = $holdoutType; } catch (\Throwable $e) { } }
 	}
 }
