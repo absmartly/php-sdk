@@ -7,15 +7,21 @@ use stdClass;
 #[\AllowDynamicProperties]
 class Assignment {
 	public function __construct() {
-		foreach (['served' => false, 'suppressed' => false, 'holdouts' => null, 'holdoutAssignments' => null,
-			'holdoutArmCount' => 0] as $name => $value) {
-			try {
-				$this->{$name} = $value;
-			}
-			catch (\TypeError $exception) {
-				// A customer subclass may redeclare the name with an incompatible type; SDK state stays optional.
-			}
-		}
+		$this->setSDKState('served', false);
+		$this->setSDKState('suppressed', false);
+		$this->setSDKState('holdouts', null);
+		$this->setSDKState('holdoutAssignments', null);
+		$this->setSDKState('holdoutArmCount', 0);
+	}
+
+	/** @internal */
+	public function getSDKState(string $name, $default = null) {
+		try { return $this->{$name}; } catch (\Throwable $e) { return $default; }
+	}
+
+	/** @internal */
+	public function setSDKState(string $name, $value): void {
+		try { $this->{$name} = $value; } catch (\Throwable $e) { }
 	}
 
 	public int $id = 0;

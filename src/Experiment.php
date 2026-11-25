@@ -37,14 +37,14 @@ class Experiment {
 	/** The holdout's type ("full", "all_full_on") when this entry is a holdout; never read, arity comes from split. */
 
 
+	/** @internal */
+	public function sdkHoldoutIds(): ?array { try { $v = $this->holdoutIds; return is_array($v) ? $v : null; } catch (\Throwable $e) { return null; } }
+	/** @internal */
+	public function sdkHoldoutType(): ?string { try { $v = $this->holdoutType; return is_string($v) ? $v : null; } catch (\Throwable $e) { return null; } }
+
 	public function __construct(object $data) {
-		try {
-			$this->holdoutIds = null;
-			$this->holdoutType = null;
-		}
-		catch (\TypeError $exception) {
-			// Legacy subclasses may reserve these names with incompatible types.
-		}
+		$holdoutIds = null;
+		$holdoutType = null;
 		$requiredFields = ['id', 'name', 'unitType', 'iteration', 'seedHi', 'seedLo', 'split',
 			'trafficSeedHi', 'trafficSeedLo', 'trafficSplit', 'fullOnVariant', 'variants'];
 
@@ -76,22 +76,24 @@ class Experiment {
 			elseif ($field === 'holdoutIds') {
 				// Ids that aren't integers (integral floats such as 11.0 count) can't name a holdout, so they are dropped
 				// rather than failing the whole context.
-				$this->holdoutIds = null;
+				$holdoutIds = null;
 				if (is_array($value)) {
-					$this->holdoutIds = [];
+					$holdoutIds = [];
 					foreach ($value as $id) {
 						if (($id = Utils::integralValue($id)) !== null) {
-							$this->holdoutIds[] = $id;
+							$holdoutIds[] = $id;
 						}
 					}
 				}
 			}
 			elseif ($field === 'holdoutType') {
-				$this->holdoutType = is_string($value) ? $value : null;
+				$holdoutType = is_string($value) ? $value : null;
 			}
 			elseif (property_exists($this, $field) && $field !== 'audience') {
 				$this->{$field} = $value;
 			}
 		}
+		try { $this->holdoutIds = $holdoutIds; } catch (\Throwable $e) { }
+		try { $this->holdoutType = $holdoutType; } catch (\Throwable $e) { }
 	}
 }

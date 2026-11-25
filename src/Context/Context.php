@@ -330,7 +330,7 @@ class Context {
 			}
 			$holdoutIds = null;
 			try {
-				$holdoutIds = $experimentVariables->data->holdoutIds;
+				$holdoutIds = $experimentVariables->data->sdkHoldoutIds();
 			}
 			catch (\Error $exception) {
 			}
@@ -365,7 +365,7 @@ class Context {
 		if ($this->droppedHoldoutArms !== []) {
 			$pinned = [];
 			foreach ($this->assignmentCache ?? [] as $assignment) {
-				foreach ($assignment->holdoutAssignments ?? [] as $arm) {
+				foreach ($assignment->getSDKState('holdoutAssignments') ?? [] as $arm) {
 					if ($arm !== null) {
 						$pinned[spl_object_id($arm)] = true;
 					}
@@ -601,7 +601,7 @@ class Context {
 			}
 
 			// A suppressed assignment never evaluated its audience, so an attribute change cannot make it stale.
-			if (!$assignment->ruleOverride && !$assignment->suppressed
+			if (!$assignment->ruleOverride && !$assignment->getSDKState('suppressed', false)
 				&& !empty($experiment->audience) && !empty((array) $experiment->audience)) {
 				$result = $this->audienceMatcher->evaluate($experiment->audience, $this->getEvaluationAttributes());
 				$newAudienceMismatch = $result !== null ? !$result : $assignment->audienceMismatch;
@@ -708,7 +708,7 @@ class Context {
 					&& ($experiment === null || !$this->hasHoldouts
 						// A covered override is rebuilt on a unit type change so its holdout arms are drawn for the new
 						// unit; an uncovered one is reused as before.
-						|| (($assignment->holdouts === null || $assignment->unitType === $experiment->data->unitType)
+						|| (($assignment->getSDKState('holdouts') === null || $assignment->unitType === $experiment->data->unitType)
 							&& $this->holdoutSetMatches($experimentName, $assignment)))) {
 					// override up-to-date
 					return $assignment;
@@ -718,14 +718,14 @@ class Context {
 				// A rule-won assignment is not "assigned" either, but its variant came from the
 				// experiment's rules, so it must be rebuilt once the experiment is gone.
 				if (!$assignment->assigned && !$assignment->ruleOverride
-					&& (!$this->hasHoldouts || $assignment->id === 0 || $assignment->served)) {
+					&& (!$this->hasHoldouts || $assignment->id === 0 || $assignment->getSDKState('served', false))) {
 					// previously not-running experiment
 					return $assignment;
 				}
 			} else if (!array_key_exists($experimentName, $this->cassignments)
 				|| $this->cassignments[$experimentName] === $assignment->variant
 				|| $assignment->ruleOverride
-				|| $assignment->suppressed
+				|| $assignment->getSDKState('suppressed', false)
 				|| $this->customAssignmentIgnored($assignment, $experiment)) {
 				// A matching rule wins over a custom assignment and a suppressed one is forced to control, so a
 				// custom mismatch is not staleness.
@@ -830,7 +830,7 @@ class Context {
 				$assignment->variant = $rule['variant'];
 				$assignment->ruleOverride = true;
 			}
-			elseif (!$assignment->suppressed) {
+			elseif (!$assignment->getSDKState('suppressed', false)) {
 				if (!empty($experiment->data->audience) && !empty((array) $experiment->data->audience)) {
 					$result = $this->audienceMatcher->evaluate($experiment->data->audience, $this->getEvaluationAttributes());
 					if (is_bool($result)) {
@@ -902,7 +902,7 @@ class Context {
 		if ($cached !== null && $cached !== $assignment) {
 			return $this->revalidateNested($experimentName, $cached);
 		}
-		if ($cached === null || ($assignment->holdoutAssignments !== null && $assignment->holdoutAssignments[0] === null
+		if ($cached === null || ($assignment->getSDKState('holdoutAssignments') !== null && $assignment->getSDKState('holdoutAssignments')[0] === null
 			&& isset($this->units[$experiment->data->unitType]))) {
 			unset($this->assignmentCache[$experimentName]);
 			return $this->getAssignment($experimentName);
@@ -928,12 +928,12 @@ class Context {
 
 			if ($holdoutAssignment !== null
 				&& self::isHeldOutBy($holdoutAssignment->variant, $holdoutAssignment->holdoutArmCount, $experiment->fullOnVariant)) {
-				$assignment->suppressed = true;
+				$assignment->setSDKState('suppressed', true);
 			}
 		}
 
-		$assignment->holdouts = $holdouts;
-		$assignment->holdoutAssignments = $holdoutAssignments;
+		$assignment->setSDKState('holdouts', $holdouts);
+		$assignment->setSDKState('holdoutAssignments', $holdoutAssignments);
 	}
 
 	/**
@@ -970,7 +970,7 @@ class Context {
 		$assignment->variant = $this->getVariantAssigner($unitType, $uid)->assign($holdout->split, $holdout->seedHi, $holdout->seedLo);
 		$assignment->assigned = true;
 		$assignment->eligible = true;
-		$assignment->holdoutArmCount = count($holdout->split);
+		$assignment->setSDKState('holdoutArmCount', count($holdout->split));
 
 		return $this->holdoutAssignmentCache[$cacheKey] = $assignment;
 	}
@@ -980,7 +980,7 @@ class Context {
 	 * iteration count: a same-iteration seed or split edit must not force a duplicate exposure.
 	 */
 	private function holdoutSetMatches(string $experimentName, Assignment $assignment): bool {
-		$pinned = $assignment->holdouts;
+		$pinned = $assignment->getSDKState('holdouts');
 		$fresh = $this->experimentHoldouts[$experimentName] ?? null;
 		if ($fresh === $pinned) {
 			return true;
@@ -1004,7 +1004,7 @@ class Context {
 	 * dropped. Callers skip exposed assignments while nothing is dropped, as in JS.
 	 */
 	private function triggerExposures(Assignment $assignment): void {
-		if ($assignment->holdoutAssignments === null) {
+		if ($assignment->getSDKState('holdoutAssignments') === null) {
 			$this->queueExposure($assignment);
 			return;
 		}
@@ -1012,7 +1012,7 @@ class Context {
 		// A throwing event logger must not strand the remaining exposures: each is queued (and marked exposed) before
 		// it is logged, so all of them are queued first and the first logger error is re-thrown afterwards.
 		$error = null;
-		if (!$assignment->suppressed || $assignment->overridden || $assignment->ruleOverride) {
+		if (!$assignment->getSDKState('suppressed', false) || $assignment->overridden || $assignment->ruleOverride) {
 			try {
 				$this->queueExposure($assignment);
 			}
@@ -1022,13 +1022,13 @@ class Context {
 		}
 		else {
 			$assignment->exposed = true;
-			$assignment->served = true;
+			$assignment->setSDKState('served', true);
 		}
 
 		// Use the pinned arms, never a live re-resolution: an exposure callback may install a different decision epoch.
-		foreach ($assignment->holdoutAssignments as $i => $holdoutAssignment) {
+		foreach ($assignment->getSDKState('holdoutAssignments') as $i => $holdoutAssignment) {
 			if ($holdoutAssignment !== null) {
-				$holdoutAssignment->name = $assignment->holdouts[$i]->name;
+				$holdoutAssignment->name = $assignment->getSDKState('holdouts')[$i]->name;
 				try {
 					$this->queueExposure($holdoutAssignment);
 				}
@@ -1104,7 +1104,7 @@ class Context {
 			// A held-out candidate that does not win queues only its holdouts' exposures (never its own), so they count
 			// the unit even when a later candidate wins. A logger error is deferred until the walk ends or reaches the
 			// winner, so later held-out candidates are still queued.
-			if ($exposeAssignment && ($wins || $assignment->suppressed)
+			if ($exposeAssignment && ($wins || $assignment->getSDKState('suppressed', false))
 				&& (!$assignment->exposed || ($this->hasHoldouts && $this->droppedHoldoutArms !== []))) {
 				try {
 					$this->triggerExposures($assignment);
@@ -1120,10 +1120,10 @@ class Context {
 			}
 			// Passed over by an exposing read: as without holdouts, a later unit doesn't switch the key's winner.
 			if ($exposeAssignment) {
-				$assignment->served = true;
+				$assignment->setSDKState('served', true);
 			}
 
-			if ($assignment->suppressed && $assignment->variables !== null && $selectedVariables === null) {
+			if ($assignment->getSDKState('suppressed', false) && $assignment->variables !== null && $selectedVariables === null) {
 				$selectedVariables = $assignment->variables;
 			}
 		}
@@ -1301,7 +1301,7 @@ class Context {
 
 		$exposure = new Exposure();
 		$assignment->exposed = true;
-		$assignment->served = true;
+		$assignment->setSDKState('served', true);
 		$assignment->isUnitPinnedMissing = $assignment->isUnitPinnedMissing || $assignment->isRuleMissingUnit;
 		$exposure->ingestAssignment($assignment);
 
@@ -1440,7 +1440,7 @@ class Context {
 			// Holdout arms are drawn with the assignment's own unit type, so while it was missing every arm is null. A served
 			// decision is kept even if the cap dropped its exposure, which only makes the exposure retryable.
 			if (($assignment->isRuleMissingUnit && !$assignment->isUnitPinnedMissing)
-				|| (!$assignment->served && $assignment->holdoutAssignments !== null)) {
+				|| (!$assignment->getSDKState('served', false) && $assignment->getSDKState('holdoutAssignments') !== null)) {
 				unset($this->assignmentCache[$experimentName]);
 			}
 		}
