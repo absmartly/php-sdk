@@ -697,6 +697,13 @@ class Context {
 		return false;
 	}
 
+	private function initializeAssignmentState(Assignment $assignment): void {
+		foreach (['served' => false, 'suppressed' => false, 'holdouts' => null, 'holdoutAssignments' => null,
+			'holdoutArmCount' => 0] as $name => $value) {
+			try { $assignment->{$name} = $value; } catch (\TypeError $exception) { }
+		}
+	}
+
 	private function getAssignment(string $experimentName): Assignment {
 		$experiment = $this->getExperiment($experimentName);
 
@@ -758,6 +765,7 @@ class Context {
 			$experiment = $this->getExperiment($experimentName);
 		}
 		$this->assignmentCache[$experimentName] = $assignment = new Assignment();
+		$this->initializeAssignmentState($assignment);
 		$nested = isset($this->deciding[$experimentName]);
 		$this->deciding[$experimentName] = true;
 		try {
@@ -963,6 +971,7 @@ class Context {
 		}
 
 		$assignment = new Assignment();
+		$this->initializeAssignmentState($assignment);
 		$assignment->id = $holdout->id;
 		$assignment->name = $holdout->name;
 		$assignment->iteration = $holdout->iteration;

@@ -6,19 +6,6 @@ use stdClass;
 
 #[\AllowDynamicProperties]
 class Assignment {
-	public function __construct() {
-		// Holdout bookkeeping lives in dynamic fields, so a customer subclass that declares these names (typed or not)
-		// still loads; the SDK only writes them on the Assignment objects it creates.
-		foreach (['served' => false, 'suppressed' => false, 'holdouts' => null, 'holdoutAssignments' => null,
-			'holdoutArmCount' => 0] as $name => $value) {
-			try {
-				$this->{$name} = $value;
-			}
-			catch (\TypeError $exception) {
-			}
-		}
-	}
-
 	public int $id = 0;
 	public int $iteration = 0;
 	public int $fullOnVariant = 0;
