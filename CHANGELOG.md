@@ -43,10 +43,9 @@
 
 - Ready and Refresh event logger data (`ContextData`) now has a `holdouts` property, an empty array when there are
   none.
-- New typed public properties: `ContextData::$holdouts` (`array`); `Experiment::$holdoutIds` (`?array`) and
-  `$holdoutType` (`?string`); `Assignment::$suppressed` and `$served` (`bool`), `$holdouts` and
-  `$holdoutAssignments` (`?array`) and `$holdoutArmCount` (`int`). A subclass that already declares a property of the
-  same name must declare the same type, or PHP rejects the class when it loads.
+- New public properties: `ContextData::$holdouts`; `Experiment::$holdoutIds` and `$holdoutType`; and
+  `Assignment::$suppressed`, `$served`, `$holdouts`, `$holdoutAssignments` and `$holdoutArmCount`. They are
+  intentionally untyped so existing subclasses that redeclare public model properties without types continue to load.
 - With holdouts in the data, an exposure logger error on a held-out candidate during `getVariableValue()` no longer
   stops the walk over the experiments defining the key: the winner is still found and exposed, and the first error
   is re-thrown afterwards, as in the Java SDK. Once an event logger closes the context mid-read, whether or not it
