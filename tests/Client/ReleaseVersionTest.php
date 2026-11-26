@@ -64,6 +64,14 @@ class ReleaseVersionTest extends TestCase {
 		self::assertSame("'/^v(" . self::VERSION . ")\$/D'", self::tagPattern($crlf));
 	}
 
+	public function testTagPatternReadsTheOneLiveCheck(): void {
+		$check = "if (preg_match('/^v(1)\$/D', \$tag, \$match) !== 1) {";
+		self::assertSame("'/^v(1)\$/D'", self::tagPattern("<?php\n// $check\n$check\n"));
+		self::assertNull(self::tagPattern("<?php\n// $check\n"));
+		self::assertNull(self::tagPattern("<?php\n$check\n$check\n"));
+		self::assertNull(self::tagPattern("<?php\n"));
+	}
+
 	public function testOtherPreReleaseTagDiffersFromAPreReleaseVersion(): void {
 		self::assertSame('v1.3.0-rc.99999', self::otherPreReleaseTag('1.3.0-rc.1'));
 		self::assertSame('v1.3.0-rc.99999', self::otherPreReleaseTag('1.3.0'));
@@ -84,7 +92,10 @@ class ReleaseVersionTest extends TestCase {
 		}
 		else {
 			self::assertSame(1, $status, $stdout);
-			self::assertStringContainsString($expected === 'format' ? 'is not a release version' : 'does not match Client::SDK_VERSION', $stderr);
+			self::assertStringContainsString($expected === 'format'
+				? 'is not a release version: vMAJOR.MINOR.PATCH, optionally followed by -alpha, -beta or -rc and an optional'
+					. ' .number (as in v1.3.0-rc.1), with numbers of at most five digits, no leading zeros and no build metadata'
+				: 'does not match Client::SDK_VERSION ' . Client::SDK_VERSION . '; bump it before tagging', $stderr);
 			// The tag is escaped, so the message is one line of printable text.
 			self::assertSame(1, substr_count($stderr, "\n"), $stderr);
 			self::assertDoesNotMatchRegularExpression('/[\x00-\x09\x0B-\x1F\x7F]/', $stderr);
@@ -232,7 +243,7 @@ class ReleaseVersionTest extends TestCase {
 		self::assertStringContainsString(hash('sha256', "## 1.2.0\n\n- two"), (string) $problem);
 	}
 
-	/** The script's tag pattern, as written in its source, whatever its line endings. */
+	/** The script's tag pattern, as written in its source with LF or CRLF line endings, or null unless there is one. */
 	private static function tagPattern(string $script): ?string {
 		$script = str_replace("\r\n", "\n", $script);
 		if (preg_match_all('/^if \(preg_match\((\'.*\'), \$tag, \$match\) !== 1\) \{$/m', $script, $matches) !== 1) {
