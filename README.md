@@ -738,7 +738,7 @@ tags through its GitHub webhook. To release:
    [CHANGELOG.md](CHANGELOG.md) entries under it.
 2. Merge to `main`. Packagist imports a tag as soon as it is pushed, so check the version on the merged `main`
    before tagging and push the tag only if the check passes:
-   `php .github/scripts/check-release-version.php v1.1.0 && git tag v1.1.0 && git push origin v1.1.0`.
+   `php .github/scripts/check-release-version.php vX.Y.Z && git tag vX.Y.Z && git push origin vX.Y.Z`.
 3. The Release workflow validates `composer.json`, re-checks that the tag matches `Client::SDK_VERSION`, runs the
    tests and creates the GitHub release; Packagist lists the version within a few minutes.
 
