@@ -2,7 +2,7 @@
 
 namespace ABSmartly\SDK\Context;
 
-class ContextData {
+class ContextData extends \ABSmartly\SDK\DynamicModel {
 
 	public array $experiments;
 	/** @var object[] The collector's holdouts ({id, name, iteration, seedHi, seedLo, split, ...}), by experiments' holdoutIds. */

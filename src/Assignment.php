@@ -4,7 +4,7 @@ namespace ABSmartly\SDK;
 
 use stdClass;
 
-class Assignment {
+class Assignment extends DynamicModel {
 	public int $id = 0;
 	public int $iteration = 0;
 	public int $fullOnVariant = 0;

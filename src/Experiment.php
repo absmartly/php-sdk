@@ -11,7 +11,7 @@ use function property_exists;
 
 use const JSON_THROW_ON_ERROR;
 
-class Experiment {
+class Experiment extends DynamicModel {
 	public int $id;
 	public string $name;
 	public string $unitType;
