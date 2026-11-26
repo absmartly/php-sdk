@@ -19,13 +19,14 @@ use PHPUnit\Framework\TestCase;
  * of only "-" or "=" (underlined headings and thematic breaks), indented "#" headings, "##" not followed by a space,
  * a byte order mark and bare CR line endings.
  *
- * Pre-releases are limited to a lowercase alpha, beta or rc with an optional ".number" (as in 1.3.0-rc.1). Composer,
- * and so Packagist, rejects other semver pre-releases such as 1.3.0-1 or 1.3.0-preview.1, and orders forms like
- * 1.3.0-beta2 or 1.3.0-RC.1 differently from semver.
+ * Pre-releases are limited to a lowercase alpha, beta or rc with an optional ".number" (as in 1.3.0-rc.1), and each
+ * number to six digits. Composer, and so Packagist, rejects other semver pre-releases such as 1.3.0-1 or
+ * 1.3.0-preview.1 and a major version of seven digits or more, and orders forms like 1.3.0-beta2 or 1.3.0-RC.1
+ * differently from semver.
  */
 class ReleaseVersionTest extends TestCase {
 	/** Semver 2.0.0 without build metadata, pre-releases as above; check-release-version.php uses it too. */
-	private const VERSION = '(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:alpha|beta|rc)(?:\.(?:0|[1-9]\d*))?)?';
+	private const VERSION = '(?:0|[1-9]\d{0,5})\.(?:0|[1-9]\d{0,5})\.(?:0|[1-9]\d{0,5})(?:-(?:alpha|beta|rc)(?:\.(?:0|[1-9]\d{0,5}))?)?';
 
 	/** Lines that could hide or fake a "## " heading, each with the reason it is rejected. */
 	private const UNREAD_MARKDOWN = [
@@ -57,8 +58,14 @@ class ReleaseVersionTest extends TestCase {
 
 	public function testReleaseScriptUsesTheSameVersionGrammar(): void {
 		$script = (string) file_get_contents(self::root() . self::SCRIPT);
-		self::assertSame(1, preg_match_all('/^if \(preg_match\((\'.*\'), \$tag, \$match\) !== 1\) \{$/m', $script, $matches));
-		self::assertSame("'/^v(" . self::VERSION . ")\$/D'", $matches[1][0]);
+		self::assertSame("'/^v(" . self::VERSION . ")\$/D'", self::tagPattern($script));
+		// A Windows checkout may have CRLF line endings.
+		self::assertSame("'/^v(" . self::VERSION . ")\$/D'", self::tagPattern(str_replace("\n", "\r\n", $script)));
+	}
+
+	public function testOtherPreReleaseTagDiffersFromAPreReleaseVersion(): void {
+		self::assertSame('v1.3.0-rc.999999', self::otherPreReleaseTag('1.3.0-rc.1'));
+		self::assertSame('v1.3.0-rc.999999', self::otherPreReleaseTag('1.3.0'));
 	}
 
 	/** @dataProvider releaseTags */
@@ -79,6 +86,9 @@ class ReleaseVersionTest extends TestCase {
 		else {
 			self::assertSame(1, $status, $stdout);
 			self::assertStringContainsString($expected === 'format' ? 'is not a release version' : 'does not match Client::SDK_VERSION', $stderr);
+			// The tag is escaped, so the message is one line of printable text.
+			self::assertSame(1, substr_count($stderr, "\n"), $stderr);
+			self::assertDoesNotMatchRegularExpression('/[\x00-\x09\x0B-\x1F\x7F]/', $stderr);
 		}
 	}
 
@@ -87,12 +97,14 @@ class ReleaseVersionTest extends TestCase {
 		return [
 			'current version' => ["v$version", 'ok'],
 			'other version' => ['v0.0.1', 'mismatch'],
-			'pre-release of the current version' => ["v$version-rc.1", 'mismatch'],
+			'pre-release of the current version' => [self::otherPreReleaseTag($version), 'mismatch'],
 			'no v' => [$version, 'format'],
 			'capital V' => ["V$version", 'format'],
 			'trailing space' => ["v$version ", 'format'],
 			'trailing newline' => ["v$version\n", 'format'],
 			'leading zero' => ['v01.2.0', 'format'],
+			'seven-digit number' => ['v1000000.0.0', 'format'],
+			'control character' => ["v$version\x07", 'format'],
 			'build metadata' => ["v$version+build", 'format'],
 			'pre-release Composer cannot read' => ["v$version-preview.1", 'format'],
 			'undotted pre-release number' => ["v$version-rc1", 'format'],
@@ -120,6 +132,7 @@ class ReleaseVersionTest extends TestCase {
 			'release above its pre-release' => ["## 1.3.0\n\n## 1.3.0-rc.1\n", '1.3.0'],
 			'pre-releases in precedence order' => ["## 1.3.0-rc.10\n\n## 1.3.0-rc.2\n\n## 1.3.0-rc\n\n## 1.3.0-beta.1\n\n## 1.3.0-beta\n\n## 1.3.0-alpha.0\n", '1.3.0-rc.10'],
 			'zero components' => ["## 1.0.0-alpha.0\n\n## 0.10.0\n\n## 0.9.0\n", '1.0.0-alpha.0'],
+			'six-digit numbers' => ["## 999999.999999.999999-rc.999999\n\n## 1.1.0\n", '999999.999999.999999-rc.999999'],
 			'two spaces after the hashes' => ["##  1.2.0\n\n## 1.1.0\n", '1.2.0'],
 			'wrapped bullet starting with an issue number' => ["## 1.2.0\n\n- Fixed a crash\n  #42 in refresh.\n\n## 1.1.0\n", '1.2.0'],
 			'autolinks' => ["## 1.2.0\n\n- See\n  <https://example.com>\n<https://example.com>\n\n## 1.1.0\n", '1.2.0'],
@@ -140,6 +153,8 @@ class ReleaseVersionTest extends TestCase {
 			'closing hashes' => ["## 1.2.0 ##\n\n## 1.1.0\n", '1.2.0 ##'],
 			'two parts' => ["## 1.2\n\n## 1.1.0\n", '1.2'],
 			'leading zero' => ["## 01.2.0\n\n## 1.1.0\n", '01.2.0'],
+			'seven-digit number' => ["## 1000000.0.0\n\n## 1.1.0\n", '1000000.0.0'],
+			'version spelled differently' => ["## 1.2.0\n\n## 1.1.0\n", 'v1.2.0'],
 			'leading zero in a pre-release' => ["## 1.2.0-rc.01\n\n## 1.1.0\n", '1.2.0-rc.01'],
 			'empty pre-release identifier' => ["## 1.2.0-rc..1\n\n## 1.1.0\n", '1.2.0-rc..1'],
 			'pre-release Composer cannot read' => ["## 1.2.0-preview.1\n\n## 1.1.0\n", '1.2.0-preview.1'],
@@ -175,7 +190,10 @@ class ReleaseVersionTest extends TestCase {
 			'bare hashes' => ["## 1.2.0\n\n##\n\n## 1.1.0\n", '1.2.0'],
 			'no-break space after the hashes' => ["## 1.2.0\n\n##\u{A0}1.1.5\n\n## 1.1.0\n", '1.2.0'],
 			'byte order mark hiding the newest heading' => ["\u{FEFF}## 1.2.0\n\n## 1.1.0\n", '1.1.0'],
+			'byte order mark before the newest heading' => ["\u{FEFF}## 1.2.0\n\n## 1.1.0\n", '1.2.0'],
 			'cr line ending hiding the newest heading' => ["Notes\r## 1.2.0\n\n## 1.1.0\n", '1.1.0'],
+			'cr line ending before the newest heading' => ["Notes\r## 1.2.0\n\n## 1.1.0\n", '1.2.0'],
+			'indented h3' => ["## 1.2.0\n\n  ### 1.1.5\n\n## 1.1.0\n", '1.2.0'],
 		];
 	}
 
@@ -200,12 +218,27 @@ class ReleaseVersionTest extends TestCase {
 			'missing final newline' => ["## 1.1.0\n\n- one", false],
 			'missing' => ["## Unreleased\n\n- new\n", false],
 			'released section without a hash' => ["## 1.2.0\n\n- two\n## 1.1.0\n\n- one\n", false],
+			'lowercase unreleased' => ["## unreleased\n## 1.1.0\n\n- one\n", false],
 		];
 	}
 
 	public function testMissingHashNamesTheHashToRecord(): void {
 		$problem = self::sectionProblem("## 1.2.0\n\n- two\n## 1.1.0\n", ['1.1.0' => hash('sha256', "## 1.1.0\n")]);
 		self::assertStringContainsString(hash('sha256', "## 1.2.0\n\n- two"), (string) $problem);
+	}
+
+	/** The script's tag pattern, as written in its source. */
+	private static function tagPattern(string $script): ?string {
+		$script = str_replace("\r\n", "\n", $script);
+		if (preg_match_all('/^if \(preg_match\((\'.*\'), \$tag, \$match\) !== 1\) \{$/m', $script, $matches) !== 1) {
+			return null;
+		}
+		return $matches[1][0];
+	}
+
+	/** A valid tag for a pre-release of $version's release that is not $version itself. */
+	private static function otherPreReleaseTag(string $version): string {
+		return 'v' . explode('-', $version)[0] . '-rc.999999';
 	}
 
 	/** A released CHANGELOG with 300 lines of notes and then $tail. */

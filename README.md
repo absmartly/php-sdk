@@ -17,7 +17,7 @@ runtime behavior, including experiment bucketing, exposure payloads and error ha
 A/B Smartly PHP SDK can be installed with [`composer`](https://getcomposer.org):
 
 ```bash
-composer require absmartly/php-sdk:^1.1
+composer require absmartly/php-sdk:^1.2
 ```
 
 ## Getting Started
