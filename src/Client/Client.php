@@ -22,7 +22,7 @@ use const JSON_THROW_ON_ERROR;
 
 class Client implements AsyncClientInterface {
 	/** The SDK version, sent in the X-Agent header. Keep in step with the release tag (checked by the release workflow). */
-	public const SDK_VERSION = '1.1.0';
+	public const SDK_VERSION = '1.2.0';
 	public const SDK_NAME = 'absmartly-php-sdk';
 	/** @deprecated Use SDK_VERSION. */
 	protected const VERSION = self::SDK_VERSION;
@@ -73,7 +73,7 @@ class Client implements AsyncClientInterface {
 		return $applicationVersion;
 	}
 
-	/** The value sent as the X-Agent header, "<name>/<version>", e.g. "absmartly-php-sdk/1.1.0". */
+	/** The value sent as the X-Agent header, "<name>/<version>", e.g. "absmartly-php-sdk/1.2.0". */
 	public function getAgent(): string {
 		return $this->headers['X-Agent'];
 	}

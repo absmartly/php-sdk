@@ -17,7 +17,7 @@ runtime behavior, including experiment bucketing, exposure payloads and error ha
 A/B Smartly PHP SDK can be installed with [`composer`](https://getcomposer.org):
 
 ```bash
-composer require absmartly/php-sdk:^1.1
+composer require absmartly/php-sdk:^1.2
 ```
 
 ## Getting Started
@@ -735,10 +735,11 @@ The package is published on [Packagist](https://packagist.org/packages/absmartly
 tags through its GitHub webhook. To release:
 
 1. Set `Client::SDK_VERSION` (sent in the `X-Agent` header) to the new version and move the
-   [CHANGELOG.md](CHANGELOG.md) entries under it.
+   [CHANGELOG.md](CHANGELOG.md) entries under it. Then record the new section's hash in `RELEASED_SECTIONS` in
+   `tests/Client/ReleaseVersionTest.php`; the failing test prints the line to add.
 2. Merge to `main`. Packagist imports a tag as soon as it is pushed, so check the version on the merged `main`
    before tagging and push the tag only if the check passes:
-   `php .github/scripts/check-release-version.php v1.1.0 && git tag v1.1.0 && git push origin v1.1.0`.
+   `composer install && php .github/scripts/check-release-version.php vX.Y.Z && git tag vX.Y.Z && git push origin vX.Y.Z`.
 3. The Release workflow validates `composer.json`, re-checks that the tag matches `Client::SDK_VERSION`, runs the
    tests and creates the GitHub release; Packagist lists the version within a few minutes.
 
