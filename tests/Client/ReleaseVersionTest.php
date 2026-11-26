@@ -20,13 +20,13 @@ use PHPUnit\Framework\TestCase;
  * a byte order mark and bare CR line endings.
  *
  * Pre-releases are limited to a lowercase alpha, beta or rc with an optional ".number" (as in 1.3.0-rc.1), and each
- * number to six digits. Composer, and so Packagist, rejects other semver pre-releases such as 1.3.0-1 or
- * 1.3.0-preview.1 and a major version of seven digits or more, and orders forms like 1.3.0-beta2 or 1.3.0-RC.1
- * differently from semver.
+ * number to five digits. Composer, and so Packagist, rejects other semver pre-releases such as 1.3.0-1 or
+ * 1.3.0-preview.1, reads a major version of more than five digits as a date (or not at all), and orders forms like
+ * 1.3.0-beta2 or 1.3.0-RC.1 differently from semver.
  */
 class ReleaseVersionTest extends TestCase {
 	/** Semver 2.0.0 without build metadata, pre-releases as above; check-release-version.php uses it too. */
-	private const VERSION = '(?:0|[1-9]\d{0,5})\.(?:0|[1-9]\d{0,5})\.(?:0|[1-9]\d{0,5})(?:-(?:alpha|beta|rc)(?:\.(?:0|[1-9]\d{0,5}))?)?';
+	private const VERSION = '(?:0|[1-9]\d{0,4})\.(?:0|[1-9]\d{0,4})\.(?:0|[1-9]\d{0,4})(?:-(?:alpha|beta|rc)(?:\.(?:0|[1-9]\d{0,4}))?)?';
 
 	/** Lines that could hide or fake a "## " heading, each with the reason it is rejected. */
 	private const UNREAD_MARKDOWN = [
@@ -59,25 +59,24 @@ class ReleaseVersionTest extends TestCase {
 	public function testReleaseScriptUsesTheSameVersionGrammar(): void {
 		$script = (string) file_get_contents(self::root() . self::SCRIPT);
 		self::assertSame("'/^v(" . self::VERSION . ")\$/D'", self::tagPattern($script));
-		// A Windows checkout may have CRLF line endings.
-		self::assertSame("'/^v(" . self::VERSION . ")\$/D'", self::tagPattern(str_replace("\n", "\r\n", $script)));
+		// A Windows checkout may have CRLF line endings, whichever this one has.
+		$crlf = str_replace("\n", "\r\n", str_replace("\r\n", "\n", $script));
+		self::assertSame("'/^v(" . self::VERSION . ")\$/D'", self::tagPattern($crlf));
 	}
 
 	public function testOtherPreReleaseTagDiffersFromAPreReleaseVersion(): void {
-		self::assertSame('v1.3.0-rc.999999', self::otherPreReleaseTag('1.3.0-rc.1'));
-		self::assertSame('v1.3.0-rc.999999', self::otherPreReleaseTag('1.3.0'));
+		self::assertSame('v1.3.0-rc.99999', self::otherPreReleaseTag('1.3.0-rc.1'));
+		self::assertSame('v1.3.0-rc.99999', self::otherPreReleaseTag('1.3.0'));
+		self::assertSame('v1.3.0-rc.99998', self::otherPreReleaseTag('1.3.0-rc.99999'));
+	}
+
+	public function testReleaseScriptEscapesTheTagItReports(): void {
+		self::assertStringContainsString('Release tag "v1\\"2\\\\\\t" is not', self::runScript("v1\"2\\\t")[2]);
 	}
 
 	/** @dataProvider releaseTags */
 	public function testReleaseScript(string $tag, string $expected): void {
-		// An argument list runs PHP without a shell, so the tag reaches the script unchanged on Windows too.
-		$process = proc_open([PHP_BINARY, self::root() . self::SCRIPT, $tag], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
-		self::assertIsResource($process);
-		$stdout = (string) stream_get_contents($pipes[1]);
-		$stderr = (string) stream_get_contents($pipes[2]);
-		fclose($pipes[1]);
-		fclose($pipes[2]);
-		$status = proc_close($process);
+		[$status, $stdout, $stderr] = self::runScript($tag);
 
 		if ($expected === 'ok') {
 			self::assertSame(0, $status, $stderr);
@@ -103,8 +102,12 @@ class ReleaseVersionTest extends TestCase {
 			'trailing space' => ["v$version ", 'format'],
 			'trailing newline' => ["v$version\n", 'format'],
 			'leading zero' => ['v01.2.0', 'format'],
-			'seven-digit number' => ['v1000000.0.0', 'format'],
+			'six-digit major' => ['v100000.0.0', 'format'],
+			'six-digit minor' => ['v1.100000.0', 'format'],
+			'six-digit patch' => ['v1.0.100000', 'format'],
+			'six-digit pre-release number' => ['v1.2.0-rc.100000', 'format'],
 			'control character' => ["v$version\x07", 'format'],
+			'delete character' => ["v$version\x7F", 'format'],
 			'build metadata' => ["v$version+build", 'format'],
 			'pre-release Composer cannot read' => ["v$version-preview.1", 'format'],
 			'undotted pre-release number' => ["v$version-rc1", 'format'],
@@ -132,7 +135,7 @@ class ReleaseVersionTest extends TestCase {
 			'release above its pre-release' => ["## 1.3.0\n\n## 1.3.0-rc.1\n", '1.3.0'],
 			'pre-releases in precedence order' => ["## 1.3.0-rc.10\n\n## 1.3.0-rc.2\n\n## 1.3.0-rc\n\n## 1.3.0-beta.1\n\n## 1.3.0-beta\n\n## 1.3.0-alpha.0\n", '1.3.0-rc.10'],
 			'zero components' => ["## 1.0.0-alpha.0\n\n## 0.10.0\n\n## 0.9.0\n", '1.0.0-alpha.0'],
-			'six-digit numbers' => ["## 999999.999999.999999-rc.999999\n\n## 1.1.0\n", '999999.999999.999999-rc.999999'],
+			'five-digit numbers' => ["## 99999.99999.99999-rc.99999\n\n## 1.1.0\n", '99999.99999.99999-rc.99999'],
 			'two spaces after the hashes' => ["##  1.2.0\n\n## 1.1.0\n", '1.2.0'],
 			'wrapped bullet starting with an issue number' => ["## 1.2.0\n\n- Fixed a crash\n  #42 in refresh.\n\n## 1.1.0\n", '1.2.0'],
 			'autolinks' => ["## 1.2.0\n\n- See\n  <https://example.com>\n<https://example.com>\n\n## 1.1.0\n", '1.2.0'],
@@ -153,7 +156,7 @@ class ReleaseVersionTest extends TestCase {
 			'closing hashes' => ["## 1.2.0 ##\n\n## 1.1.0\n", '1.2.0 ##'],
 			'two parts' => ["## 1.2\n\n## 1.1.0\n", '1.2'],
 			'leading zero' => ["## 01.2.0\n\n## 1.1.0\n", '01.2.0'],
-			'seven-digit number' => ["## 1000000.0.0\n\n## 1.1.0\n", '1000000.0.0'],
+			'six-digit number' => ["## 100000.0.0\n\n## 1.1.0\n", '100000.0.0'],
 			'version spelled differently' => ["## 1.2.0\n\n## 1.1.0\n", 'v1.2.0'],
 			'leading zero in a pre-release' => ["## 1.2.0-rc.01\n\n## 1.1.0\n", '1.2.0-rc.01'],
 			'empty pre-release identifier' => ["## 1.2.0-rc..1\n\n## 1.1.0\n", '1.2.0-rc..1'],
@@ -194,6 +197,8 @@ class ReleaseVersionTest extends TestCase {
 			'cr line ending hiding the newest heading' => ["Notes\r## 1.2.0\n\n## 1.1.0\n", '1.1.0'],
 			'cr line ending before the newest heading' => ["Notes\r## 1.2.0\n\n## 1.1.0\n", '1.2.0'],
 			'indented h3' => ["## 1.2.0\n\n  ### 1.1.5\n\n## 1.1.0\n", '1.2.0'],
+			'tab-indented heading' => ["## 1.2.0\n\n\t## 1.1.5\n\n## 1.1.0\n", '1.2.0'],
+			'uppercase html block' => ["## 1.2.0\n<DETAILS>\n\n## 1.1.5\n\n## 1.1.0\n", '1.2.0'],
 		];
 	}
 
@@ -227,7 +232,7 @@ class ReleaseVersionTest extends TestCase {
 		self::assertStringContainsString(hash('sha256', "## 1.2.0\n\n- two"), (string) $problem);
 	}
 
-	/** The script's tag pattern, as written in its source. */
+	/** The script's tag pattern, as written in its source, whatever its line endings. */
 	private static function tagPattern(string $script): ?string {
 		$script = str_replace("\r\n", "\n", $script);
 		if (preg_match_all('/^if \(preg_match\((\'.*\'), \$tag, \$match\) !== 1\) \{$/m', $script, $matches) !== 1) {
@@ -238,7 +243,24 @@ class ReleaseVersionTest extends TestCase {
 
 	/** A valid tag for a pre-release of $version's release that is not $version itself. */
 	private static function otherPreReleaseTag(string $version): string {
-		return 'v' . explode('-', $version)[0] . '-rc.999999';
+		$release = explode('-', $version)[0];
+		return $version === "$release-rc.99999" ? "v$release-rc.99998" : "v$release-rc.99999";
+	}
+
+	/**
+	 * Runs the release script with $tag. An argument list runs PHP without a shell, so the tag reaches the script
+	 * unchanged on Windows too.
+	 *
+	 * @return array{0: int, 1: string, 2: string} exit status, stdout and stderr
+	 */
+	private static function runScript(string $tag): array {
+		$process = proc_open([PHP_BINARY, self::root() . self::SCRIPT, $tag], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+		self::assertIsResource($process);
+		$stdout = (string) stream_get_contents($pipes[1]);
+		$stderr = (string) stream_get_contents($pipes[2]);
+		fclose($pipes[1]);
+		fclose($pipes[2]);
+		return [proc_close($process), $stdout, $stderr];
 	}
 
 	/** A released CHANGELOG with 300 lines of notes and then $tail. */
