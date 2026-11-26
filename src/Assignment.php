@@ -4,7 +4,6 @@ namespace ABSmartly\SDK;
 
 use stdClass;
 
-#[\AllowDynamicProperties]
 class Assignment {
 	public int $id = 0;
 	public int $iteration = 0;

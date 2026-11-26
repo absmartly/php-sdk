@@ -2,7 +2,6 @@
 
 namespace ABSmartly\SDK\Context;
 
-#[\AllowDynamicProperties]
 class ContextData {
 
 	public array $experiments;
