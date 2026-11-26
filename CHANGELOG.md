@@ -1,5 +1,91 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Holdouts.** `ContextData::$holdouts` carries the collector's `holdouts` and `Experiment::$holdoutIds` (and
+  `$holdoutType`) the ids that cover each experiment, as in the JavaScript and Java SDKs. A unit held out by any of
+  an experiment's holdouts gets control (variant 0, not assigned) without an exposure of its own, ahead of the
+  audience, full-on, traffic and custom assignment; an override or a matching assignment rule still wins. Arm 0 of
+  a holdout holds the unit out; a 3-arm holdout's arm 1 holds out only experiments that are not full-on (the arm
+  count comes from `split`, never `holdoutType`). Each holdout publishes one ordinary exposure (its `id`, `name`
+  and arm as `variant`, hashed with the covered experiment's unit type) per unit type, on the first exposing
+  `getTreatment()`/`getVariableValue()` of an experiment it covers; peeks publish nothing. The arm is kept until
+  the holdout's iteration changes, so a same-iteration seed or split edit does not re-randomize or re-expose, and a
+  unit set later (even by an attribute getter during an audience check) re-resolves a not-yet-exposed experiment,
+  except a candidate an exposing `getVariableValue()` passed over: as without holdouts, it keeps the decision made
+  without the unit (for that key and for `getTreatment()`) until a refresh rebuilds it. A decision already served
+  keeps its treatment even if the retained-event cap drops its exposure; the exposure is just queued again.
+  Unlike JS, which coerces them, malformed holdouts are
+  ignored and their experiments assign normally: a holdout whose `id`, `iteration`, `seedHi` or `seedLo` is
+  missing, null or not a JSON integer within the int64 range (integral floats such as `11.0` count; numeric
+  strings such as `"11"` do not), whose `name` is not a string, or whose `split` is not a non-empty array of
+  numbers; and `holdoutIds` entries that are not such integers. Ids that name no holdout and unknown fields are
+  ignored too. `new ContextData($experiments)` keeps working (no holdouts). Unlike JS and Java, an overridden
+  experiment covered by holdouts is rebuilt when a refresh changes its unit type, so its overridden exposure and
+  holdout exposure are queued again for the new unit type. A holdout exposure that the retained-event cap drops is
+  queued again by the next exposing read of an experiment whose cached assignment still pins that arm, provided the
+  arm was still current when it was dropped. An arm already replaced by a new draw when the cap drops it is not
+  queued again; the cap is otherwise lossy.
+  - **Shared variable keys.** The 1.1.0 rule is unchanged: only the winner is exposed, and a winner whose variant
+    lacks the key returns the caller default. A held-out candidate never wins (it is not assigned), so the walk
+    moves on to the next one. Each held-out candidate `getVariableValue()` checks before the winner still queues its
+    holdouts' exposures (never its own), so the holdout counts the unit. When no candidate wins, the first held-out
+    candidate's control value is returned if its control variant defines the key, else the caller default.
+  - **Cost.** Payloads without holdouts keep the 1.1.0 variable lookup results and exposures. On PHP 8.5 with no
+    holdouts, context creation measured about 5-8% slower than 1.1.0 (extra holdout validation; the smaller
+    figure with 50 experiments, the larger with 4), cached `getVariableValue()` about 3-5% slower with opcache and
+    about 9-12% without (coverage is checked per candidate, since a logger refresh can install it mid-walk), and
+    `getTreatment()` level with opcache and about 5% slower without.
+
+### Changed
+
+- Ready and Refresh event logger data (`ContextData`) now has a `holdouts` property, an empty array when there are
+  none.
+- No new declared properties or methods on the public model classes: a subclass of `ContextData`, `Experiment` or
+  `Assignment` that already declares a property or method with one of the new holdout names (typed or untyped) still
+  loads and works.
+- With holdouts in the data, an exposure logger error on a held-out candidate during `getVariableValue()` no longer
+  stops the walk over the experiments defining the key: the winner is still found and exposed, and the first error
+  is re-thrown afterwards, as in the Java SDK. Once an event logger closes the context mid-read, whether or not it
+  then throws, nothing more is queued from that read (`getTreatment()` or `getVariableValue()`), including the
+  experiment's holdout exposures, since a closed context can't publish them. If any callback closes the context
+  while a logger error is pending, `getVariableValue()` evaluates no later experiment and re-throws that first
+  error. A context whose data has never covered an experiment with a holdout keeps the 1.1.0 exception and queueing
+  behaviour.
+- An audience attribute getter that reads an experiment while its decision is being made (a first decision, or a
+  re-check that replaces the cached one) no longer queues that read's exposure twice: with or without holdouts, the
+  outer read keeps a nested decision made on the currently installed data without evaluating its audience again.
+  If data was installed after the nested decision, it validates that decision again, once: if a callback installs new
+  data again during that, the outer read keeps the nested decision and the next read decides again (so a getter that
+  refreshes on every read still finishes). So a getter that refreshes
+  the experiment away and then reads it gives both reads the unknown-experiment control (1.1.0 gave the outer read
+  the removed definition's variant and exposed both). A re-check whose cached decision still matches returns it as in
+  1.1.0.
+- If an event logger (or an audience attribute getter) refreshes the context during `getVariableValue()`, the rest
+  of the lookup uses the refreshed data. An experiment the refresh removed, or that no longer defines the key,
+  including the one being decided when the getter refreshed, is skipped unless it is overridden, even when an
+  earlier peek cached its held-out assignment, so it queues no exposures, unlike JS, which still serves the cached
+  assignment. A decision that a throwing audience getter aborted is discarded, so it can't supply holdout
+  exposures later, and a read of the same experiment from inside that getter makes its own decision rather than
+  serving the unfinished one.
+- `refresh()` keeps the previous data and logs an `Error` event when fetching or installing the new data raises any
+  `Throwable`, not only an `Exception`. A data provider that throws an `\Error`, or a mistyped field that raises a
+  `TypeError` while installing, no longer escapes `refresh()` (which also left the experiment index cleared). Code
+  that caught `\Error` around `refresh()` should listen for the `Error` event instead. A refresh installs its data
+  only once all of it is processed, so an `Error` logger for a malformed experiment in it reads the previous data,
+  and if that logger throws, the refresh is rejected with nothing from the new data left behind (on a pending
+  context, nothing is installed). If such a logger itself refreshes, later decisions follow whichever data ends up
+  installed. The initial load still installs experiments as it goes, as in 1.1.0; a `refresh()` called from a
+  callback during it does nothing, since the rest of the load would replace the refreshed data.
+- A `Refresh` event logger that throws (any `Throwable`) no longer undoes the refresh. The new data stays installed,
+  so assignments the handler read from it can't outlive it, and the error is ignored rather than sent back to that
+  logger as an `Error` event, as for `Publish` and as in JS, which swallows logger errors. 1.1.0 instead restored
+  the previous data and sent an `Error` event for an `Exception`, and let an `\Error` escape `refresh()`; code that
+  relied on that must catch errors inside its `Refresh` handler. A refresh that fails to load or install data still
+  keeps the previous data and sends `Error`.
+
 ## 1.1.0
 
 This release retains the 1.0.3 entry class and legacy method signatures, including subclass overrides. It also

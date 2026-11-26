@@ -11,7 +11,7 @@ use function property_exists;
 
 use const JSON_THROW_ON_ERROR;
 
-class Experiment {
+class Experiment extends DynamicModel {
 	public int $id;
 	public string $name;
 	public string $unitType;
@@ -31,8 +31,14 @@ class Experiment {
 	public ?array $customFieldValues = null;
 	/** JSON of the experiment's assignment rules ({"rules": [...]}), or null when it has none. */
 	public ?string $assignmentRules = null;
+	/** @var int[]|null Ids of the holdouts in ContextData::$holdouts that cover this experiment. */
+
+	/** The holdout's type ("full", "all_full_on") when this entry is a holdout; never read, arity comes from split. */
+
 
 	public function __construct(object $data) {
+		$holdoutIds = null;
+		$holdoutType = null;
 		$requiredFields = ['id', 'name', 'unitType', 'iteration', 'seedHi', 'seedLo', 'split',
 			'trafficSeedHi', 'trafficSeedLo', 'trafficSplit', 'fullOnVariant', 'variants'];
 
@@ -61,9 +67,27 @@ class Experiment {
 				// An object or array sent in place of the JSON string is ignored rather than failing the whole context.
 				$this->assignmentRules = is_string($value) && $value !== '' ? $value : null;
 			}
+			elseif ($field === 'holdoutIds') {
+				// Ids that aren't integers (integral floats such as 11.0 count) can't name a holdout, so they are dropped
+				// rather than failing the whole context.
+				$holdoutIds = null;
+				if (is_array($value)) {
+					$holdoutIds = [];
+					foreach ($value as $id) {
+						if (($id = Utils::integralValue($id)) !== null) {
+							$holdoutIds[] = $id;
+						}
+					}
+				}
+			}
+			elseif ($field === 'holdoutType') {
+				$holdoutType = is_string($value) ? $value : null;
+			}
 			elseif (property_exists($this, $field) && $field !== 'audience') {
 				$this->{$field} = $value;
 			}
 		}
+		if (!(property_exists($this, 'holdoutIds') && (new \ReflectionProperty($this, 'holdoutIds'))->isInitialized($this))) { try { $this->holdoutIds = $holdoutIds; } catch (\Throwable $e) { } }
+		if (!(property_exists($this, 'holdoutType') && (new \ReflectionProperty($this, 'holdoutType'))->isInitialized($this))) { try { $this->holdoutType = $holdoutType; } catch (\Throwable $e) { } }
 	}
 }

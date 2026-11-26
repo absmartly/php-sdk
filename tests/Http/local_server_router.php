@@ -34,7 +34,9 @@ if ($logFile) {
 
 header('Content-Type: application/json');
 if ($method === 'GET') {
-	echo '{"experiments":[]}';
+	$contextFile = getenv('ABSMARTLY_TEST_CONTEXT');
+	$context = $contextFile ? (string) file_get_contents($contextFile) : '';
+	echo $context !== '' ? $context : '{"experiments":[]}';
 } else {
 	echo '{}';
 }

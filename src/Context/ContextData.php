@@ -2,10 +2,16 @@
 
 namespace ABSmartly\SDK\Context;
 
-class ContextData {
-	public array $experiments;
+class ContextData extends \ABSmartly\SDK\DynamicModel {
 
-	public function __construct(array $experiments = []) {
+	public array $experiments;
+	/** @var object[] The collector's holdouts ({id, name, iteration, seedHi, seedLo, split, ...}), by experiments' holdoutIds. */
+
+
+	public function __construct(array $experiments = [], array $holdouts = []) {
 		$this->experiments = $experiments;
+		if (!(property_exists($this, 'holdouts') && (new \ReflectionProperty($this, 'holdouts'))->isInitialized($this))) {
+			try { $this->holdouts = $holdouts; } catch (\TypeError $exception) { }
+		}
 	}
 }
