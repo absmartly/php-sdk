@@ -7,7 +7,8 @@
 require dirname(__DIR__, 2) . '/vendor/autoload.php';
 
 $tag = $argv[1] ?? '';
-if (preg_match('/^v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/D', $tag, $match) !== 1) {
+// Semver 2.0.0 without build metadata; tests/Client/ReleaseVersionTest.php checks the CHANGELOG with the same grammar.
+if (preg_match('/^v((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?)$/D', $tag, $match) !== 1) {
 	fwrite(STDERR, "Release tag \"$tag\" is not of the form vMAJOR.MINOR.PATCH[-PRERELEASE]\n");
 	exit(1);
 }
