@@ -7,9 +7,10 @@ use PHPUnit\Framework\TestCase;
 
 /**
  * Keeps the version Client sends in step with the CHANGELOG: it must equal the newest released heading, i.e. the top
- * heading, or the one below it while the top is "Unreleased". This catches a release whose heading and version
- * disagree, and a version bumped before its heading is. A release that renames neither still passes here; only the
- * tag check in the release workflow catches that.
+ * heading, or the one below it while the top is "Unreleased", and that heading must be newer than the one below it.
+ * This catches a release whose heading and version disagree, a version bumped before its heading is, and a downgraded
+ * or duplicated heading. A release that renames neither still passes here; only .github/scripts/check-release-version.php
+ * catches that, run before tagging and again by the release workflow.
  */
 class ReleaseVersionTest extends TestCase {
 	public function testSdkVersionMatchesTheNewestReleasedChangelogHeading(): void {
@@ -22,6 +23,9 @@ class ReleaseVersionTest extends TestCase {
 		}
 
 		self::assertNotEmpty($headings, 'CHANGELOG has no released version heading');
-		self::assertSame($headings[0], Client::SDK_VERSION);
+		self::assertSame($headings[0], Client::SDK_VERSION, 'Client::SDK_VERSION differs from the newest released CHANGELOG heading');
+		if (isset($headings[1])) {
+			self::assertTrue(version_compare($headings[0], $headings[1], '>'), "CHANGELOG heading $headings[0] is not newer than $headings[1]");
+		}
 	}
 }
