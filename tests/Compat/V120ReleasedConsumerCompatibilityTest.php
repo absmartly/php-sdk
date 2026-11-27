@@ -244,6 +244,18 @@ class V120ReleasedConsumerCompatibilityTest extends TestCase {
 		}
 	}
 
+	public function testCustomerDeclaredSwitchbackNamesKeepReleasedPayloadHydration(): void {
+		$data = self::experimentInput();
+		$data->randomizationType = 'unit';
+		$data->switchbackPeriodMs = 3600000;
+		$experiment = new class($data) extends Experiment {
+			public string $randomizationType = 'customer-default';
+			public int $switchbackPeriodMs = 17;
+		};
+		self::assertSame('unit', $experiment->randomizationType);
+		self::assertSame(3600000, $experiment->switchbackPeriodMs);
+	}
+
 	public function testCustomerSubclassesReservingSwitchbackNamesStillConstruct(): void {
 		// Only old payload fields: asserting behavior absent from the release would not be a compatibility test.
 		$experiment = new class(self::experimentInput()) extends Experiment {

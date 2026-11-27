@@ -31,6 +31,8 @@
 
 ### Changed
 
+- `X-Agent` changes from `absmartly-php-sdk/1.2.0` to `absmartly-php-sdk/1.3.0` for all callers, including
+  non-switchback contexts. Update exact-version agent filters in exports or dashboards if used.
 - **Switchback experiments are served as switchbacks.** PHP 1.2.0 served `randomizationType: "switchback"`
   as sticky unit experiments. PHP 1.3.0 assigns them by cluster and period, so running switchbacks can change
   treatment and publish one exposure per period under the serving unit. Upgrade every SDK serving a switchback.

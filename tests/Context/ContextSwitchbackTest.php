@@ -3161,4 +3161,94 @@ class ContextSwitchbackTest extends TestCase {
 		self::assertSame(2, $context->getVariableValue('k', -1));
 		self::assertSame(['exp_c'], array_column($this->publishExposures($context), 1));
 	}
+	public function testAnAudienceGetterUpdateIsRevalidatedOnTheNextSwitchbackRead(): void {
+		$experiment = self::switchback(2);
+		$experiment->fullOnVariant = 1;
+		$experiment->audience = '{"filter":[{"eq":[{"var":"tier/value"},{"value":"gold"}]}]}';
+		$experiment->audienceStrict = true;
+		$context = $this->createContext(self::dataOf($experiment));
+		$tier = new class($context) {
+			private $value;
+			private Context $context;
+			public function __construct(Context $context) { $this->context = $context; }
+			public function __get($name) {
+				$this->context->setAttributeValue('tier', (object) ['value' => 'gold']);
+				return 'silver';
+			}
+		};
+		$context->setAttributeValue('tier', $tier);
+		self::assertSame(0, $context->getTreatment('exp_sb'));
+		self::assertSame(1, $context->getTreatment('exp_sb'));
+		self::assertSame([0, 1], array_column($this->publishExposures($context), 3));
+	}
+
+	public function testSameOutcomeAudienceValidationDoesNotAcknowledgeAGetterUpdate(): void {
+		$experiment = self::switchback(2);
+		$experiment->fullOnVariant = 1;
+		$experiment->audience = '{"filter":[{"eq":[{"var":"tier/value"},{"value":"gold"}]}]}';
+		$experiment->audienceStrict = true;
+		$context = $this->createContext(self::dataOf($experiment));
+		$context->setAttributeValue('tier', (object) ['value' => 'silver']);
+		self::assertSame(0, $context->getTreatment('exp_sb'));
+		$context->setAttributeValue('tier', new class($context) {
+			private $value;
+			private Context $context;
+			public function __construct(Context $context) { $this->context = $context; }
+			public function __get($name) {
+				$this->context->setAttributeValue('tier', (object) ['value' => 'gold']);
+				return 'silver';
+			}
+		});
+		self::assertSame(0, $context->getTreatment('exp_sb'));
+		self::assertSame(1, $context->getTreatment('exp_sb'));
+		self::assertSame([0, 1], array_column($this->publishExposures($context), 3));
+	}
+
+	/** Callback-created early-unit batches get the same bounded extra pass as callback-created goals. */
+	public function testEarlyUnitBatchesCannotExtendThePublishDrainWithoutBound(): void {
+		$context = $this->createContext(self::dataOf(self::switchback(2)));
+		$context->getTreatment('exp_sb');
+		$context->setUnit('extra0', 'u0');
+		$calls = 0;
+		$this->eventHandler->prerun = static function () use ($context, &$calls) {
+			if (++$calls > 4) { throw new \RuntimeException('unbounded drain'); }
+			$context->setOverride('exp_sb', $calls % 2);
+			$context->getTreatment('exp_sb');
+			$context->setUnit('extra' . $calls, 'u' . $calls);
+		};
+		$context->publish();
+		self::assertSame(2, $calls);
+		self::assertSame(1, $context->getPendingCount());
+		self::assertFalse($context->isClosed());
+		$this->eventHandler->prerun = null;
+		$context->close();
+		self::assertTrue($context->isClosed());
+		self::assertSame(0, $context->getPendingCount());
+		self::assertCount(3, $this->eventHandler->submitted);
+	}
+
+	/** No per-event identity map is needed when the accepted main batch still is the complete queue. */
+	public function testUnchangedMainBatchAvoidsPerEventRemovalAllocation(): void {
+		if (!function_exists('memory_reset_peak_usage')) {
+			self::markTestSkipped('PHP 8.2 is required for the allocation counter');
+		}
+		$context = $this->createContext(self::dataOf(self::switchback(2)));
+		for ($i = 0; $i < 20000; ++$i) { $context->track('goal'); }
+		$handler = new class extends \ABSmartly\SDK\Context\ContextEventHandler {
+			public int $before = 0;
+			public function __construct() {}
+			public function publish(\ABSmartly\SDK\PublishEvent $event): void {
+				gc_collect_cycles();
+				memory_reset_peak_usage();
+				$this->before = memory_get_usage();
+			}
+		};
+		$property = new \ReflectionProperty(Context::class, 'eventHandler');
+		$property->setValue($context, $handler);
+		$context->publish();
+		$allocated = memory_get_peak_usage() - $handler->before;
+		self::assertLessThan(65536, $allocated, 'unchanged batches must not allocate a per-goal identity map');
+		self::assertSame(0, $context->getPendingCount());
+	}
+
 }

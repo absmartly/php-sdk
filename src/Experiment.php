@@ -103,8 +103,11 @@ class Experiment extends DynamicModel {
 				$holdoutType = is_string($value) ? $value : null;
 			}
 			elseif (isset(self::SWITCHBACK_FIELDS[$field])) {
-				if (!(property_exists($this, $field) && (new \ReflectionProperty($this, $field))->isInitialized($this))) {
-					try { $this->setSwitchbackField($field, $value); } catch (\Throwable $e) { }
+				if (property_exists($this, $field)) {
+					$this->{$field} = $value;
+				}
+				else {
+					$this->setSwitchbackField($field, $value);
 				}
 			}
 			elseif (property_exists($this, $field) && $field !== 'audience') {

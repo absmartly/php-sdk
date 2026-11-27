@@ -1041,6 +1041,7 @@ class Context {
 			return $cached;
 		}
 
+		$attrsSeq = $this->attrsSeq;
 		$assignment = new Assignment();
 		$assignment->name = $experimentName;
 		$assignment->eligible = true;
@@ -1082,7 +1083,7 @@ class Context {
 			$nested->switchback->readAt = $now;
 			return $nested;
 		}
-		$assignment->attrsSeq = $this->attrsSeq;
+		$assignment->attrsSeq = $attrsSeq;
 		// A refresh from a callback in the resolution started a new epoch: this read finishes on its snapshot, but its
 		// slot must not take the place of the refreshed experiment's.
 		if (($this->switchbackSources[$experimentName]->generation ?? null) === $sources->generation) {
@@ -1202,6 +1203,7 @@ class Context {
 
 		$ruleKey = $this->ruleKey($data);
 		if ($this->attrsSeq > $assignment->attrsSeq || $ruleKey !== $assignment->ruleKey) {
+			$attrsSeq = $this->attrsSeq;
 			if ($ruleKey !== $assignment->ruleKey || $data->assignmentRules !== null) {
 				$rule = $this->resolveRule($data, false, $assignment->unitType);
 				if (($rule['variant'] ?? null) !== $assignment->ruleVariant) {
@@ -1218,7 +1220,7 @@ class Context {
 			}
 
 			$assignment->ruleKey = $ruleKey;
-			$assignment->attrsSeq = $this->attrsSeq;
+			$assignment->attrsSeq = $attrsSeq;
 		}
 		return true;
 	}
@@ -1454,7 +1456,91 @@ class Context {
 	 * that does not win still queues its holdouts' exposures.
 	 */
 	private function resolveVariableValue(string $key, $default, bool $exposeAssignment) {
+		if ($this->hasSwitchbacks) {
+			return $this->resolveSwitchbackVariableValue($key, $default, $exposeAssignment);
+		}
 		$candidates = $this->indexVariables[$key] ?? [];
+		$error = null;
+		$selectedVariables = null;
+		$liveCandidates = null;
+		foreach ($candidates as $candidateIndex => $experimentVariables) {
+			// Once a callback closes the context, a read already committed to throwing evaluates nothing more.
+			if ($error !== null && $this->isClosed()) {
+				throw $error;
+			}
+			$name = $experimentVariables->data->name;
+			// With holdouts, a refresh by a callback earlier in the walk drops the candidates it removed or that no longer
+			// define $key (an overridden one stays); without them the walk keeps main's snapshot of the candidates.
+			if ($this->hasHoldouts) {
+				// Unchanged unless a callback refreshed: the same array compares identical without a scan.
+				if (($this->indexVariables[$key] ?? []) !== $candidates) {
+					$candidates = $this->indexVariables[$key] ?? [];
+					$liveCandidates = self::candidateNames($candidates);
+				}
+				if ($liveCandidates !== null && !isset($liveCandidates[$name]) && !array_key_exists($name, $this->overrides)) {
+					continue;
+				}
+			}
+			try {
+				$assignment = $this->getAssignment($name);
+			}
+			catch (Throwable $exception) {
+				throw $error ?? $exception;
+			}
+			// An audience getter may have refreshed while this candidate was decided: skip it, with no exposures, if the
+			// installed data no longer has it define $key (unless overridden).
+			if ($this->hasHoldouts && ($this->indexVariables[$key] ?? []) !== $candidates) {
+				$candidates = $this->indexVariables[$key] ?? [];
+				$liveCandidates = self::candidateNames($candidates);
+				if (!isset($liveCandidates[$name]) && !array_key_exists($name, $this->overrides)) {
+					continue;
+				}
+			}
+
+			$wins = $assignment->assigned || $assignment->overridden || $assignment->ruleOverride;
+			// A held-out candidate that does not win queues only its holdouts' exposures (never its own), so they count
+			// the unit even when a later candidate wins. A logger error is deferred until the walk ends or reaches the
+			// winner, so later held-out candidates are still queued.
+			if ($exposeAssignment && ($wins || $assignment->suppressed)
+				&& (!$assignment->exposed || ($this->hasHoldouts && $this->droppedHoldoutArms !== []))) {
+				try {
+					$this->triggerExposures($assignment);
+				}
+				catch (Throwable $exception) {
+					$error = $error ?? $exception;
+				}
+			}
+
+			if ($wins) {
+				$selectedVariables = $assignment->variables ?? null;
+				break;
+			}
+			if ($this->hasSwitchbacks) {
+				return $this->resolveSwitchbackVariableValue($key, $default, $exposeAssignment, array_slice($candidates, $candidateIndex + 1));
+			}
+			// Passed over by an exposing read: as without holdouts, a later unit doesn't switch the key's winner.
+			if ($exposeAssignment) {
+				$assignment->served = true;
+			}
+
+			if ($assignment->suppressed && $assignment->variables !== null && $selectedVariables === null) {
+				$selectedVariables = $assignment->variables;
+			}
+		}
+
+		if ($error !== null) {
+			throw $error;
+		}
+
+		if ($selectedVariables !== null && property_exists($selectedVariables, $key)) {
+			return $selectedVariables->{$key};
+		}
+
+		return $default;
+	}
+
+	private function resolveSwitchbackVariableValue(string $key, $default, bool $exposeAssignment, ?array $remaining = null) {
+		$candidates = $remaining ?? $this->indexVariables[$key] ?? [];
 		$error = null;
 		$selectedVariables = null;
 		$liveCandidates = null;
@@ -2132,10 +2218,15 @@ class Context {
 	 * batch fails; it and the later events stay queued.
 	 */
 	private function publishEarlierSwitchbackUnits(bool $rethrow): bool {
-		while (($units = $this->earlierSwitchbackUnits()) !== null) {
+		$pending = [];
+		foreach ($this->exposures as $exposure) {
+			$pending[spl_object_id($exposure)] = true;
+		}
+		while (($units = $this->earlierSwitchbackUnits($pending)) !== null) {
 			$exposures = [];
 			foreach ($this->exposureAssignments as $i => $assignment) {
-				if ($this->publishedEarlier($i) && $assignment->switchback->units === $units) {
+				if (isset($pending[spl_object_id($this->exposures[$i])]) && $this->publishedEarlier($i)
+					&& $assignment->switchback->units === $units) {
 					$exposures[spl_object_id($this->exposures[$i])] = $this->exposures[$i];
 				}
 			}
@@ -2171,13 +2262,14 @@ class Context {
 			$this->logPublished($event);
 		}
 
-		return true;
+		return $this->earlierSwitchbackUnits() === null;
 	}
 
 	/** The served units of the first queued exposure that needs an earlier batch, or null when none does. */
-	private function earlierSwitchbackUnits(): ?array {
+	private function earlierSwitchbackUnits(?array $pending = null): ?array {
 		foreach ($this->exposureAssignments as $i => $assignment) {
-			if ($this->publishedEarlier($i) && $assignment->switchback->units !== $this->units) {
+			if (($pending === null || isset($pending[spl_object_id($this->exposures[$i])]))
+				&& $this->publishedEarlier($i) && $assignment->switchback->units !== $this->units) {
 				return $assignment->switchback->units;
 			}
 		}

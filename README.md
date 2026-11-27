@@ -342,7 +342,7 @@ $contextConfig->setUnit('store_id', 'store-42');
 $context = $sdk->createContext($contextConfig);
 
 // The experiment links store_id to the attribute path "geo/region".
-$context->setAttribute('geo', ['region' => 'lisbon']);
+$context->setAttributeValue('geo', ['region' => 'lisbon']);
 
 $treatment = $context->getTreatment('exp_delivery_fee'); // this period's variant for the "lisbon" cluster
 ```
