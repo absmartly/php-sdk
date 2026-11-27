@@ -190,6 +190,40 @@ class ContextSharedVariableKeyTest extends TestCase {
 		self::assertSame(['exp_low'], $this->publishedExposureNames($context));
 	}
 
+	public function outOfRangeOrdinaryAssignments(): array {
+		$cases = [];
+		foreach (['override', 'custom'] as $assignment) {
+			foreach ([-1, 2, 99] as $variant) {
+				foreach ([false, true] as $shared) {
+					foreach (['getVariableValue', 'peekVariableValue'] as $read) {
+						$cases[$assignment . ' ' . $variant . ' ' . ($shared ? 'shared' : 'single') . ' ' . $read]
+							= [$assignment, $variant, $shared, $read];
+					}
+				}
+			}
+		}
+		return $cases;
+	}
+
+	/** @dataProvider outOfRangeOrdinaryAssignments */
+	public function testOutOfRangeOrdinaryAssignmentReturnsTheDefault(string $assignment, int $variant, bool $shared, string $read): void {
+		$experiments = [self::experiment(1, 'exp_low', [['shared' => 'low-control'], ['shared' => 'low']], ['fullOnVariant' => 0])];
+		if ($shared) {
+			$experiments[] = self::experiment(2, 'exp_high', [['shared' => 'high-control'], ['shared' => 'high']]);
+		}
+		$context = $this->createContext($experiments);
+		if ($assignment === 'override') {
+			$context->setOverride('exp_low', $variant);
+		}
+		else {
+			$context->setCustomAssignment('exp_low', $variant);
+		}
+
+		self::assertSame('fallback', $context->{$read}('shared', 'fallback'));
+		self::assertSame($read === 'getVariableValue' ? 1 : 0, $context->getPendingCount());
+		self::assertSame($read === 'getVariableValue' ? ['exp_low'] : [], $this->publishedExposureNames($context));
+	}
+
 	public function testATrafficExcludedCandidateStillWinsWithItsControlValue(): void {
 		// Outside the traffic split the unit is still assigned (not eligible, variant 0), so it is in the experiment.
 		$context = $this->createContext([

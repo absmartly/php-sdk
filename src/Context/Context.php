@@ -1468,7 +1468,7 @@ class Context {
 				if ($exposeAssignment && !$assignment->exposed) {
 					$this->triggerExposures($assignment);
 				}
-				return property_exists($assignment->variables, $key)
+				return isset($assignment->variables) && property_exists($assignment->variables, $key)
 					? $assignment->variables->{$key} : $default;
 			}
 			if (count($candidates) === 1) {
