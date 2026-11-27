@@ -12,8 +12,9 @@
   declared order, whose attribute path gives a value serves the experiment, and that raw value (a non-empty string
   as-is, an integer as its decimal text; floats such as `3.0`, booleans, objects, arrays, `""` and null give none) is
   the cluster key of the platform's balanced-block draw for the period `floor((now - switchbackStartAt) /
-  switchbackPeriodMs)`. Units that disagree, a value outside `switchbackClusterValues`, a missing value, a pre-anchor
-  read or an unservable schedule give a control that records no exposure; overrides, assignment rules, strict
+  switchbackPeriodMs)`. Units that disagree, a value outside `switchbackClusterValues` or a missing value give a
+  control that records no exposure; a pre-anchor read or an unservable schedule replaces only the period draw, after
+  overrides, rules, strict audiences and full-on, so otherwise also a silent control. Overrides, assignment rules, strict
   audiences, full-on, traffic and custom assignments apply as for a unit experiment, with the serving unit's traffic
   and split-rule draws hashed with the platform murmur3 on every runtime. Holdouts never apply to a switchback. The
   serving unit and cluster key are read once per period, and each period exposes once, stamped with the clock reading

@@ -3251,4 +3251,46 @@ class ContextSwitchbackTest extends TestCase {
 		self::assertSame(0, $context->getPendingCount());
 	}
 
+	/** A fully held-out unit experiment covered by holdout 31, defining k with control value 0. */
+	private static function heldOutKeyData(object $later, object ...$extra): ContextData {
+		$held = self::unitExperiment(2, 1, 'exp_held');
+		$held->variants = [(object) ['name' => 'A', 'config' => '{"k":0}'], (object) ['name' => 'B', 'config' => '{"k":1}']];
+		$held->holdoutIds = [31];
+		$holdout = self::unitExperiment(2, 31, 'holdout_all');
+		$holdout->split = [1.0, 0.0];
+		$holdout->variants = [(object) ['name' => 'A', 'config' => null], (object) ['name' => 'B', 'config' => null]];
+		return new ContextData(array_merge([$held, $later], $extra), [$holdout]);
+	}
+
+	/** The first switchback arriving from a holdout Exposure logger keeps that logger's exception for the read. */
+	public function testAHandOffToTheFirstSwitchbackKeepsThePendingLoggerError(): void {
+		$later = self::unitExperiment(2, 2, 'exp_later');
+		$later->variants = [(object) ['name' => 'A', 'config' => '{"k":99}'], (object) ['name' => 'B', 'config' => '{"k":99}']];
+		$context = $this->createContext(self::heldOutKeyData($later));
+		$this->now = self::$ANCHOR + 10;
+		$this->dataProvider->next = self::heldOutKeyData($later, self::switchback(2, null, 40, 'exp_sb'));
+		$this->setLogger($context, self::refreshOnFirstExposure(true));
+		try {
+			$context->getVariableValue('k', -1);
+			self::fail('the logger error is re-thrown');
+		}
+		catch (\RuntimeException $exception) {
+			self::assertSame('logger failed', $exception->getMessage());
+		}
+		self::assertTrue(self::privateValue($context, 'hasSwitchbacks'));
+	}
+
+	/** The held-out candidate's control value chosen before the hand-off is still the read's fallback. */
+	public function testAHandOffToTheFirstSwitchbackKeepsTheHeldOutFallback(): void {
+		$later = self::unitExperiment(2, 2, 'exp_later');
+		$later->unitType = 'user_id';
+		$later->variants = [(object) ['name' => 'A', 'config' => '{"k":99}'], (object) ['name' => 'B', 'config' => '{"k":99}']];
+		$context = $this->createContext(self::heldOutKeyData($later));
+		$this->now = self::$ANCHOR + 10;
+		$this->dataProvider->next = self::heldOutKeyData($later, self::switchback(2, null, 40, 'exp_sb'));
+		$this->setLogger($context, self::refreshOnFirstExposure());
+		self::assertSame(0, $context->getVariableValue('k', -1));
+		self::assertTrue(self::privateValue($context, 'hasSwitchbacks'));
+	}
+
 }

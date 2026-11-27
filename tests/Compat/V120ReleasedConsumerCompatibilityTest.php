@@ -256,6 +256,18 @@ class V120ReleasedConsumerCompatibilityTest extends TestCase {
 		self::assertSame(3600000, $experiment->switchbackPeriodMs);
 	}
 
+	/** Released hydration assigns customer-declared properties with PHP's weak coercion, not the switchback normalizer. */
+	public function testCustomerDeclaredSwitchbackNamesKeepReleasedWeakCoercion(): void {
+		$data = self::experimentInput();
+		$data->randomizationType = 123;
+		$data->switchbackPeriodMs = '3600000';
+		$experiment = new class($data) extends Experiment {
+			public string $randomizationType = 'customer';
+			public int $switchbackPeriodMs = 17;
+		};
+		self::assertSame(['123', 3600000], [$experiment->randomizationType, $experiment->switchbackPeriodMs]);
+	}
+
 	public function testCustomerSubclassesReservingSwitchbackNamesStillConstruct(): void {
 		// Only old payload fields: asserting behavior absent from the release would not be a compatibility test.
 		$experiment = new class(self::experimentInput()) extends Experiment {

@@ -355,8 +355,9 @@ $treatment = $context->getTreatment('exp_delivery_fee'); // this period's varian
   float is published as JSON (`3.0` as `3`), which the collector, resolving the cluster from the published
   attributes, could read as a value.
 - With no value, units that disagree, or a value outside `switchbackClusterValues`, the unit gets control (variant 0)
-  and no exposure is sent. Before `switchbackStartAt`, or with an unservable schedule, it gets control with no
-  exposure too. Without a unit of a linked type, the experiment does not apply.
+  and no exposure is sent. Before `switchbackStartAt`, or with an unservable schedule, only the period draw is
+  unavailable: an override, matching rule, strict audience mismatch or full-on still applies first; otherwise the unit
+  gets control with no exposure. Without a unit of a linked type, the experiment does not apply.
 - Overrides, assignment rules, strict audiences, full-on, traffic and custom assignments apply as for a unit
   experiment, and the exposure carries the same flags. Holdouts never apply to a switchback.
 - `getTreatment()` sends one exposure per period, stamped with the time that chose the period. The serving unit and

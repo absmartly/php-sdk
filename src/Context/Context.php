@@ -1459,11 +1459,11 @@ class Context {
 		if ($this->hasSwitchbacks) {
 			return $this->resolveSwitchbackVariableValue($key, $default, $exposeAssignment);
 		}
-		$candidates = $this->indexVariables[$key] ?? [];
+		$candidates = $walk = $this->indexVariables[$key] ?? [];
 		$error = null;
 		$selectedVariables = null;
 		$liveCandidates = null;
-		foreach ($candidates as $candidateIndex => $experimentVariables) {
+		foreach ($walk as $experimentVariables) {
 			// Once a callback closes the context, a read already committed to throwing evaluates nothing more.
 			if ($error !== null && $this->isClosed()) {
 				throw $error;
@@ -1515,9 +1515,6 @@ class Context {
 				$selectedVariables = $assignment->variables ?? null;
 				break;
 			}
-			if ($this->hasSwitchbacks) {
-				return $this->resolveSwitchbackVariableValue($key, $default, $exposeAssignment, array_slice($candidates, $candidateIndex + 1));
-			}
 			// Passed over by an exposing read: as without holdouts, a later unit doesn't switch the key's winner.
 			if ($exposeAssignment) {
 				$assignment->served = true;
@@ -1525,6 +1522,11 @@ class Context {
 
 			if ($assignment->suppressed && $assignment->variables !== null && $selectedVariables === null) {
 				$selectedVariables = $assignment->variables;
+			}
+			// A callback installed the first switchback: the rest of the walk continues with this walk's state.
+			if ($this->hasSwitchbacks) {
+				return $this->resolveSwitchbackVariableValue($key, $default, $exposeAssignment,
+					array_slice($walk, (int) array_search($experimentVariables, $walk, true) + 1), $error, $selectedVariables);
 			}
 		}
 
@@ -1539,10 +1541,9 @@ class Context {
 		return $default;
 	}
 
-	private function resolveSwitchbackVariableValue(string $key, $default, bool $exposeAssignment, ?array $remaining = null) {
+	private function resolveSwitchbackVariableValue(string $key, $default, bool $exposeAssignment, ?array $remaining = null,
+		?Throwable $error = null, ?object $selectedVariables = null) {
 		$candidates = $remaining ?? $this->indexVariables[$key] ?? [];
-		$error = null;
-		$selectedVariables = null;
 		$liveCandidates = null;
 		foreach ($candidates as $experimentVariables) {
 			// Once a callback closes the context, a read already committed to throwing evaluates nothing more.
