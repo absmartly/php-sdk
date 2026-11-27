@@ -1458,8 +1458,8 @@ class Context {
 	 * that does not win still queues its holdouts' exposures.
 	 */
 	private function resolveVariableValue(string $key, $default, bool $exposeAssignment) {
-		$candidates = $walk = $this->indexVariables[$key] ?? [];
-		if (!$this->hasHoldouts && count($candidates) === 1) {
+		$candidates = $this->indexVariables[$key] ?? [];
+		if (!$this->hasHoldouts && $candidates !== []) {
 			$assignment = $this->getAssignment($candidates[0]->data->name);
 			if ($this->hasSwitchbacks || $this->hasHoldouts) {
 				return $this->resolveSwitchbackVariableValue($key, $default, $exposeAssignment, $candidates);
@@ -1468,14 +1468,18 @@ class Context {
 				if ($exposeAssignment && !$assignment->exposed) {
 					$this->triggerExposures($assignment);
 				}
-				return isset($assignment->variables) && property_exists($assignment->variables, $key)
+				return property_exists($assignment->variables, $key)
 					? $assignment->variables->{$key} : $default;
 			}
-			if ($exposeAssignment) {
-				$assignment->served = true;
+			if (count($candidates) === 1) {
+				if ($exposeAssignment) {
+					$assignment->served = true;
+				}
+				return $default;
 			}
-			return $default;
+			$firstAssignment = $assignment;
 		}
+		$walk = $candidates;
 		$error = null;
 		$selectedVariables = null;
 		$liveCandidates = null;
@@ -1503,7 +1507,8 @@ class Context {
 				}
 			}
 			try {
-				$assignment = $this->getAssignment($name);
+				$assignment = $firstAssignment ?? $this->getAssignment($name);
+				$firstAssignment = null;
 			}
 			catch (Throwable $exception) {
 				throw $error ?? $exception;

@@ -6,7 +6,7 @@ use PHPUnit\Framework\TestCase;
 
 /** Counts ordinary walk entries in a disposable source copy; never adds a timing threshold or a production hook. */
 class ContextVariableFastPathWorkTest extends TestCase {
-	public function testWarmedSingleCandidateReadsDoNotEnterTheVariableWalk(): void {
+	public function testWarmedOrdinaryWinnerReadsDoNotEnterTheVariableWalk(): void {
 		$root = dirname(__DIR__, 2);
 		$source = file_get_contents($root . '/src/Context/Context.php');
 		$start = strpos($source, 'private function resolveVariableValue(');
@@ -29,12 +29,16 @@ class FastPathProbe { use \ABSmartly\SDK\Tests\Context\SwitchbackTestSupport;
  public function run(): void {
   $this->setUp();
   try {
-   $context = $this->createContext(self::dataOf(self::unitExperiment()));
-   $context->getVariableValue('sb.arm', -1);
+   $single = $this->createContext(self::dataOf(self::unitExperiment()));
+   $shared = $this->createContext(self::dataOf(self::unitExperiment(), self::unitExperiment(2, 3, 'exp_later')));
+   $single->getVariableValue('sb.arm', -1);
+   $shared->getVariableValue('sb.arm', -1);
    $GLOBALS['variableWalkEntries'] = 0;
    for ($i = 0; $i < 1000; ++$i) {
-    $context->getVariableValue('sb.arm', -1);
-    $context->peekVariableValue('sb.arm', -1);
+    $single->getVariableValue('sb.arm', -1);
+    $single->peekVariableValue('sb.arm', -1);
+    $shared->getVariableValue('sb.arm', -1);
+    $shared->peekVariableValue('sb.arm', -1);
    }
    echo $GLOBALS['variableWalkEntries'];
   } finally { $this->tearDown(); }
