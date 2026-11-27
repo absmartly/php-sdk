@@ -42,7 +42,7 @@ class ReleaseVersionTest extends TestCase {
 	 * On release, add the new section's hash, which the failing test prints.
 	 */
 	private const RELEASED_SECTIONS = [
-		'1.3.0' => 'f2332750785bbc998bb3eda4c8e44639d09338eb10edc18b958a4a914ab913c7',
+		'1.3.0' => '286f09a083af5311653cc60db8408104ce8b040ed05738c98239275ca5bf5dd2',
 		'1.2.0' => 'e7bbb0ce3f724c7c636ba36928a16eb20e30b78475733ea1c6e97b1f518debba',
 		'1.1.0' => '99de204d75f1213bb75af4ea8e1961604efe54a54da015006b68e571d29c60b2',
 	];

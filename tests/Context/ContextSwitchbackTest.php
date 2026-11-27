@@ -2310,7 +2310,17 @@ class ContextSwitchbackTest extends TestCase {
 				@$context->publish();
 			}
 		};
-		$context->publish();
+		$log = tempnam(sys_get_temp_dir(), 'sdklog');
+		$previous = ini_set('error_log', $log);
+		try {
+			$context->publish();
+		}
+		finally {
+			ini_set('error_log', $previous === false ? '' : $previous);
+			$logged = file_get_contents($log);
+			unlink($log);
+		}
+		self::assertSame('', $logged, 'publish diagnostics go through Error, not the process error log');
 		$errors = array_map(static function ($event) {
 			return $event->getData()->getMessage();
 		}, array_values(array_filter($this->logger->events ?? [], static function ($event) {

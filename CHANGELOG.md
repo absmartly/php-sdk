@@ -26,8 +26,8 @@
   was added is published first, in its own batch with the units it was served with, since the collector resolves the
   serving unit again from a publish's units; that `publish()` calls the event handler once per batch. Exposures and
   the publish payload carry no new fields. Payloads without switchbacks keep the 1.2.0 read paths; cached
-  `getVariableValue()` measured about 2-4% slower than 1.2.0 with opcache (synthetic warmed benchmark,
-  `getTreatment()` within about 1%). See the README's *Switchback Experiments*.
+  variable reads (`getVariableValue()` and `peekVariableValue()`) measured about 3-8% slower than 1.2.0 with
+  opcache (about 20-40 ns/call in synthetic warmed benchmarks; `getTreatment()` within about 1%). See the README's *Switchback Experiments*.
   Set cluster attributes as strings or integers: a float attribute is published as JSON (`3.0` as `3`), so the
   collector, which resolves the cluster again from the published attributes, could key it where the SDK did not.
 
