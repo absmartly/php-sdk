@@ -3232,6 +3232,29 @@ class ContextSwitchbackTest extends TestCase {
 		self::assertCount(3, $this->eventHandler->submitted);
 	}
 
+	public function testNestedEarlyUnitBatchesCannotExtendThePublishDrainWithoutBound(): void {
+		$context = $this->createContext(self::dataOf(self::switchback(2)));
+		$context->getTreatment('exp_sb');
+		$context->setUnit('extra0', 'u0');
+		$calls = 0;
+		$this->eventHandler->prerun = static function () use ($context, &$calls) {
+			if (++$calls > 4) { throw new \RuntimeException('unbounded drain'); }
+			$context->setOverride('exp_sb', $calls % 2);
+			$context->getTreatment('exp_sb');
+			$context->setUnit('extra' . $calls, 'u' . $calls);
+			$context->publish();
+		};
+		$context->publish();
+		self::assertSame(2, $calls);
+		self::assertSame(1, $context->getPendingCount());
+		self::assertFalse($context->isClosed());
+		$this->eventHandler->prerun = null;
+		$context->close();
+		self::assertTrue($context->isClosed());
+		self::assertSame(0, $context->getPendingCount());
+		self::assertCount(3, $this->eventHandler->submitted);
+	}
+
 	/** No per-event identity map is needed when the accepted main batch still is the complete queue. */
 	public function testUnchangedMainBatchAvoidsPerEventRemovalAllocation(): void {
 		if (!function_exists('memory_reset_peak_usage')) {

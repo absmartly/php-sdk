@@ -1987,7 +1987,7 @@ class Context {
 	private function flushSwitchbackEvents(bool $rethrow, bool $closing): void {
 		if ($this->switchbackPublishing) {
 			if ($this->inFlightExposures !== [] && !$this->mainBatchPublishing) {
-				$this->flushEvents($rethrow);
+				$this->flushEvents($rethrow, true);
 			}
 			return;
 		}
@@ -2023,7 +2023,7 @@ class Context {
 	 * publish()/close() can retry them; when $rethrow is true (close()) the failure is also re-thrown to the
 	 * caller, when false (publish()/flush()) it is only logged, as in v1.0.3.
 	 */
-	private function flushEvents(bool $rethrow): void {
+	private function flushEvents(bool $rethrow, bool $nested = false): void {
 		if ($this->getPendingCount() === 0) {
 			return;
 		}
@@ -2038,7 +2038,7 @@ class Context {
 			return;
 		}
 
-		if ($this->hasSwitchbacks && !$this->publishEarlierSwitchbackUnits($rethrow)) {
+		if ($this->hasSwitchbacks && !$nested && !$this->publishEarlierSwitchbackUnits($rethrow)) {
 			return;
 		}
 		if ($this->pendingCount === 0) {
@@ -2046,6 +2046,17 @@ class Context {
 		}
 
 		$event = $this->buildPublishEvent();
+		if ($nested) {
+			$early = [];
+			foreach ($this->exposureAssignments as $i => $assignment) {
+				if ($this->publishedEarlier($i) && $assignment->switchback->units !== $this->units) {
+					$early[spl_object_id($this->exposures[$i])] = true;
+				}
+			}
+			$event->exposures = array_values(array_filter($event->exposures, static function ($exposure) use ($early) {
+				return !isset($early[spl_object_id($exposure)]);
+			}));
+		}
 		if ($this->inFlightExposures !== [] && $event->exposures === [] && $event->goals === []) {
 			return;
 		}
