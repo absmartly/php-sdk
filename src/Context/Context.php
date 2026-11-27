@@ -1459,6 +1459,23 @@ class Context {
 	 */
 	private function resolveVariableValue(string $key, $default, bool $exposeAssignment) {
 		$candidates = $walk = $this->indexVariables[$key] ?? [];
+		if (!$this->hasHoldouts && count($candidates) === 1) {
+			$assignment = $this->getAssignment($candidates[0]->data->name);
+			if ($this->hasSwitchbacks || $this->hasHoldouts) {
+				return $this->resolveSwitchbackVariableValue($key, $default, $exposeAssignment, $candidates);
+			}
+			if ($assignment->assigned || $assignment->overridden || $assignment->ruleOverride) {
+				if ($exposeAssignment && !$assignment->exposed) {
+					$this->triggerExposures($assignment);
+				}
+				return isset($assignment->variables) && property_exists($assignment->variables, $key)
+					? $assignment->variables->{$key} : $default;
+			}
+			if ($exposeAssignment) {
+				$assignment->served = true;
+			}
+			return $default;
+		}
 		$error = null;
 		$selectedVariables = null;
 		$liveCandidates = null;
