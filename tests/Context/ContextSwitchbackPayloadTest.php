@@ -75,7 +75,7 @@ class ContextSwitchbackPayloadTest extends TestCase {
 		foreach (['switchbackClusters', 'switchbackClusterValues', 'switchbackStartAt', 'switchbackPeriodMs',
 			'switchbackCarryoverDurationMs', 'switchbackBurnInDurationMs', 'switchbackBurnOutDurationMs', 'switchbackDesignType',
 			'switchbackEstimand'] as $field) {
-			self::assertNull($unit->{$field}, $field);
+			self::assertNull($unit->{$field} ?? null, $field);
 		}
 	}
 
@@ -111,21 +111,16 @@ class ContextSwitchbackPayloadTest extends TestCase {
 		self::assertSame(['porto', '17', 1.5], $experiment->switchbackClusterValues);
 	}
 
-	/** An Experiment serialized before switchbacks existed unserializes with the new fields defaulted. */
+	/** Unit models keep the released serialized shape: absent switchback fields remain absent after a round trip. */
 	public function testAnExperimentSerializedWithoutTheFieldsUnserializes(): void {
 		$experiment = new Experiment(self::unitExperiment());
 		$serialized = serialize($experiment);
-		foreach (['randomizationType', 'switchbackClusters', 'switchbackClusterValues', 'switchbackStartAt', 'switchbackPeriodMs',
-			'switchbackCarryoverDurationMs', 'switchbackBurnInDurationMs', 'switchbackBurnOutDurationMs', 'switchbackDesignType',
-			'switchbackEstimand'] as $field) {
-			$serialized = preg_replace('/s:\d+:"' . $field . '";N;/', '', $serialized);
-		}
-		$serialized = preg_replace('/^(O:24:"ABSmartly\\\\SDK\\\\Experiment":)\d+/', '${1}' . (count((array) $experiment) - 10), $serialized);
 		self::assertStringNotContainsString('switchback', $serialized);
 		$restored = unserialize($serialized);
 		self::assertInstanceOf(Experiment::class, $restored);
-		self::assertNull($restored->randomizationType);
-		self::assertNull($restored->switchbackClusters);
+		self::assertSame(serialize($experiment), serialize($restored));
+		self::assertFalse(property_exists($restored, 'randomizationType'));
+		self::assertFalse(property_exists($restored, 'switchbackClusters'));
 	}
 
 	/** The java-sdk fixture serves through the client's synchronous and asynchronous decode paths. */
@@ -312,7 +307,7 @@ class ContextSwitchbackPayloadTest extends TestCase {
 		});
 		$context = $this->createContext(self::dataOf(self::switchback(2)), null, []);
 		self::assertTrue(self::privateValue($context, 'hasSwitchbacks'));
-		$context->setAttribute(self::$CLUSTER_PATH, self::$CLUSTER_KEY);
+		$context->setAttributeValue(self::$CLUSTER_PATH, self::$CLUSTER_KEY);
 		foreach ([['peekTreatment', 1], ['getTreatment', 2], ['getTreatment', 1], ['peekTreatment', 1]] as [$method, $expected]) {
 			$reads = 0;
 			$context->$method('exp_sb');
@@ -326,14 +321,14 @@ class ContextSwitchbackPayloadTest extends TestCase {
 	private function publishedBody(ContextData $data): string {
 		$this->now = self::$ANCHOR;
 		$context = $this->createContext($data, ['session_id' => 'e791e240fcd3df7d238cfc285f475e8152fcc0ec', 'user_id' => '123', 'email' => 'a@b.c'], []);
-		$context->setAttribute('age', 21);
+		$context->setAttributeValue('age', 21);
 		foreach ($data->experiments as $experiment) {
 			$context->getTreatment($experiment->name);
 		}
 		foreach (array_keys($context->getVariableKeys()) as $key) {
 			$context->getVariableValue($key, 'default');
 		}
-		$context->track('goal', ['amount' => 5]);
+		$context->trackWithProperties('goal', ['amount' => 5]);
 		$context->publish();
 
 		return preg_replace('/"(publishedAt|exposedAt|achievedAt|setAt)":[0-9.]+/', '"$1":0', json_encode($this->eventHandler->submitted));

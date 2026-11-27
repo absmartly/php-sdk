@@ -295,7 +295,7 @@ class ContextSwitchbackTest extends TestCase {
 		$this->now = self::$ANCHOR + 10;
 		self::assertSame(1, $context->getTreatment('exp_sb'));
 		$context->setUnit(self::$UNIT_TYPE, self::$UID);
-		$context->setAttribute(self::$CLUSTER_PATH, self::$CLUSTER_KEY);
+		$context->setAttributeValue(self::$CLUSTER_PATH, self::$CLUSTER_KEY);
 		$context->setOverride('exp_sb', 0);
 		self::assertSame(0, $context->getTreatment('exp_sb'));
 		self::assertSame(['device_id', self::$UNIT_TYPE], array_column($this->publishExposures($context), 2));
@@ -761,8 +761,8 @@ class ContextSwitchbackTest extends TestCase {
 		self::assertSame([self::strictMismatchExposure(self::$ANCHOR + self::$HOUR + 3)], array_slice($this->publishExposures($context), 1));
 	}
 
-	/** Unit experiments keep this SDK's JS behaviour: a strict mismatch walked past on a variable key is recorded. */
-	public function testAStrictMismatchedUnitExperimentWalkedPastIsStillExposed(): void {
+	/** PHP 1.2.0 exposes only the winning unit experiment on a shared key. */
+	public function testAStrictMismatchedUnitExperimentWalkedPastIsNotExposed(): void {
 		$first = self::unitExperiment(2, 1, 'exp_first');
 		$first->audience = self::STRICT_GOLD_AUDIENCE;
 		$first->audienceStrict = true;
@@ -771,7 +771,7 @@ class ContextSwitchbackTest extends TestCase {
 		$second->fullOnVariant = 1;
 		$context = $this->createContext(self::dataOf($first, $second));
 		self::assertSame(11, $context->getVariableValue('sb.arm', -1));
-		self::assertSame(['exp_first', 'exp_second'], array_column($this->publishExposures($context), 1));
+		self::assertSame(['exp_second'], array_column($this->publishExposures($context), 1));
 	}
 
 	/** A same-outcome rules refresh is validated once, then the cached switchback slot stops re-evaluating rules. */
@@ -817,7 +817,7 @@ class ContextSwitchbackTest extends TestCase {
 
 	/**
 	 * As in java-sdk, an assigned switchback the key reaches is exposed even when its served arm lacks the key (a control
-	 * arm with no config): otherwise its control periods would go unrecorded. The value falls through as before.
+	 * arm with no config): otherwise its control periods would go unrecorded. The winner returns the default rather than falling through.
 	 */
 	public function testAnAssignedSwitchbackWhoseArmLacksTheKeyIsStillExposed(): void {
 		$sb = self::switchback(2);
@@ -837,8 +837,8 @@ class ContextSwitchbackTest extends TestCase {
 
 		$sb->variants[0]->config = '{"unrelated":0}';
 		$context = $this->createContext(self::dataOf($sb, $unit));
-		self::assertSame(11, $context->getVariableValue('sb.arm', -1));
-		self::assertSame(['exp_sb', 'exp_unit'], array_column($this->publishExposures($context), 1));
+		self::assertSame(-1, $context->getVariableValue('sb.arm', -1));
+		self::assertSame(['exp_sb'], array_column($this->publishExposures($context), 1));
 	}
 
 	/** Alone on the key, a strict-mismatched switchback yields the default value. */
@@ -1109,7 +1109,7 @@ class ContextSwitchbackTest extends TestCase {
 		$context = $this->createContext(self::dataOf($experiment));
 		self::assertSame(1, $context->peekTreatment('exp_sb'));
 		$this->now = self::$ANCHOR - 2 * 86400000;
-		$context->track('goal');
+		$context->trackWithProperties('goal');
 		$this->now = self::$ANCHOR - 86400000;
 		self::assertSame(1, $context->getTreatment('exp_sb'));
 		$context->publish();
@@ -1129,7 +1129,7 @@ class ContextSwitchbackTest extends TestCase {
 		$this->now = self::$ANCHOR + 10;
 		self::assertSame(0, $context->peekTreatment('exp_sb'));
 		$this->now = self::$ANCHOR + 20;
-		$context->setAttribute(self::$CLUSTER_PATH, 'Faro');
+		$context->setAttributeValue(self::$CLUSTER_PATH, 'Faro');
 		self::assertSame(1, SwitchbackAssigner::assign('Faro', 0, self::seed(), 2));
 		$this->now = self::$ANCHOR + 30;
 		self::assertSame(0, $context->getTreatment('exp_sb'));
@@ -1168,7 +1168,7 @@ class ContextSwitchbackTest extends TestCase {
 			}
 		};
 		$this->now = self::$ANCHOR + self::$HOUR - 1;
-		$context->setAttribute('geo', $geo);
+		$this->setReadAttribute($context, 'geo', $geo);
 		$variant = $context->getTreatment('exp_sb');
 		self::assertSame(SwitchbackAssigner::assign('Porto', 0, self::seed(), 3), $variant);
 		self::assertSame([self::sbExposure($variant, self::$ANCHOR + self::$HOUR - 1)], $this->loggedExposures());
@@ -1222,7 +1222,7 @@ class ContextSwitchbackTest extends TestCase {
 		$assignment = self::privateValue($context, 'assignmentCache')['exp_unit'];
 		self::assertSame(1, $counts->rules);
 
-		$context->setAttribute('unrelated', true);
+		$context->setAttributeValue('unrelated', true);
 		++$unit->iteration;
 		$this->refreshTo($context, $unit);
 		self::assertSame(1, $context->getTreatment('exp_unit'));
@@ -1476,7 +1476,10 @@ class ContextSwitchbackTest extends TestCase {
 
 	/** A failed first load leaves no switchback behind: the failed context serves control and the default value. */
 	public function testAFailedLoadAfterASwitchbackLeavesNoSwitchbackState(): void {
-		$context = @$this->createContext(new ContextData([self::switchback(2), (object) ['id' => 9, 'name' => 'broken']]));
+		$context = $this->createContext(self::dataOf(self::switchback(2)));
+		$failure = new \ReflectionMethod(Context::class, 'setDataFailed');
+		if (PHP_VERSION_ID < 80100) { $failure->setAccessible(true); }
+		$failure->invoke($context, new \RuntimeException('initial load failed'));
 		self::assertTrue($context->isFailed());
 		self::assertSame([], self::privateValue($context, 'switchbackSources'));
 		self::assertSame(0, $context->getTreatment('exp_sb'));
@@ -1489,8 +1492,14 @@ class ContextSwitchbackTest extends TestCase {
 		$context = $this->createContext(self::dataOf(self::switchback(2)));
 		$this->now = self::$ANCHOR + 10;
 		$context->getTreatment('exp_sb');
-		// An experiment missing its required fields fails the install, which is rolled back.
-		$this->dataProvider->next = new ContextData([self::switchback(2, 2 * self::$HOUR), (object) ['name' => 'broken']]);
+		// A failing provider leaves the installed period grid untouched.
+		$provider = new class extends \ABSmartly\SDK\Context\ContextDataProvider {
+			public function __construct() {}
+			public function getContextData(): ContextData { throw new \RuntimeException('refresh failed'); }
+		};
+		$property = new \ReflectionProperty(Context::class, 'dataProvider');
+		if (PHP_VERSION_ID < 80100) { $property->setAccessible(true); }
+		$property->setValue($context, $provider);
 		@$context->refresh();
 		self::assertSame(self::$EXPECTED_2_ARMS[0], $context->getTreatment('exp_sb'));
 		self::assertSame(1, $context->getPendingCount());
@@ -1506,14 +1515,14 @@ class ContextSwitchbackTest extends TestCase {
 		self::assertSame(self::$EXPECTED_2_ARMS[0], $context->peekTreatment('exp_sb'));
 		self::assertSame(1, $counts->rules);
 
-		$context->setAttribute('country', 'US');
+		$context->setAttributeValue('country', 'US');
 		$counts->rules = 0;
 		self::assertSame(1, $context->peekTreatment('exp_sb'));
 		self::assertSame(2, $counts->rules);
 		self::assertSame(1, $context->peekTreatment('exp_sb'));
 		self::assertSame(2, $counts->rules);
 
-		$context->setAttribute('other', 1);
+		$context->setAttributeValue('other', 1);
 		self::assertSame(1, $context->peekTreatment('exp_sb'));
 		self::assertSame(1, $context->peekTreatment('exp_sb'));
 		self::assertSame(3, $counts->rules);
@@ -1525,7 +1534,7 @@ class ContextSwitchbackTest extends TestCase {
 		$counts = self::countEvaluations($context);
 		$this->now = self::$ANCHOR + 10;
 		$context->getTreatment('exp_sb');
-		$context->setAttribute('country', 'US');
+		$context->setAttributeValue('country', 'US');
 		$context->getTreatment('exp_sb');
 		$context->getVariableValue('sb.arm', -1);
 		self::assertSame([0, 0], [$counts->rules, $counts->audiences]);
@@ -1540,7 +1549,7 @@ class ContextSwitchbackTest extends TestCase {
 		$this->now = self::$ANCHOR + 10;
 		$context->getTreatment('exp_sb');
 		self::assertSame(1, $counts->audiences);
-		$context->setAttribute('other', 1);
+		$context->setAttributeValue('other', 1);
 		$context->getTreatment('exp_sb');
 		$context->getTreatment('exp_sb');
 		self::assertSame(2, $counts->audiences);
@@ -1592,7 +1601,7 @@ class ContextSwitchbackTest extends TestCase {
 		self::assertSame(0, $context->getTreatment('exp_absent'));
 		self::assertSame(0, $counts->rules);
 
-		$context->setAttribute('x', 1);
+		$context->setAttributeValue('x', 1);
 		$changed = '{"rules":[{"type":"assign","environments":[],"variant":1,"name":"changed"}]}';
 		$ineligibleRefreshed = clone $ineligible;
 		$ineligibleRefreshed->assignmentRules = $changed;
@@ -1614,7 +1623,7 @@ class ContextSwitchbackTest extends TestCase {
 		$this->now = self::$ANCHOR + 5;
 		self::assertSame(1, $context->getTreatment('exp_sb'));
 
-		$context->setAttribute('tier', 'x');
+		$context->setAttributeValue('tier', 'x');
 		$refreshed = self::switchback(2);
 		$refreshed->assignmentRules = '{"rules":[{"type":"assign","environments":[],"variant":1,'
 			. '"conditions":{"and":[{"eq":[{"var":"tier"},{"value":"x"}]}]}}]}';
@@ -1629,7 +1638,7 @@ class ContextSwitchbackTest extends TestCase {
 		$experiment = self::switchback(2);
 		$experiment->assignmentRules = self::ASSIGN_VARIANT_1_TO_US;
 		$context = $this->createContext(self::dataOf($experiment));
-		$context->setAttribute('country', 'US');
+		$context->setAttributeValue('country', 'US');
 		$this->now = self::$ANCHOR + self::$HOUR * 2 + 5;
 		self::assertSame(1, $context->getTreatment('exp_sb'));
 		self::assertSame(0, self::$EXPECTED_2_ARMS[2]);
@@ -1744,13 +1753,13 @@ class ContextSwitchbackTest extends TestCase {
 		$this->now = self::$ANCHOR + 10;
 		self::assertSame(0, $context->getTreatment('exp_sb'));
 		$this->now = self::$ANCHOR + 15;
-		$context->track('goal');
+		$context->trackWithProperties('goal');
 		@$context->publish();
 		self::assertSame(1, $context->getPendingCount());
 
 		$this->eventHandler->prerun = null;
 		$this->now = self::$ANCHOR + 20;
-		$context->setAttribute(self::$CLUSTER_PATH, 'Faro');
+		$context->setAttributeValue(self::$CLUSTER_PATH, 'Faro');
 		self::assertSame(1, SwitchbackAssigner::assign('Faro', 0, self::seed(), 2));
 		$this->now = self::$ANCHOR + 30;
 		self::assertSame(0, $context->getTreatment('exp_sb'));
@@ -1785,7 +1794,7 @@ class ContextSwitchbackTest extends TestCase {
 		$this->now = self::$ANCHOR + self::$HOUR + 10;
 		$context->setUnit('user_id', 'u1');
 		$context->getTreatment('exp_unit');
-		$context->track('goal');
+		$context->trackWithProperties('goal');
 		self::assertSame(3, $context->getPendingCount());
 
 		$context->publish();
@@ -1807,7 +1816,7 @@ class ContextSwitchbackTest extends TestCase {
 		};
 		$this->now = self::$ANCHOR + 10;
 		$context->getTreatment('exp_sb');
-		$context->track('goal');
+		$context->trackWithProperties('goal');
 		@$context->publish();
 		self::assertSame(2, $context->getPendingCount());
 
@@ -1831,7 +1840,7 @@ class ContextSwitchbackTest extends TestCase {
 		$context->getTreatment('exp_sb');
 		$context->getTreatment('exp_unit');
 		$context->setUnit(self::$UNIT_TYPE, self::$UID);
-		$context->track('goal');
+		$context->trackWithProperties('goal');
 		$context->publish();
 		self::assertSame([[[self::$UNIT_TYPE], ['exp_sb', 'exp_unit'], 1]], $this->publishedBatches());
 	}
@@ -1868,7 +1877,7 @@ class ContextSwitchbackTest extends TestCase {
 	public function testAFailedEarlierBatchHoldsBackTheRest(): void {
 		$context = $this->contextWithAnEarlierUnitExposure();
 		$context->getTreatment('exp_unit');
-		$context->track('goal');
+		$context->trackWithProperties('goal');
 		$this->failFirst(1);
 		@$context->publish();
 		self::assertSame(3, $context->getPendingCount());
@@ -1885,7 +1894,7 @@ class ContextSwitchbackTest extends TestCase {
 	/** An earlier batch that succeeds is cleared even when the later batch fails. */
 	public function testASentEarlierBatchIsClearedWhenTheLaterOneFails(): void {
 		$context = $this->contextWithAnEarlierUnitExposure();
-		$context->track('goal');
+		$context->trackWithProperties('goal');
 		$calls = 0;
 		$this->eventHandler->prerun = static function () use (&$calls) {
 			if (++$calls === 2) {
@@ -1950,8 +1959,8 @@ class ContextSwitchbackTest extends TestCase {
 	public function testAFailedEarlierBatchAppliesTheRetainedEventCap(): void {
 		$context = $this->contextWithAnEarlierUnitExposure();
 		$context->maxRetainedEvents = 1;
-		$context->track('goal');
-		$context->track('goal');
+		$context->trackWithProperties('goal');
+		$context->trackWithProperties('goal');
 		$this->failFirst(1);
 		@$context->publish();
 		self::assertSame(1, $context->getPendingCount());
@@ -2006,7 +2015,7 @@ class ContextSwitchbackTest extends TestCase {
 		$context = $this->createContext(self::dataOf(self::unitExperiment()));
 		$context->getTreatment('exp_unit');
 		$this->setLogger($context, self::publishCallback(static function (Context $context) {
-			$context->track('from_logger');
+			$context->trackWithProperties('from_logger');
 			$context->publish();
 		}));
 		$context->publish();
@@ -2019,7 +2028,7 @@ class ContextSwitchbackTest extends TestCase {
 		$context = $this->createContext(self::dataOf(self::unitExperiment()));
 		$context->getTreatment('exp_unit');
 		$this->setLogger($context, self::publishCallback(static function (Context $context) {
-			$context->track('from_logger');
+			$context->trackWithProperties('from_logger');
 			$context->close();
 		}));
 		$context->publish();
@@ -2064,7 +2073,7 @@ class ContextSwitchbackTest extends TestCase {
 			public function handleEvent(Context $context, \ABSmartly\SDK\Context\ContextEventLoggerEvent $event): void {
 				if ($event->getEvent() === \ABSmartly\SDK\Context\ContextEventLoggerEvent::Publish && !$this->called) {
 					$this->called = true;
-					$context->track('from_logger');
+					$context->trackWithProperties('from_logger');
 					$context->publish();
 				}
 			}
@@ -2092,7 +2101,7 @@ class ContextSwitchbackTest extends TestCase {
 		@$context->publish();
 		self::assertSame(0, $context->getPendingCount());
 		self::assertSame([[[self::$UNIT_TYPE], ['exp_sb'], 0]], $this->publishedBatches());
-		$context->track('later');
+		$context->trackWithProperties('later');
 		@$context->publish();
 		self::assertCount(2, $this->eventHandler->submitted);
 		self::assertSame(0, $context->getPendingCount());
@@ -2175,10 +2184,10 @@ class ContextSwitchbackTest extends TestCase {
 			$expected = (new VariantAssigner($uid))->assign([0.5, 0.5], self::$SEED_HI, self::$SEED_LO);
 			$context = $this->createContext(self::dataOf($experiment), [self::$UNIT_TYPE => $uid]);
 			self::assertSame($expected, $context->getTreatment('exp_sb'), $uid);
-			$context->setAttribute('unrelated', true);
+			$context->setAttributeValue('unrelated', true);
 			self::assertSame($expected, $context->getTreatment('exp_sb'), $uid);
 			self::assertSame(1, $context->getPendingCount(), $uid);
-			$context->setAttribute('tier', 'x');
+			$context->setAttributeValue('tier', 'x');
 			self::assertSame(1, $context->getTreatment('exp_sb'), $uid);
 			self::assertSame($expected === 1 ? 1 : 2, $context->getPendingCount(), $uid);
 			$switched += $expected === 0 ? 1 : 0;
@@ -2206,7 +2215,7 @@ class ContextSwitchbackTest extends TestCase {
 				return ['city' => 'store-42'];
 			}
 		};
-		$context->setAttribute('geo', $geo);
+		$this->setReadAttribute($context, 'geo', $geo);
 		$this->now = self::$ANCHOR + 10;
 		self::assertSame(self::$EXPECTED_2_ARMS[0], $context->getTreatment('exp_sb'));
 		self::assertSame('u1', $context->getUnit('user_id'));
@@ -2224,7 +2233,7 @@ class ContextSwitchbackTest extends TestCase {
 		$calls = 0;
 		$this->eventHandler->prerun = static function () use (&$calls, $context) {
 			if (++$calls === 1) {
-				$context->track('goal');
+				$context->trackWithProperties('goal');
 				$context->publish();
 				$context->publish();
 			}
@@ -2243,7 +2252,7 @@ class ContextSwitchbackTest extends TestCase {
 		$calls = 0;
 		$this->eventHandler->prerun = static function () use (&$calls, $context) {
 			if (++$calls === 1) {
-				$context->track('goal');
+				$context->trackWithProperties('goal');
 				$context->publish();
 				throw new \RuntimeException('collector down');
 			}
@@ -2272,8 +2281,8 @@ class ContextSwitchbackTest extends TestCase {
 				throw new \RuntimeException('collector down');
 			}
 			if ($calls === 1) {
-				$context->track('purchase');
-				$context->track('purchase');
+				$context->trackWithProperties('purchase');
+				$context->trackWithProperties('purchase');
 				@$context->publish();
 			}
 		};
@@ -2297,7 +2306,7 @@ class ContextSwitchbackTest extends TestCase {
 				throw new \RuntimeException('collector down');
 			}
 			if ($calls === 1) {
-				$context->track('purchase');
+				$context->trackWithProperties('purchase');
 				@$context->publish();
 			}
 		};
@@ -2398,7 +2407,8 @@ class ContextSwitchbackTest extends TestCase {
 			}
 		});
 		self::assertSame(-1, $context->getVariableValue('k', -1));
-		self::assertSame(1, $context->getPendingCount());
+		self::assertSame(0, $context->getPendingCount());
+		self::assertFalse(self::privateValue($context, 'hasSwitchbacks'));
 	}
 
 	/**
@@ -2434,7 +2444,7 @@ class ContextSwitchbackTest extends TestCase {
 		catch (\RuntimeException $exception) {
 			self::assertSame('logger failed', $exception->getMessage());
 		}
-		self::assertSame(2, $context->getPendingCount());
+		self::assertSame(1, $context->getPendingCount());
 	}
 
 	public function testAVariableWalkHandOffDoesNotReplayAVisitedCandidate(): void {
@@ -2454,7 +2464,7 @@ class ContextSwitchbackTest extends TestCase {
 		$this->dataProvider->next = self::dataOf($refreshedFirst, $refreshedSecond);
 		$this->setLogger($context, self::refreshOnFirstExposure());
 		self::assertSame(self::$EXPECTED_2_ARMS[0] + 1, $context->getVariableValue('k', -1));
-		self::assertSame(['exp_a', 'exp_b'], array_column($this->publishExposures($context), 1));
+		self::assertSame(['exp_b'], array_column($this->publishExposures($context), 1));
 	}
 
 	public function testARejectedRefreshMidWalkKeepsThePreviousWalk(): void {
@@ -2469,7 +2479,10 @@ class ContextSwitchbackTest extends TestCase {
 		$context = $this->createContext(self::dataOf($first, $second));
 		$this->now = self::$ANCHOR + 10;
 		$this->dataProvider->next = self::dataOf(self::switchback(2, null, 4, 'exp_sb'), $broken);
-		$this->setLogger($context, self::refreshOnFirstExposure(true));
+		$this->setLogger($context, self::onContextEvent(static function ($context, $event) {
+			if ($event === 'Error') { throw new \RuntimeException('logger failed'); }
+			if ($event === 'Exposure') { $context->refresh(); throw new \RuntimeException('logger failed'); }
+		}));
 		try {
 			@$context->getVariableValue('k', -1);
 			self::fail('the logger error is re-thrown');
@@ -2515,7 +2528,7 @@ class ContextSwitchbackTest extends TestCase {
 		$experiment = self::switchback(2);
 		$experiment->switchbackClusters = self::clusters(self::$UNIT_TYPE, 'geo/city');
 		$context = $this->createContext(self::dataOf($experiment), null, []);
-		$context->setAttribute('geo', new class($context) implements \JsonSerializable {
+		$this->setReadAttribute($context, 'geo', new class($context) implements \JsonSerializable {
 			private Context $context;
 
 			public function __construct(Context $context) {
@@ -2567,7 +2580,7 @@ class ContextSwitchbackTest extends TestCase {
 				return ['city' => 'store-42'];
 			}
 		};
-		$context->setAttribute('geo', $geo);
+		$this->setReadAttribute($context, 'geo', $geo);
 		$this->now = self::$ANCHOR + 10;
 		$context->peekTreatment('exp_sb');
 		self::assertSame(99, $geo->nested);
@@ -2604,7 +2617,7 @@ class ContextSwitchbackTest extends TestCase {
 	/** A nested close() whose outer early send succeeds leaves the outer caller to close: one Close, after the send. */
 	public function testANestedCloseDuringASuccessfulEarlierBatchLeavesTheOuterCloseToFinish(): void {
 		$context = $this->contextWithAnEarlierUnitExposure();
-		$context->track('goal');
+		$context->trackWithProperties('goal');
 		$calls = 0;
 		$this->eventHandler->prerun = static function () use (&$calls, $context) {
 			if (++$calls === 1) {
@@ -2657,7 +2670,7 @@ class ContextSwitchbackTest extends TestCase {
 		$experiment->switchbackClusters = self::clusters(self::$UNIT_TYPE, 'geo/city');
 		$context = $this->createContext(self::dataOf($experiment), null, []);
 		$this->dataProvider->next = self::dataOf($experiment);
-		$context->setAttribute('geo', new class($context) implements \JsonSerializable {
+		$this->setReadAttribute($context, 'geo', new class($context) implements \JsonSerializable {
 			private Context $context;
 			private bool $refreshed = false;
 
@@ -2736,7 +2749,7 @@ class ContextSwitchbackTest extends TestCase {
 		$this->dataProvider->next = self::dataOf($first, $last, self::switchback(2, null, 4, 'exp_sb'));
 		$this->setLogger($context, self::refreshOnFirstExposure());
 		self::assertSame(2, $context->getVariableValue('k', -1));
-		self::assertSame(['exp_a', 'exp_c'], array_column($this->publishExposures($context), 1));
+		self::assertSame(['exp_c'], array_column($this->publishExposures($context), 1));
 	}
 
 	private static function onContextEvent(callable $callback): \ABSmartly\SDK\Context\ContextEventLogger {
@@ -2775,7 +2788,7 @@ class ContextSwitchbackTest extends TestCase {
 		$calls = 0;
 		$this->eventHandler->prerun = static function () use ($context, &$calls) {
 			if (++$calls === 1) {
-				$context->track('goal');
+				$context->trackWithProperties('goal');
 				$context->close();
 			}
 			elseif ($calls === 2) {
@@ -2797,10 +2810,10 @@ class ContextSwitchbackTest extends TestCase {
 		$this->eventHandler->prerun = static function () use ($context, &$calls) {
 			if (++$calls === 1) {
 				$context->close();
-				$context->track('first');
+				$context->trackWithProperties('first');
 			}
 			elseif ($calls === 2) {
-				$context->track('second');
+				$context->trackWithProperties('second');
 				$context->publish();
 			}
 		};
@@ -2815,7 +2828,7 @@ class ContextSwitchbackTest extends TestCase {
 	public function testDeferredCloseDrainsAGoalQueuedByTheFinalPublishLogger(): void {
 		$context = $this->contextWithAnEarlierUnitExposure();
 		$this->setLogger($context, self::publishCallback(static function ($context) {
-			$context->track('last');
+			$context->trackWithProperties('last');
 		}));
 		$context->close();
 		self::assertTrue($context->isClosed());
@@ -2854,7 +2867,7 @@ class ContextSwitchbackTest extends TestCase {
 		$this->setLogger($context, self::onContextEvent(static function ($context, $event) use (&$rejected) {
 			if ($event === 'Close') {
 				try {
-					$context->track('too_late');
+					$context->trackWithProperties('too_late');
 				}
 				catch (\ABSmartly\SDK\Exception\LogicException $exception) {
 					$rejected = true;
@@ -2879,7 +2892,7 @@ class ContextSwitchbackTest extends TestCase {
 			$events[] = $event;
 			if ($event === 'Exposure') { $context->close(); }
 		}));
-		self::assertSame(99, $context->getVariableValue('k', -1));
+		self::assertSame(-1, $context->getVariableValue('k', -1));
 		self::assertSame(['Exposure', 'Publish', 'Close'], $events);
 		self::assertSame(0, $context->getPendingCount());
 	}
@@ -2916,7 +2929,7 @@ class ContextSwitchbackTest extends TestCase {
 				return ['city' => 'store-42'];
 			}
 		};
-		$context->setAttribute('geo', $geo);
+		$this->setReadAttribute($context, 'geo', $geo);
 		$this->now = self::$ANCHOR + 10;
 		$context->peekTreatment('exp_sb');
 		self::assertSame(99, $geo->nested);
@@ -2935,7 +2948,7 @@ class ContextSwitchbackTest extends TestCase {
 		$refreshed->assignmentRules = '{"rules":[{"type":"assign","environments":[],"variant":0}]}';
 		$context = $this->createContext(self::dataOf($experiment));
 		$this->dataProvider->next = self::dataOf($refreshed);
-		$context->setAttribute('geo', new class($context) implements \JsonSerializable {
+		$this->setReadAttribute($context, 'geo', new class($context) implements \JsonSerializable {
 			private Context $context;
 			private bool $done = false;
 			public function __construct(Context $context) { $this->context = $context; }
@@ -2969,7 +2982,7 @@ class ContextSwitchbackTest extends TestCase {
 				return ['city' => 'store-42'];
 			}
 		};
-		$context->setAttribute('geo', $geo);
+		$this->setReadAttribute($context, 'geo', $geo);
 		$this->now = self::$ANCHOR + self::$HOUR + 10;
 		self::assertSame(1, $context->getTreatment('exp_sb'));
 		self::assertSame(1, $geo->nested);
@@ -2982,7 +2995,7 @@ class ContextSwitchbackTest extends TestCase {
 		$calls = 0;
 		$this->eventHandler->prerun = static function () use ($context, &$calls) {
 			if (++$calls === 1) {
-				$context->track('first');
+				$context->trackWithProperties('first');
 				$context->close();
 			}
 			elseif ($calls === 2) {
@@ -2999,7 +3012,7 @@ class ContextSwitchbackTest extends TestCase {
 		$context = $this->contextWithAnEarlierUnitExposure();
 		$this->setLogger($context, self::onContextEvent(static function ($context, $event) {
 			if ($event === 'Publish' && !$context->isClosed()) {
-				$context->track('again');
+				$context->trackWithProperties('again');
 			}
 		}));
 		$context->close();
@@ -3022,7 +3035,7 @@ class ContextSwitchbackTest extends TestCase {
 		$context->publish();
 		self::assertFalse($context->isClosed());
 		self::assertSame(0, $context->getPendingCount());
-		$context->track('later');
+		$context->trackWithProperties('later');
 		self::assertSame(1, $context->getPendingCount());
 		self::assertSame(0, $this->closeEventCount());
 	}
@@ -3031,7 +3044,7 @@ class ContextSwitchbackTest extends TestCase {
 	public function testAGoalPublishedFromAPublishLoggerOnSwitchbackDataIsSent(): void {
 		$context = $this->contextWithAnEarlierUnitExposure();
 		$this->setLogger($context, self::publishCallback(static function (Context $context) {
-			$context->track('from_logger');
+			$context->trackWithProperties('from_logger');
 			$context->publish();
 		}));
 		$context->publish();
@@ -3059,7 +3072,7 @@ class ContextSwitchbackTest extends TestCase {
 				return ['city' => 'store-42'];
 			}
 		};
-		$context->setAttribute('geo', $geo);
+		$this->setReadAttribute($context, 'geo', $geo);
 		$this->now = self::$ANCHOR + 10;
 		$context->getTreatment('exp_sb');
 		self::assertSame(1, $geo->reads);
@@ -3092,7 +3105,7 @@ class ContextSwitchbackTest extends TestCase {
 				return ['city' => 'store-42'];
 			}
 		};
-		$context->setAttribute('geo', $geo);
+		$this->setReadAttribute($context, 'geo', $geo);
 		$this->now = self::$ANCHOR + 10;
 		self::assertSame(1, $context->peekTreatment('exp_sb'));
 		self::assertSame(0, $geo->nested);
@@ -3105,14 +3118,14 @@ class ContextSwitchbackTest extends TestCase {
 	 */
 	public function testAGoalTrackedAfterAHandlerRefreshesInTheFirstSwitchbackIsKept(): void {
 		$context = $this->createContext(self::dataOf(self::unitExperiment()));
-		$context->track('first');
+		$context->trackWithProperties('first');
 		$this->dataProvider->next = self::dataOf(self::unitExperiment(), self::switchback(2, null, 4, 'exp_sb'));
 		$calls = 0;
 		$this->eventHandler->prerun = static function () use ($context, &$calls) {
 			if (++$calls === 1) {
 				$context->refresh();
 				$context->publish();
-				$context->track('second');
+				$context->trackWithProperties('second');
 			}
 		};
 		$context->publish();
@@ -3146,6 +3159,6 @@ class ContextSwitchbackTest extends TestCase {
 		$this->dataProvider->next = self::dataOf($first, $refreshed, $last, $switchback);
 		$this->setLogger($context, self::refreshOnFirstExposure());
 		self::assertSame(2, $context->getVariableValue('k', -1));
-		self::assertSame(['exp_a', 'exp_c'], array_column($this->publishExposures($context), 1));
+		self::assertSame(['exp_c'], array_column($this->publishExposures($context), 1));
 	}
 }

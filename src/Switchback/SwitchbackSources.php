@@ -40,19 +40,19 @@ final class SwitchbackSources {
 		$this->iteration = $experiment->iteration;
 		$this->unitType = $experiment->unitType;
 		$this->config = [
-			$experiment->switchbackClusters,
-			$experiment->switchbackClusterValues,
-			$experiment->switchbackStartAt,
-			$experiment->switchbackPeriodMs,
-			$experiment->switchbackDesignType,
+			($experiment->switchbackClusters ?? null),
+			($experiment->switchbackClusterValues ?? null),
+			($experiment->switchbackStartAt ?? null),
+			($experiment->switchbackPeriodMs ?? null),
+			($experiment->switchbackDesignType ?? null),
 		];
 		$this->servable = self::servable($experiment);
 
-		if ($experiment->switchbackClusters === null || $experiment->switchbackClusters === []) {
+		if (($experiment->switchbackClusters ?? null) === null || ($experiment->switchbackClusters ?? null) === []) {
 			return;
 		}
 		$paths = [];
-		foreach ($experiment->switchbackClusters as $unitType => $path) {
+		foreach (($experiment->switchbackClusters ?? null) as $unitType => $path) {
 			$parsed = SwitchbackAttributePath::parseSupported($path);
 			if ($parsed === null) {
 				$this->types = [];
@@ -71,8 +71,8 @@ final class SwitchbackSources {
 	 * only replaces the draw: assignment rules, the audience and full-on still apply.
 	 */
 	private static function servable(Experiment $experiment): bool {
-		$startAt = $experiment->switchbackStartAt;
-		$periodMs = $experiment->switchbackPeriodMs;
+		$startAt = ($experiment->switchbackStartAt ?? null);
+		$periodMs = ($experiment->switchbackPeriodMs ?? null);
 		return $startAt !== null && $startAt >= 0 && $startAt < self::MAX_ANCHOR_MS && $startAt % self::ANCHOR_ALIGNMENT_MS === 0
 			&& $periodMs !== null && $periodMs > 0
 			&& count($experiment->split) >= 2;

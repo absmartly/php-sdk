@@ -259,8 +259,8 @@ class SwitchbackServerParityTest extends TestCase {
 
 		$this->now = self::$ANCHOR;
 		$context = $this->createContext(self::dataOf(self::sbExperiment(self::clusters(self::STORE, 'cluster'))), [self::STORE => 's1'], []);
-		$context->setAttribute('cluster', 'Lisboa');
-		$context->setAttribute('cluster', 'Porto');
+		$context->setAttributeValue('cluster', 'Lisboa');
+		$context->setAttributeValue('cluster', 'Porto');
 		$this->now = self::$ANCHOR + 1;
 		self::assertSame(self::collectorVariant('Porto', 0), $context->getTreatment('exp_sb'));
 		self::assertTrue($this->loggedExposures()[0][6]);

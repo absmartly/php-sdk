@@ -99,7 +99,7 @@ class ContextRuleEvaluationCostTest extends TestCase {
 		$contextConfig->setUnits(['session_id' => 'e791e240fcd3df7d238cfc285f475e8152fcc0ec']);
 		$context = (new SDK($config))->createContextWithData($contextConfig, new ContextData($data->experiments));
 		for ($i = 0; $i < $attributeCount; ++$i) {
-			$context->setAttribute('attr' . $i, $i);
+			$context->setAttributeValue('attr' . $i, $i);
 		}
 
 		return $context;
@@ -205,7 +205,7 @@ class ContextRuleEvaluationCostTest extends TestCase {
 		self::assertSame(1, $context->getTreatment('exp_test_abc'));
 
 		foreach (['setAttribute', 'refresh'] as $change) {
-			$change === 'refresh' ? $context->refresh() : $context->setAttribute('unrelated', true);
+			$change === 'refresh' ? $context->refresh() : $context->setAttributeValue('unrelated', true);
 			self::assertSame(1, $context->getTreatment('exp_test_abc'));
 
 			$reads = $this->environmentReads;

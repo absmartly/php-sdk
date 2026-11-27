@@ -147,10 +147,21 @@ trait SwitchbackTestSupport {
 
 		$contextConfig = new ContextConfig();
 		$contextConfig->setUnits($units ?? [self::$UNIT_TYPE => self::$UID]);
-		$contextConfig->setAttributes($attributes ?? [self::$CLUSTER_PATH => self::$CLUSTER_KEY]);
+		$contextConfig->setAttributes([]);
 		$contextConfig->setEventLogger($this->logger);
 
-		return (new SDK($config))->createContextWithData($contextConfig, $data);
+		$context = (new SDK($config))->createContextWithData($contextConfig, $data);
+		$context->setAttributeValues($attributes ?? [self::$CLUSTER_PATH => self::$CLUSTER_KEY]);
+		return $context;
+	}
+
+	/** Installs a callback-bearing value without running its serializer in the setter's publishability validation. */
+	protected function setReadAttribute(Context $context, string $name, $value): void {
+		$context->setAttributeValue($name, null);
+		$property = new \ReflectionProperty(Context::class, 'attributes');
+		if (PHP_VERSION_ID < 80100) { $property->setAccessible(true); }
+		$attributes = $property->getValue($context);
+		$attributes[count($attributes) - 1]->value = $value;
 	}
 
 	protected function refreshTo(Context $context, object ...$experiments): void {

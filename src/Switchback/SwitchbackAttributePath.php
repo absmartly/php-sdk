@@ -53,24 +53,7 @@ final class SwitchbackAttributePath {
 	 * @param mixed $path
 	 */
 	public static function parseSupported($path): ?self {
-		if (!is_string($path)) {
-			return null;
-		}
-		$parsed = self::parse($path);
-		if ($parsed === null) {
-			return null;
-		}
-		$n = count($parsed->keys);
-		if ($n === 0) {
-			return null;
-		}
-		for ($i = 0; $i < $n; ++$i) {
-			$index = $parsed->indices[$i];
-			if ($index !== null && ($index < 0 || $i === 0 || $i === $n - 1 || $parsed->indices[$i - 1] !== null)) {
-				return null;
-			}
-		}
-		return $parsed;
+		return is_string($path) ? self::parse($path) : null;
 	}
 
 	/** The attribute name the path starts at; a supported path always starts at a key segment. */
@@ -168,12 +151,18 @@ final class SwitchbackAttributePath {
 				$end = strpos($path, '/', $i);
 				$stop = $end === false ? $length : $end;
 				$key = substr($path, $i, $stop - $i);
+				$index = self::tryParseInt($key);
+				$n = count($indices);
+				if ($index !== null && ($index < 0 || $n === 0 || $indices[$n - 1] !== null)) {
+					return null;
+				}
 				$keys[] = $key;
-				$indices[] = self::tryParseInt($key);
+				$indices[] = $index;
 				$i = $stop;
 			}
 		}
-		return new self($keys, $indices);
+		$n = count($indices);
+		return $n !== 0 && $indices[$n - 1] === null ? new self($keys, $indices) : null;
 	}
 
 	/**

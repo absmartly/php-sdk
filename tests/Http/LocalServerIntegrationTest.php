@@ -2,7 +2,7 @@
 
 namespace ABSmartly\SDK\Tests\Http;
 
-use ABSmartly\SDK;
+use ABSmartly\SDK\SDK;
 use ABSmartly\SDK\Client\Client;
 use ABSmartly\SDK\Client\ClientConfig;
 use ABSmartly\SDK\Config;
@@ -114,7 +114,7 @@ class LocalServerIntegrationTest extends TestCase {
 		self::assertSame('website', $get['query']['application'] ?? null);
 		self::assertSame('dev', $get['query']['environment'] ?? null);
 
-		$context->track('payment', (object) ['value' => 99]);
+		$context->trackWithProperties('payment', (object) ['value' => 99]);
 		$context->publish();
 
 		$requests = $this->recordedRequests();
@@ -160,20 +160,21 @@ class LocalServerIntegrationTest extends TestCase {
 
 		$contextConfig = new ContextConfig();
 		$contextConfig->setUnit('store_id', 'store-1');
-		$contextConfig->setAttribute('store', ['key' => 'porto']);
+
 		$context = $sdk->createContext($contextConfig);
 		self::assertTrue($context->isReady());
+		$context->setAttributeValue('store', ['key' => 'porto']);
 		$context->getTreatment('exp_test_switchback');
 		$context->setUnit('device_id', 'device-1');
-		$context->track('payment');
+		$context->trackWithProperties('payment');
 		$context->publish();
 
 		$puts = array_values(array_filter($this->recordedRequests(), static fn($r) => $r['method'] === 'PUT'));
 		self::assertCount(2, $puts);
 		$early = json_decode($puts[0]['body'], true, 512, JSON_THROW_ON_ERROR);
 		$later = json_decode($puts[1]['body'], true, 512, JSON_THROW_ON_ERROR);
-		$store = ['type' => 'store_id', 'uid' => SDK\Utils::hashUnit('store-1')];
-		$device = ['type' => 'device_id', 'uid' => SDK\Utils::hashUnit('device-1')];
+		$store = ['type' => 'store_id', 'uid' => \ABSmartly\SDK\Utils::hashUnit('store-1')];
+		$device = ['type' => 'device_id', 'uid' => \ABSmartly\SDK\Utils::hashUnit('device-1')];
 		self::assertSame([$store], $early['units']);
 		self::assertSame(['exp_test_switchback'], array_column($early['exposures'] ?? [], 'name'));
 		self::assertSame('store_id', $early['exposures'][0]['unit']);

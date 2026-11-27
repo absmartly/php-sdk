@@ -81,7 +81,7 @@ class ContextSwitchbackClusterTest extends TestCase {
 			foreach ([$numeric, $text] as $uid) {
 				$this->now = self::$ANCHOR;
 				$context = $this->attributeContext(self::attributeSwitchback('city'), [self::$UNIT_TYPE => $uid]);
-				$context->setAttribute('city', 'Lisboa');
+				$context->setAttributeValue('city', 'Lisboa');
 				$context->getTreatment('exp_sb');
 				$context->publish();
 				$published[] = $this->eventHandler->submitted[0];
@@ -100,7 +100,7 @@ class ContextSwitchbackClusterTest extends TestCase {
 		$schedule = [0, 2, 1, 0, 1, 2, 0, 1, 2, 2, 1, 0];
 		$this->now = self::$ANCHOR;
 		$context = $this->attributeContext(self::attributeSwitchback('region'), [self::$UNIT_TYPE => 123456789]);
-		$context->setAttribute('region', 123456789);
+		$context->setAttributeValue('region', 123456789);
 		$context->getTreatment('exp_sb');
 		$context->publish();
 		self::assertSame('JfnnlDI7RTiF9RgfG2JNCw', $this->eventHandler->submitted[0]->units[0]->uid);
@@ -111,18 +111,18 @@ class ContextSwitchbackClusterTest extends TestCase {
 	/** Periods 0..11 of the raw key "Lisboa", from the independent murmur3 reference. */
 	public function testAttributeSourceServesTheRawAttributeValue(): void {
 		$context = $this->attributeContext(self::attributeSwitchback('city'));
-		$context->setAttribute('city', 'Lisboa');
+		$context->setAttributeValue('city', 'Lisboa');
 		self::assertSame([0, 2, 1, 2, 1, 0, 1, 0, 2, 0, 1, 2], $this->peekSchedule($context));
 		self::assertSame(self::expectedSchedule('Lisboa'), $this->peekSchedule($context));
 	}
 
 	public function testUnitsSharingAnAttributeValueShareTheSchedule(): void {
 		$lisboa = $this->attributeContext(self::attributeSwitchback('city'));
-		$lisboa->setAttribute('city', 'Lisboa');
+		$lisboa->setAttributeValue('city', 'Lisboa');
 		$porto = $this->attributeContext(self::attributeSwitchback('city'));
-		$porto->setAttribute('city', 'Porto');
+		$porto->setAttributeValue('city', 'Porto');
 		$otherLisboa = $this->attributeContext(self::attributeSwitchback('city'), [self::$UNIT_TYPE => 'another-store']);
-		$otherLisboa->setAttribute('city', 'Lisboa');
+		$otherLisboa->setAttributeValue('city', 'Lisboa');
 
 		self::assertSame(self::expectedSchedule('Lisboa'), $this->peekSchedule($lisboa));
 		self::assertSame(self::expectedSchedule('Lisboa'), $this->peekSchedule($otherLisboa));
@@ -133,38 +133,38 @@ class ContextSwitchbackClusterTest extends TestCase {
 	public function testNestedAndArrayPathsAndIntegerValuesResolve(): void {
 		$this->now = self::$ANCHOR;
 		$nested = $this->attributeContext(self::attributeSwitchback('geo/city'));
-		$nested->setAttribute('geo', ['city' => 'Porto']);
+		$nested->setAttributeValue('geo', ['city' => 'Porto']);
 		self::assertSame(self::expectedSchedule('Porto'), $this->peekSchedule($nested));
 
 		$this->now = self::$ANCHOR;
 		$object = $this->attributeContext(self::attributeSwitchback('geo/city'));
-		$object->setAttribute('geo', (object) ['city' => 'Porto']);
+		$object->setAttributeValue('geo', (object) ['city' => 'Porto']);
 		self::assertSame(self::expectedSchedule('Porto'), $this->peekSchedule($object));
 
 		$this->now = self::$ANCHOR;
 		$array = $this->attributeContext(self::attributeSwitchback('items/1/city'));
-		$array->setAttribute('items', [['city' => 'Lisbon'], ['city' => 'Faro']]);
+		$array->setAttributeValue('items', [['city' => 'Lisbon'], ['city' => 'Faro']]);
 		self::assertSame(self::expectedSchedule('Faro'), $this->peekSchedule($array));
 
 		$this->now = self::$ANCHOR;
 		$integer = $this->attributeContext(self::attributeSwitchback('region'));
-		$integer->setAttribute('region', 42);
+		$integer->setAttributeValue('region', 42);
 		self::assertSame(self::expectedSchedule('42'), $this->peekSchedule($integer));
 
 		$this->now = self::$ANCHOR;
 		$nestedInteger = $this->attributeContext(self::attributeSwitchback('geo/city'));
-		$nestedInteger->setAttribute('geo', ['city' => -42]);
+		$nestedInteger->setAttributeValue('geo', ['city' => -42]);
 		self::assertSame(self::expectedSchedule('-42'), $this->peekSchedule($nestedInteger));
 
 		$this->now = self::$ANCHOR + 10;
 		$floating = $this->attributeContext(self::attributeSwitchback('city'));
-		$floating->setAttribute('city', 2.0);
+		$floating->setAttributeValue('city', 2.0);
 		self::assertSame(0, $floating->getTreatment('exp_sb'));
 		self::assertSame(0, $floating->getPendingCount());
 
 		// A nested float keeps its fraction through the JSON round trip, so 3.0 never keys a cluster either.
 		$nestedFloat = $this->attributeContext(self::attributeSwitchback('geo/city'));
-		$nestedFloat->setAttribute('geo', ['city' => 3.0]);
+		$nestedFloat->setAttributeValue('geo', ['city' => 3.0]);
 		self::assertSame(0, $nestedFloat->getTreatment('exp_sb'));
 		self::assertSame(0, $nestedFloat->getPendingCount());
 	}
@@ -173,7 +173,7 @@ class ContextSwitchbackClusterTest extends TestCase {
 	public function testValuesWithoutAClusterKeyAreIneligible(): void {
 		foreach ([null, '', true, false, 1.5, 2.0, 3.0, -0.0, ['a' => 'b'], ['x'], [], (object) []] as $value) {
 			$context = $this->attributeContext(self::attributeSwitchback('city'));
-			$context->setAttribute('city', $value);
+			$context->setAttributeValue('city', $value);
 			$this->now = self::$ANCHOR + 10;
 			self::assertSame(0, $context->getTreatment('exp_sb'), var_export($value, true));
 			// Variant 0's own config, like any ineligible assignment.
@@ -182,7 +182,7 @@ class ContextSwitchbackClusterTest extends TestCase {
 		}
 
 		$missing = $this->attributeContext(self::attributeSwitchback('geo/city'));
-		$missing->setAttribute('geo', ['country' => 'PT']);
+		$missing->setAttributeValue('geo', ['country' => 'PT']);
 		$this->now = self::$ANCHOR + 10;
 		self::assertSame(0, $missing->getTreatment('exp_sb'));
 		self::assertSame(0, $missing->getPendingCount());
@@ -195,7 +195,7 @@ class ContextSwitchbackClusterTest extends TestCase {
 		$cyclic->city = 'Porto';
 		foreach ([$cyclic, ['city' => 'Porto', 'x' => NAN], ['city' => "\xff"]] as $value) {
 			$context = $this->attributeContext(self::attributeSwitchback('geo/city'));
-			$context->setAttribute('geo', $value);
+			$this->setReadAttribute($context, 'geo', $value);
 			self::assertSame(0, $context->getTreatment('exp_sb'));
 			self::assertSame(0, $context->getPendingCount());
 		}
@@ -232,8 +232,8 @@ class ContextSwitchbackClusterTest extends TestCase {
 		}
 		foreach ($experiments as $experiment) {
 			$context = $this->attributeContext($experiment);
-			$context->setAttribute('city', 'Lisboa');
-			$context->setAttribute('items', [['city' => 'Lisbon']]);
+			$context->setAttributeValue('city', 'Lisboa');
+			$context->setAttributeValue('items', [['city' => 'Lisbon']]);
 			for ($i = 0; $i < 3; ++$i) {
 				$this->now = self::$ANCHOR + $i * self::$HOUR;
 				self::assertSame(0, $context->getTreatment('exp_sb'), json_encode($experiment));
@@ -248,7 +248,7 @@ class ContextSwitchbackClusterTest extends TestCase {
 		$experiment->switchbackPeriodMs = 3600000.0;
 		$experiment->switchbackStartAt = (float) self::$ANCHOR;
 		$context = $this->attributeContext($experiment);
-		$context->setAttribute('city', 'Lisboa');
+		$context->setAttributeValue('city', 'Lisboa');
 		self::assertSame(self::expectedSchedule('Lisboa'), $this->peekSchedule($context));
 	}
 
@@ -266,13 +266,13 @@ class ContextSwitchbackClusterTest extends TestCase {
 				$experiment->switchbackClusters = $clusters;
 			}
 			$context = $this->attributeContext($experiment);
-			$context->setAttribute('city', 'Lisboa');
+			$context->setAttributeValue('city', 'Lisboa');
 			self::assertSame(0, $context->getTreatment('exp_sb'), json_encode($clusters));
 			self::assertSame(0, $context->getVariableValue('sb.arm', -1));
 			self::assertSame(0, $context->getPendingCount());
 
 			$other = $this->attributeContext($experiment, ['user_id' => 'u1']);
-			$other->setAttribute('city', 'Lisboa');
+			$other->setAttributeValue('city', 'Lisboa');
 			self::assertSame(0, $other->getTreatment('exp_sb'));
 			self::assertSame(-1, $other->getVariableValue('sb.arm', -1));
 			self::assertSame(0, $other->getPendingCount());
@@ -283,9 +283,9 @@ class ContextSwitchbackClusterTest extends TestCase {
 	public function testLatestAttributeSetAtOrBeforeTheResolutionInstantIsUsed(): void {
 		$context = $this->attributeContext(self::attributeSwitchback('city'));
 		$this->now = self::$ANCHOR + 2 * self::$HOUR;
-		$context->setAttribute('city', 'Porto');
+		$context->setAttributeValue('city', 'Porto');
 		$this->now = self::$ANCHOR + 4 * self::$HOUR;
-		$context->setAttribute('city', 'Lisboa');
+		$context->setAttributeValue('city', 'Lisboa');
 
 		$this->now = self::$ANCHOR + self::$HOUR;
 		self::assertSame(0, $context->peekTreatment('exp_sb'));
@@ -299,17 +299,17 @@ class ContextSwitchbackClusterTest extends TestCase {
 	public function testTheLatestSetAtWinsAndTiesGoToTheLastSet(): void {
 		$context = $this->attributeContext(self::attributeSwitchback('city'));
 		$this->now = self::$ANCHOR + 2 * self::$HOUR;
-		$context->setAttribute('city', 'Porto');
+		$context->setAttributeValue('city', 'Porto');
 		// A clock that went backwards: set later, but with an earlier setAt.
 		$this->now = self::$ANCHOR + self::$HOUR;
-		$context->setAttribute('city', 'Faro');
+		$context->setAttributeValue('city', 'Faro');
 		$this->now = self::$ANCHOR + 3 * self::$HOUR;
 		self::assertSame(self::expected('Porto', 3), $context->peekTreatment('exp_sb'));
 
 		$tie = $this->attributeContext(self::attributeSwitchback('city'));
 		$this->now = self::$ANCHOR;
-		$tie->setAttribute('city', 'Porto');
-		$tie->setAttribute(' city ', 'Lisboa');
+		$tie->setAttributeValue('city', 'Porto');
+		$tie->setAttributeValue(' city ', 'Lisboa');
 		self::assertSame(self::expectedSchedule('Lisboa'), $this->peekSchedule($tie));
 
 		$system = $this->attributeContext(self::attributeSwitchback('application'));
@@ -321,11 +321,11 @@ class ContextSwitchbackClusterTest extends TestCase {
 	public function testSetAttributeMidPeriodDoesNotReassignWithinThePeriod(): void {
 		$context = $this->attributeContext(self::attributeSwitchback('city'));
 		$this->now = self::$ANCHOR + 10;
-		$context->setAttribute('city', 'Lisboa');
+		$context->setAttributeValue('city', 'Lisboa');
 		self::assertSame(self::expected('Lisboa', 0), $context->getTreatment('exp_sb'));
 
 		$this->now = self::$ANCHOR + 20;
-		$context->setAttribute('city', 'Porto');
+		$context->setAttributeValue('city', 'Porto');
 		self::assertSame(self::expected('Lisboa', 0), $context->getTreatment('exp_sb'));
 		self::assertSame(self::expected('Lisboa', 0), $context->peekTreatment('exp_sb'));
 		self::assertSame(1, $context->getPendingCount());
@@ -347,7 +347,7 @@ class ContextSwitchbackClusterTest extends TestCase {
 		$context = $this->attributeContext(self::attributeSwitchback('city'));
 		$this->now = self::$ANCHOR + 10;
 		self::assertSame(0, $context->getTreatment('exp_sb'));
-		$context->setAttribute('city', 'Lisboa');
+		$context->setAttributeValue('city', 'Lisboa');
 		$this->now = self::$ANCHOR + 20;
 		self::assertSame(0, $context->getTreatment('exp_sb'));
 		self::assertSame(0, $context->getPendingCount());
@@ -361,11 +361,11 @@ class ContextSwitchbackClusterTest extends TestCase {
 	public function testTrafficChangesWithinThePeriodKeepThePeriodsBucket(): void {
 		$context = $this->attributeContext(self::attributeSwitchback('city'));
 		$this->now = self::$ANCHOR + 10;
-		$context->setAttribute('city', 'Lisboa');
+		$context->setAttributeValue('city', 'Lisboa');
 		self::assertSame(self::expected('Lisboa', 0), $context->getTreatment('exp_sb'));
 
 		$this->now = self::$ANCHOR + 20;
-		$context->setAttribute('city', 'Porto');
+		$context->setAttributeValue('city', 'Porto');
 		$noTraffic = self::attributeSwitchback('city');
 		$noTraffic->trafficSplit = [1.0, 0.0];
 		$this->refreshTo($context, $noTraffic);
@@ -385,11 +385,11 @@ class ContextSwitchbackClusterTest extends TestCase {
 		$noTraffic->trafficSplit = [1.0, 0.0];
 		$context = $this->attributeContext($noTraffic);
 		$this->now = self::$ANCHOR + 10;
-		$context->setAttribute('city', 'Faro');
+		$context->setAttributeValue('city', 'Faro');
 		self::assertSame(0, $context->getTreatment('exp_sb'));
 
 		$this->now = self::$ANCHOR + 20;
-		$context->setAttribute('city', 'Lisboa');
+		$context->setAttributeValue('city', 'Lisboa');
 		$this->refreshTo($context, self::attributeSwitchback('city'));
 		self::assertSame(1, self::expected('Faro', 0));
 		self::assertSame(self::expected('Faro', 0), $context->getTreatment('exp_sb'));
@@ -403,13 +403,13 @@ class ContextSwitchbackClusterTest extends TestCase {
 		$experiment->audience = '{"filter":[{"eq":[{"var":"tier"},{"value":"gold"}]}]}';
 		$context = $this->attributeContext($experiment);
 		$this->now = self::$ANCHOR + 10;
-		$context->setAttribute('city', 'Lisboa');
-		$context->setAttribute('tier', 'gold');
+		$context->setAttributeValue('city', 'Lisboa');
+		$context->setAttributeValue('tier', 'gold');
 		self::assertSame(self::expected('Lisboa', 0), $context->getTreatment('exp_sb'));
 
 		$this->now = self::$ANCHOR + 20;
-		$context->setAttribute('city', 'Porto');
-		$context->setAttribute('tier', 'silver');
+		$context->setAttributeValue('city', 'Porto');
+		$context->setAttributeValue('tier', 'silver');
 		self::assertSame(self::expected('Lisboa', 0), $context->getTreatment('exp_sb'));
 
 		self::assertSame([self::sbExposure(self::expected('Lisboa', 0), self::$ANCHOR + 10),
@@ -422,12 +422,12 @@ class ContextSwitchbackClusterTest extends TestCase {
 		$experiment->audience = '{"filter":[{"eq":[{"var":"tier"},{"value":"gold"}]}]}';
 		$context = $this->attributeContext($experiment);
 		$this->now = self::$ANCHOR + 10;
-		$context->setAttribute('tier', 'gold');
+		$context->setAttributeValue('tier', 'gold');
 		self::assertSame(0, $context->getTreatment('exp_sb'));
 
 		$this->now = self::$ANCHOR + 20;
-		$context->setAttribute('city', 'Faro');
-		$context->setAttribute('tier', 'silver');
+		$context->setAttributeValue('city', 'Faro');
+		$context->setAttributeValue('tier', 'silver');
 		self::assertSame(1, self::expected('Faro', 0));
 		self::assertSame(0, $context->getTreatment('exp_sb'));
 		self::assertSame(0, $context->getPendingCount());
@@ -442,8 +442,8 @@ class ContextSwitchbackClusterTest extends TestCase {
 	public function testClusterPathChangesInvalidateThePeriod(): void {
 		$context = $this->attributeContext(self::attributeSwitchback('city'));
 		$this->now = self::$ANCHOR + 10;
-		$context->setAttribute('city', 'Lisboa');
-		$context->setAttribute('geo', ['city' => 'Porto']);
+		$context->setAttributeValue('city', 'Lisboa');
+		$context->setAttributeValue('geo', ['city' => 'Porto']);
 		self::assertSame(self::expected('Lisboa', 0), $context->getTreatment('exp_sb'));
 		self::assertSame(1, $context->getPendingCount());
 
@@ -466,8 +466,8 @@ class ContextSwitchbackClusterTest extends TestCase {
 	public function testLinkedUnitTypeChangeRekeysThePeriod(): void {
 		$context = $this->attributeContext(self::attributeSwitchback('city'), [self::$UNIT_TYPE => self::$UID, 'user_id' => 'user-0002']);
 		$this->now = self::$ANCHOR + 1;
-		$context->setAttribute('city', 'Lisboa');
-		$context->setAttribute('ucity', 'Faro');
+		$context->setAttributeValue('city', 'Lisboa');
+		$context->setAttributeValue('ucity', 'Faro');
 		self::assertSame(self::expected('Lisboa', 0), $context->getTreatment('exp_sb'));
 
 		$byUser = self::attributeSwitchback('ucity');
@@ -479,7 +479,7 @@ class ContextSwitchbackClusterTest extends TestCase {
 
 	public function testCustomAssignmentAppliesOnlyToUnitsWithAClusterKey(): void {
 		$keyed = $this->attributeContext(self::attributeSwitchback('city'));
-		$keyed->setAttribute('city', 'Lisboa');
+		$keyed->setAttributeValue('city', 'Lisboa');
 		$keyed->setCustomAssignment('exp_sb', 2);
 		self::assertSame(2, $keyed->getTreatment('exp_sb'));
 
@@ -507,7 +507,7 @@ class ContextSwitchbackClusterTest extends TestCase {
 			$published = [];
 			foreach ([$unit, $reference] as $experiment) {
 				$context = $this->attributeContext($experiment, [self::$UNIT_TYPE => self::$UID, 'user_id' => 'u']);
-				$context->setAttribute('city', 'Lisboa');
+				$context->setAttributeValue('city', 'Lisboa');
 				$this->now = self::$ANCHOR - self::$HOUR;
 				$first = $context->getTreatment('exp_sb');
 				for ($i = 1; $i < 6; ++$i) {

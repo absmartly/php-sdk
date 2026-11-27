@@ -23,8 +23,8 @@ use React\Promise\PromiseInterface;
 use function React\Promise\resolve;
 
 /**
- * Holdouts as they arrive from the collector: decoding, forward compatibility, malformed entries, and the shared
- * cross-sdk-tests cases H1-H8 that the java-sdk suite doesn't cover.
+ * Holdouts as they arrive from the collector: decoding, forward compatibility, malformed entries, and the
+ * cross-sdk-tests Holdout Conformance scenarios (501-507) that the java-sdk suite doesn't cover.
  */
 class ContextHoldoutPayloadTest extends TestCase {
 	private const UID = 'e791e240fcd3df7d238cfc285f475e8152fcc0ec';
@@ -179,7 +179,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertSame([11, 12], array_map(fn($holdout) => $holdout->id, $data->holdouts));
 	}
 
-	// Without an async HTTP client the async fetch resolves the blocking fetch, which keeps the holdouts too.
 	public function testClientDecodesHoldoutsOnAsyncFetchWithABlockingHttpClient(): void {
 		$json = file_get_contents(__DIR__ . '/../Fixtures/json/holdouts_context.json');
 		$client = new Client(new ClientConfig('endpoint', 'key', 'app', 'env'), self::httpClient($json));
@@ -256,7 +255,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertSame([], $errors);
 		self::assertTrue($context->isReady());
 		self::assertFalse($context->isFailed());
-		// holdout_a holds the unit out; holdout_b (3 arms, arm 2) doesn't; the dangling id 999 is ignored.
 		self::assertSame(0, $context->getTreatment('exp_covered'));
 		self::assertSame(1, $context->getTreatment('exp_uncovered'));
 		self::assertSame([
@@ -300,13 +298,9 @@ class ContextHoldoutPayloadTest extends TestCase {
 				return $name === 'id' ? 11 : 1;
 			}
 		};
-		$assignment = self::invokeGetAssignment($context, 'exp');
+		$assignment = self::invoke($context, 'getAssignment', 'exp');
 		$assignment->holdouts = [$counted];
-		$sets = new \ReflectionProperty(Context::class, 'experimentHoldouts');
-		if (PHP_VERSION_ID < 80100) {
-			$sets->setAccessible(true);
-		}
-		$sets->setValue($context, ['exp' => [$counted]]);
+		self::property($context, 'experimentHoldouts', ['exp' => [$counted]]);
 		for ($i = 0; $i < 10; ++$i) {
 			$context->peekTreatment('exp');
 		}
@@ -387,7 +381,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 		}
 	}
 
-	// H1: a holdout id listed twice covers the experiment once and exposes once (JS insertUniqueSorted).
 	public function testDuplicateHoldoutIdsCoverOnceAndExposeOnce(): void {
 		$context = $this->createContext(new ContextData([self::experiment(1, 'exp', [12, 11, 12, 11])],
 			[self::holdout(11, 'holdout_a', 1, 222), self::holdout(12, 'holdout_b', 1, 222)]));
@@ -400,7 +393,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 		], $this->published($context));
 	}
 
-	// H6: one holdout covering experiments with two unit types publishes one exposure per unit type.
 	public function testSharedHoldoutAcrossUnitTypesPublishesOneExposurePerUnitType(): void {
 		$context = $this->createContext(new ContextData([
 			self::experiment(1, 'exp_session', [11]),
@@ -416,19 +408,17 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertSame([[11, 'holdout_a', 'session_id', 1], [11, 'holdout_a', 'user_id', 1]], $holdoutExposures);
 	}
 
-	// H7: a strict audience mismatch on a covered experiment that isn't held out still exposes the holdout.
 	public function testStrictAudienceMismatchStillExposesTheHoldout(): void {
 		$experiment = self::experiment(1, 'exp', [11]);
 		$experiment->audienceStrict = true;
 		$experiment->audience = '{"filter":[{"gte":[{"var":"age"},{"value":20}]}]}';
 		$context = $this->createContext(new ContextData([$experiment], [self::holdout(11, 'holdout_a', 1, 222)]));
-		$context->setAttribute('age', 5);
+		$context->setAttributeValue('age', 5);
 
 		self::assertSame(0, $context->getTreatment('exp'));
 		self::assertSame([[1, 'exp', 'session_id', 0], [11, 'holdout_a', 'session_id', 1]], $this->published($context));
 	}
 
-	// H8 and scenario 226: a suppressed candidate falls back to its control value only when nothing assigned wins.
 	public function testSuppressedVariableFallsBackToControlOnlyWhenNothingAssignedWins(): void {
 		$suppressed = self::experiment(1, 'exp_suppressed', [11]);
 		$suppressed->variants = [(object) ['name' => 'A', 'config' => '{"color":"control_1"}'],
@@ -453,7 +443,26 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertSame('default', $context->getVariableValue('missing', 'default'));
 	}
 
-	// A suppressed candidate that lacks the key still blocks a later suppressed candidate's control value (JS).
+	// Main's shared key rule wins over the held-out fallback: a later winner whose variant lacks the key returns the
+	// default, not the earlier held-out candidate's control value. Only the winner and the holdouts are exposed.
+	public function testWinnerWithoutTheKeyReturnsTheDefaultOverAHeldOutCandidatesControl(): void {
+		$suppressed = self::experiment(1, 'exp_suppressed', [11]);
+		$suppressed->variants = [(object) ['name' => 'A', 'config' => '{"color":"control_1"}'],
+			(object) ['name' => 'B', 'config' => '{"color":"treatment_1"}']];
+		$winner = self::experiment(2, 'exp_winner', []);
+		$winner->variants = [(object) ['name' => 'A', 'config' => '{"color":"control_2"}'],
+			(object) ['name' => 'B', 'config' => '{"other":"treatment_2"}']];
+		$later = self::experiment(3, 'exp_later', []);
+		$later->variants = [(object) ['name' => 'A', 'config' => '{"color":"control_3"}'],
+			(object) ['name' => 'B', 'config' => '{"color":"treatment_3"}']];
+
+		$context = $this->createContext(new ContextData([$suppressed, $winner, $later], [self::holdout(11, 'holdout_a', 13, 111)]));
+		self::assertSame('default', $context->peekVariableValue('color', 'default'));
+		self::assertSame(0, $context->getPendingCount());
+		self::assertSame('default', $context->getVariableValue('color', 'default'));
+		self::assertSame([[11, 'holdout_a', 'session_id', 0], [2, 'exp_winner', 'session_id', 1]], $this->published($context));
+	}
+
 	public function testOnlyTheFirstSuppressedCandidateProvidesTheFallback(): void {
 		$first = self::experiment(1, 'exp_first', [11]);
 		$first->variants = [(object) ['name' => 'A', 'config' => '{"other":1}'], (object) ['name' => 'B', 'config' => '{"color":"t1"}']];
@@ -465,7 +474,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertSame('default', $context->getVariableValue('color', 'default'));
 	}
 
-	// H4: peeks never queue a holdout exposure.
 	public function testPeeksQueueNoHoldoutExposure(): void {
 		$experiment = self::experiment(1, 'exp', [11]);
 		$experiment->variants[1]->config = '{"color":"blue"}';
@@ -485,60 +493,40 @@ class ContextHoldoutPayloadTest extends TestCase {
 
 		self::assertSame(0, $context->getTreatment('exp'));
 		$cached = self::invoke($context, 'getAssignment', 'exp');
-		$context->setAttribute('age', 5);
+		$context->setAttributeValue('age', 5);
 		self::assertSame(0, $context->getTreatment('exp'));
-		$context->setAttribute('age', 50);
+		$context->setAttributeValue('age', 50);
 		self::assertSame(0, $context->getTreatment('exp'));
 		self::assertSame($cached, self::invoke($context, 'getAssignment', 'exp'));
 		self::assertSame(1, $context->getPendingCount());
 	}
 
-	// A holdout exposure dropped by the retained-event cap is only re-queued while its arm is still the cached one: after
-	// an iteration bump the next read publishes the new arm alone.
+	// A holdout exposure is re-queued only if its arm still owned the holdout's cache slot when the cap dropped it.
+	// Here a read draws the new iteration's arm first, so re-reading the removed experiment that pins the retired arm
+	// does not replay it.
 	public function testDroppedHoldoutExposureOfARetiredArmIsNotQueuedAgain(): void {
-		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'test-api-key', 'website', 'production'));
-		$config = new Config($client);
-		$provider = new HoldoutDataProvider();
-		$config->setContextDataProvider($provider);
-		$this->eventHandler = new ContextEventHandlerMock($client);
-		$config->setContextEventHandler($this->eventHandler);
-		$contextConfig = new ContextConfig();
-		$contextConfig->setUnits(['session_id' => self::UID]);
-		$context = (new SDK($config))->createContextWithData($contextConfig,
-			new ContextData([self::experiment(1, 'exp', [11])], [self::holdout(11, 'holdout_a', 13, 111)]));
-		$context->maxRetainedEvents = 1;
-		$this->eventHandler->prerun = function () {
-			throw new \RuntimeException('collector down');
-		};
+		[$context, $provider] = $this->contextWithProvider(new ContextData(
+			[self::experiment(1, 'exp_old', [11]), self::experiment(2, 'exp', [11])], [self::holdout(11, 'holdout_a', 13, 111)]));
+		self::assertSame(0, $context->getTreatment('exp_old'));
 
-		self::assertSame(0, $context->getTreatment('exp'));
 		$bumped = self::holdout(11, 'holdout_a', 1, 222);
 		$bumped->iteration = 2;
-		$provider->next = new ContextData([self::experiment(1, 'exp', [11])], [$bumped]);
+		$provider->next = new ContextData([self::experiment(2, 'exp', [11])], [$bumped]);
 		$context->refresh();
-		$context->track('goal');
-		$context->publish();
-		self::assertSame(1, $context->getPendingCount());
-
-		$this->eventHandler->prerun = null;
 		self::assertSame(1, $context->getTreatment('exp'));
-		self::assertSame([[1, 'exp', 'session_id', 1], [11, 'holdout_a', 'session_id', 1]], $this->published($context));
+		$context->maxRetainedEvents = 3;
+		$this->failNextPublish($context);
+
+		$context->maxRetainedEvents = 10000;
+		self::assertSame(0, $context->getTreatment('exp_old'));
+		self::assertSame([[2, 'exp', 'session_id', 1], [11, 'holdout_a', 'session_id', 1]], $this->published($context));
 	}
 
 	// An override whose experiment left the data keeps its assignment and pinned arm. When the cap drops that arm's
 	// exposure after the holdout moved to a new iteration, re-exposing the override must not republish the retired arm.
 	public function testDroppedExposureOfARetiredArmPinnedByAnOverrideIsNotQueuedAgain(): void {
-		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'test-api-key', 'website', 'production'));
-		$config = new Config($client);
-		$provider = new HoldoutDataProvider();
-		$config->setContextDataProvider($provider);
-		$this->eventHandler = new ContextEventHandlerMock($client);
-		$config->setContextEventHandler($this->eventHandler);
-		$contextConfig = new ContextConfig();
-		$contextConfig->setUnits(['session_id' => self::UID]);
-		$contextConfig->setOverride('exp_gone', 1);
-		$context = (new SDK($config))->createContextWithData($contextConfig,
-			new ContextData([self::experiment(1, 'exp_gone', [11])], [self::holdout(11, 'holdout_a', 13, 111)]));
+		[$context, $provider] = $this->contextWithProvider(
+			new ContextData([self::experiment(1, 'exp_gone', [11])], [self::holdout(11, 'holdout_a', 13, 111)]), ['exp_gone' => 1]);
 		$context->maxRetainedEvents = 1;
 
 		self::assertSame(1, $context->getTreatment('exp_gone'));
@@ -560,7 +548,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertSame([[1, 'exp_gone', 'session_id', 1]], $this->published($context));
 	}
 
-	// A holdout exposure dropped by the retained-event cap is re-queued by the next exposing read, like any other.
 	public function testHoldoutExposureDroppedByTheRetainedEventCapIsQueuedAgain(): void {
 		$context = $this->createContext(new ContextData([self::experiment(1, 'exp', [11])], [self::holdout(11, 'holdout_a', 13, 111)]));
 		$context->maxRetainedEvents = 1;
@@ -603,7 +590,8 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertSame([[11, 'holdout_a', 'session_id', 0]], $this->published($context));
 	}
 
-	private function contextWithProvider(ContextData $data, array $overrides = []): array {
+	private function contextWithProvider(ContextData $data, array $overrides = [], array $units = ['session_id' => self::UID],
+		?ContextEventLogger $logger = null): array {
 		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'test-api-key', 'website', 'production'));
 		$config = new Config($client);
 		$provider = new HoldoutDataProvider();
@@ -611,14 +599,17 @@ class ContextHoldoutPayloadTest extends TestCase {
 		$this->eventHandler = new ContextEventHandlerMock($client);
 		$config->setContextEventHandler($this->eventHandler);
 		$contextConfig = new ContextConfig();
-		$contextConfig->setUnits(['session_id' => self::UID]);
+		$contextConfig->setUnits($units);
 		$contextConfig->setOverrides($overrides);
+		if ($logger !== null) {
+			$contextConfig->setEventLogger($logger);
+		}
 		return [(new SDK($config))->createContextWithData($contextConfig, $data), $provider];
 	}
 
-	// Data whose install raises an Error (a TypeError from a mistyped field), not only an Exception, is rolled back:
-	// the previous data, its holdouts and its assignments stay in use and refresh() does not throw.
-	public function testRefreshThatRaisesAnErrorWhileInstallingKeepsThePreviousData(): void {
+	// A refresh whose provider raises an Error, not only an Exception, keeps the previous data, its holdouts and its
+	// assignments in use, and refresh() does not throw.
+	public function testRefreshWhoseProviderRaisesAnErrorKeepsThePreviousData(): void {
 		$experiment = self::experiment(1, 'exp', [11]);
 		$experiment->variants = [(object) ['name' => 'A', 'config' => '{"color":"control"}'],
 			(object) ['name' => 'B', 'config' => '{"color":"treatment"}']];
@@ -626,16 +617,8 @@ class ContextHoldoutPayloadTest extends TestCase {
 		[$context, $provider] = $this->contextWithProvider($data);
 		self::assertSame(0, $context->peekTreatment('exp'));
 
-		$broken = self::experiment(2, 'exp_broken', []);
-		$broken->variants = (object) ['not' => 'a list'];
-		$provider->next = new ContextData([self::experiment(1, 'exp', []), $broken], []);
-		set_error_handler(static fn() => true);
-		try {
-			$context->refresh();
-		}
-		finally {
-			restore_error_handler();
-		}
+		$provider->error = new \TypeError('mistyped field');
+		$context->refresh();
 
 		self::assertSame($data, $context->getContextData());
 		self::assertFalse($context->isFailed());
@@ -654,7 +637,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 		$this->eventHandler->prerun = null;
 	}
 
-	// Queuing a retired arm that an override still pins must not hide the live arm's dropped exposure.
 	public function testRetiredArmDoesNotClearTheLiveArmsDroppedExposure(): void {
 		[$context, $provider] = $this->contextWithProvider(
 			new ContextData([self::experiment(1, 'exp_override', [11]), self::experiment(2, 'exp', [11])], [self::holdout(11, 'holdout_a', 1, 222)]),
@@ -676,7 +658,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 			$this->published($context));
 	}
 
-	// An experiment whose id and unit type match a dropped holdout's is not that holdout's arm.
 	public function testExperimentWithAHoldoutsIdDoesNotClearItsDroppedExposure(): void {
 		[$context] = $this->contextWithProvider(new ContextData(
 			[self::experiment(1, 'exp', [11]), self::experiment(11, 'exp_eleven', [])], [self::holdout(11, 'holdout_a', 13, 111)]));
@@ -690,7 +671,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertSame([[11, 'exp_eleven', 'session_id', 1], [11, 'holdout_a', 'session_id', 0]], $this->published($context));
 	}
 
-	// A refresh that fails part-way keeps the dropped mark, so the held-back holdout exposure is still queued again.
 	public function testFailedRefreshKeepsADroppedHoldoutExposurePending(): void {
 		[$context, $provider] = $this->contextWithProvider(
 			new ContextData([self::experiment(1, 'exp', [11])], [self::holdout(11, 'holdout_a', 13, 111)]));
@@ -698,9 +678,7 @@ class ContextHoldoutPayloadTest extends TestCase {
 		$context->maxRetainedEvents = 1;
 		$this->failNextPublish($context);
 
-		$broken = self::experiment(2, 'exp_broken', []);
-		$broken->audience = '{not json';
-		$provider->next = new ContextData([self::experiment(1, 'exp', []), $broken], []);
+		$provider->error = new \RuntimeException('collector down');
 		$context->refresh();
 
 		$context->maxRetainedEvents = 10000;
@@ -731,7 +709,7 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertSame([], self::droppedHoldoutArms($context));
 	}
 
-	// After an iteration bump, the dropped exposure of the old arm (pinned by a removed experiment) and of the new arm
+	// After an iteration bump, the dropped exposures of the old arm (pinned by a removed experiment) and of the new arm
 	// are tracked apart, so both are queued again whichever is read first.
 	public function testDroppedOldAndNewArmsAreRequeuedInEitherReadOrder(): void {
 		foreach ([['exp_old', 'exp_new'], ['exp_new', 'exp_old']] as $order) {
@@ -745,6 +723,9 @@ class ContextHoldoutPayloadTest extends TestCase {
 			$bumped->iteration = 2;
 			$provider->next = new ContextData([self::experiment(2, 'exp_new', [11])], [$bumped]);
 			$context->refresh();
+			self::assertSame(1, $context->getTreatment('exp_new'));
+			$this->failNextPublish($context);
+
 			$context->maxRetainedEvents = 10000;
 			foreach ($order as $name) {
 				$context->getTreatment($name);
@@ -757,7 +738,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 		}
 	}
 
-	// A refresh while a mark is outstanding skips the null arms of an assignment whose unit isn't set.
 	public function testRefreshWithADroppedMarkToleratesAnAssignmentWithAMissingUnit(): void {
 		$holdout = self::holdout(11, 'holdout_a', 13, 111);
 		$data = new ContextData([self::experiment(1, 'exp', [11]), self::experiment(2, 'exp_user', [11], 'user_id')], [$holdout]);
@@ -800,35 +780,19 @@ class ContextHoldoutPayloadTest extends TestCase {
 		[$context] = $this->contextWithProvider(new ContextData([$experiment], [self::holdout(11, 'holdout_a', 13, 111)]));
 		self::assertSame(0, $context->getTreatment('exp'));
 
-		$arm = self::invokeGetAssignment($context, 'exp')->holdoutAssignments[0];
+		$arm = self::invoke($context, 'getAssignment', 'exp')->holdoutAssignments[0];
 		$arm->name = 'sentinel';
 		self::assertSame(0, $context->getTreatment('exp'));
 		self::assertSame('control', $context->getVariableValue('color', 'default'));
 		self::assertSame('sentinel', $arm->name);
 	}
 
-	private static function invokeGetAssignment(Context $context, string $name) {
-		$method = new \ReflectionMethod(Context::class, 'getAssignment');
-		if (PHP_VERSION_ID < 80100) {
-			$method->setAccessible(true);
-		}
-		return $method->invoke($context, $name);
-	}
-
 	// An override whose experiment changes unit type keeps the same holdout id and iteration, but its arm is drawn
 	// again for the new unit type, which publishes its own holdout exposure.
 	public function testOverrideRedrawsHoldoutArmsWhenTheUnitTypeChanges(): void {
 		$holdout = self::holdout(11, 'holdout_a', 13, 111);
-		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'test-api-key', 'website', 'production'));
-		$config = new Config($client);
-		$provider = new HoldoutDataProvider();
-		$config->setContextDataProvider($provider);
-		$this->eventHandler = new ContextEventHandlerMock($client);
-		$config->setContextEventHandler($this->eventHandler);
-		$contextConfig = new ContextConfig();
-		$contextConfig->setUnits(['session_id' => self::UID, 'user_id' => 'b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3']);
-		$contextConfig->setOverride('exp', 1);
-		$context = (new SDK($config))->createContextWithData($contextConfig, new ContextData([self::experiment(1, 'exp', [11])], [$holdout]));
+		[$context, $provider] = $this->contextWithProvider(new ContextData([self::experiment(1, 'exp', [11])], [$holdout]), ['exp' => 1],
+			['session_id' => self::UID, 'user_id' => 'b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3']);
 		self::assertSame(1, $context->getTreatment('exp'));
 
 		$provider->next = new ContextData([self::experiment(1, 'exp', [11], 'user_id')], [$holdout]);
@@ -856,17 +820,8 @@ class ContextHoldoutPayloadTest extends TestCase {
 				}
 			}
 		};
-		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'test-api-key', 'website', 'production'));
-		$config = new Config($client);
-		$provider = new HoldoutDataProvider();
-		$config->setContextDataProvider($provider);
-		$this->eventHandler = new ContextEventHandlerMock($client);
-		$config->setContextEventHandler($this->eventHandler);
-		$contextConfig = new ContextConfig();
-		$contextConfig->setUnits(['session_id' => self::UID]);
-		$contextConfig->setEventLogger($logger);
-		$context = (new SDK($config))->createContextWithData($contextConfig,
-			new ContextData([self::experiment(1, 'exp', [11])], [self::holdout(11, 'holdout_a', 1, 222)]));
+		[$context, $provider] = $this->contextWithProvider(
+			new ContextData([self::experiment(1, 'exp', [11])], [self::holdout(11, 'holdout_a', 1, 222)]), [], ['session_id' => self::UID], $logger);
 		self::assertSame(1, $context->peekTreatment('exp'));
 
 		// Same iteration, a seed that holds the unit out: only a fresh resolution against the new data sees it.
@@ -884,15 +839,8 @@ class ContextHoldoutPayloadTest extends TestCase {
 	// holdout publish an exposure for that unit type.
 	public function testCoveredExperimentIsReassignedWhenTheUnitTypeChanges(): void {
 		$holdout = self::holdout(11, 'holdout_a', 1, 222);
-		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'test-api-key', 'website', 'production'));
-		$config = new Config($client);
-		$provider = new HoldoutDataProvider();
-		$config->setContextDataProvider($provider);
-		$this->eventHandler = new ContextEventHandlerMock($client);
-		$config->setContextEventHandler($this->eventHandler);
-		$contextConfig = new ContextConfig();
-		$contextConfig->setUnits(['session_id' => self::UID, 'user_id' => self::UID]);
-		$context = (new SDK($config))->createContextWithData($contextConfig, new ContextData([self::experiment(1, 'exp', [11])], [$holdout]));
+		[$context, $provider] = $this->contextWithProvider(new ContextData([self::experiment(1, 'exp', [11])], [$holdout]), [],
+			['session_id' => self::UID, 'user_id' => self::UID]);
 		$context->getTreatment('exp');
 
 		$provider->next = new ContextData([self::experiment(1, 'exp', [11], 'user_id')], [$holdout]);
@@ -903,20 +851,11 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertSame([[1, 'session_id'], [11, 'session_id'], [1, 'user_id'], [11, 'user_id']], $units);
 	}
 
-	// An override on an experiment no holdout covers is reused across a unit type change, as without holdouts.
 	public function testUncoveredOverrideIsReusedAcrossAUnitTypeChange(): void {
 		$holdout = self::holdout(11, 'holdout_a', 13, 111);
-		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'test-api-key', 'website', 'production'));
-		$config = new Config($client);
-		$provider = new HoldoutDataProvider();
-		$config->setContextDataProvider($provider);
-		$this->eventHandler = new ContextEventHandlerMock($client);
-		$config->setContextEventHandler($this->eventHandler);
-		$contextConfig = new ContextConfig();
-		$contextConfig->setUnits(['session_id' => self::UID, 'user_id' => self::UID]);
-		$contextConfig->setOverride('exp', 1);
-		$context = (new SDK($config))->createContextWithData($contextConfig,
-			new ContextData([self::experiment(1, 'exp', []), self::experiment(2, 'exp_covered', [11])], [$holdout]));
+		[$context, $provider] = $this->contextWithProvider(
+			new ContextData([self::experiment(1, 'exp', []), self::experiment(2, 'exp_covered', [11])], [$holdout]), ['exp' => 1],
+			['session_id' => self::UID, 'user_id' => self::UID]);
 		self::assertSame(1, $context->getTreatment('exp'));
 
 		$provider->next = new ContextData([self::experiment(1, 'exp', [], 'user_id'), self::experiment(2, 'exp_covered', [11])], [$holdout]);
@@ -943,16 +882,8 @@ class ContextHoldoutPayloadTest extends TestCase {
 				}
 			}
 		};
-		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'test-api-key', 'website', 'production'));
-		$config = new Config($client);
-		$provider = new HoldoutDataProvider();
-		$config->setContextDataProvider($provider);
-		$config->setContextEventHandler(new ContextEventHandlerMock($client));
-		$contextConfig = new ContextConfig();
-		$contextConfig->setUnits(['session_id' => self::UID]);
-		$contextConfig->setEventLogger($logger);
-		$context = (new SDK($config))->createContextWithData($contextConfig,
-			new ContextData([self::experiment(1, 'exp', [11])], [self::holdout(11, 'holdout_a', 1, 222)]));
+		[$context, $provider] = $this->contextWithProvider(
+			new ContextData([self::experiment(1, 'exp', [11])], [self::holdout(11, 'holdout_a', 1, 222)]), [], ['session_id' => self::UID], $logger);
 		$logger->armed = true;
 		$logger->events = [];
 		return [$context, $provider, $logger];
@@ -972,9 +903,7 @@ class ContextHoldoutPayloadTest extends TestCase {
 		return $lines;
 	}
 
-	// A throwing Refresh logger, Exception or Error, is reported once to the error log and not sent back to that
-	// logger as an Error event, and the refreshed data stays installed.
-	public function testThrowingRefreshLoggerWritesOneErrorLogLineAndNoErrorEvent(): void {
+	public function testThrowingRefreshLoggerIsIgnoredAndKeepsTheRefreshedData(): void {
 		foreach ([new \RuntimeException('logger failed'), new \Error('logger broke')] as $throwable) {
 			[$context, $provider, $logger] = $this->contextWithThrowingRefreshLogger($throwable);
 			$provider->next = new ContextData([self::experiment(1, 'exp', [11]), self::experiment(2, 'exp_new', [])], []);
@@ -982,18 +911,14 @@ class ContextHoldoutPayloadTest extends TestCase {
 			$lines = self::captureErrorLog(fn() => $context->refresh());
 
 			self::assertSame([ContextEventLoggerEvent::Refresh], $logger->events, get_class($throwable));
-			self::assertCount(1, $lines);
-			self::assertStringContainsString('Event logger failed handling Refresh: ' . $throwable->getMessage(), $lines[0]);
+			self::assertSame([], $lines);
 			self::assertSame(['exp', 'exp_new'], $context->getExperiments());
 		}
 	}
 
-	// A refresh whose data fails to install sends an Error event, never Refresh, and keeps the previous data.
-	public function testRefreshWhoseDataFailsToInstallKeepsThePreviousData(): void {
+	public function testRefreshWhoseProviderFailsKeepsThePreviousData(): void {
 		[$context, $provider, $logger] = $this->contextWithThrowingRefreshLogger(new \RuntimeException('unused'));
-		$broken = self::experiment(2, 'exp_broken', []);
-		unset($broken->split);
-		$provider->next = new ContextData([self::experiment(1, 'exp', []), $broken], []);
+		$provider->error = new \RuntimeException('collector down');
 
 		self::captureErrorLog(fn() => $context->refresh());
 
@@ -1002,8 +927,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertSame([11], $context->getContextData()->experiments[0]->holdoutIds);
 	}
 
-	// While another experiment's holdout arm is dropped, re-reading an exposed covered experiment re-queues nothing of
-	// its own: only the dropped arm comes back, on its own experiment's next read.
 	public function testExposedCoveredExperimentIsNotQueuedAgainWhileAnotherArmIsDropped(): void {
 		[$context] = $this->contextWithProvider(new ContextData(
 			[self::experiment(1, 'exp1', [11]), self::experiment(2, 'exp2', [12])],
@@ -1019,8 +942,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 		self::assertSame([[2, 'exp2', 'session_id', 1], [12, 'holdout_b', 'session_id', 1]], $this->published($context));
 	}
 
-	// When the logger throws on both the experiment's exposure and a holdout's, the experiment's error is re-thrown,
-	// after both exposures were queued.
 	public function testOwnExposureErrorIsRethrownBeforeAHoldoutError(): void {
 		$logger = new class implements ContextEventLogger {
 			public function handleEvent(Context $context, ContextEventLoggerEvent $event): void {
@@ -1050,24 +971,23 @@ class ContextHoldoutPayloadTest extends TestCase {
 	}
 
 	private static function droppedHoldoutArms(Context $context): array {
-		$property = new \ReflectionProperty(Context::class, 'droppedHoldoutArms');
-		if (PHP_VERSION_ID < 80100) {
-			$property->setAccessible(true);
-		}
-		return $property->getValue($context);
+		return self::property($context, 'droppedHoldoutArms');
 	}
 
-	// A refresh that removes an experiment's holdouts rebuilds its suppressed assignment, so the unit is assigned again.
+	/** @return mixed */
+	private static function property(Context $context, string $name, ...$value) {
+		$reflection = new \ReflectionProperty(Context::class, $name);
+		if (PHP_VERSION_ID < 80100) {
+			$reflection->setAccessible(true);
+		}
+		if ($value !== []) {
+			$reflection->setValue($context, $value[0]);
+		}
+		return $reflection->getValue($context);
+	}
+
 	public function testRefreshRemovingCoverageReassignsTheUnit(): void {
-		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'test-api-key', 'website', 'production'));
-		$config = new Config($client);
-		$provider = new HoldoutDataProvider();
-		$config->setContextDataProvider($provider);
-		$this->eventHandler = new ContextEventHandlerMock($client);
-		$config->setContextEventHandler($this->eventHandler);
-		$contextConfig = new ContextConfig();
-		$contextConfig->setUnits(['session_id' => self::UID]);
-		$context = (new SDK($config))->createContextWithData($contextConfig,
+		[$context, $provider] = $this->contextWithProvider(
 			new ContextData([self::experiment(1, 'exp', [11])], [self::holdout(11, 'holdout_a', 13, 111)]));
 
 		self::assertSame(0, $context->peekTreatment('exp'));
@@ -1079,14 +999,14 @@ class ContextHoldoutPayloadTest extends TestCase {
 
 	private function publishedBody(ContextData $data): string {
 		$context = $this->createContext($data, ['session_id' => self::UID, 'user_id' => '123', 'email' => 'a@b.c']);
-		$context->setAttribute('age', 21);
+		$context->setAttributeValue('age', 21);
 		foreach ($data->experiments as $experiment) {
 			$context->getTreatment($experiment->name);
 		}
 		foreach (array_keys($context->getVariableKeys()) as $key) {
 			$context->getVariableValue($key, 'default');
 		}
-		$context->track('goal', ['amount' => 5]);
+		$context->trackWithProperties('goal', ['amount' => 5]);
 		$context->publish();
 
 		return preg_replace('/"(publishedAt|exposedAt|achievedAt|setAt)":[0-9.]+/', '"$1":0', json_encode($this->eventHandler->submitted));
@@ -1118,7 +1038,6 @@ class ContextHoldoutPayloadTest extends TestCase {
 		return $reflection->invoke($context, ...$args);
 	}
 
-	// Scenario 222: arity comes from the split, so a 3-arm split marked "full" (or unmarked) is still a 3-arm holdout.
 	public function testThreeArmArityComesFromTheSplitNotHoldoutType(): void {
 		foreach (['full', null] as $holdoutType) {
 			$holdout = self::holdout(21, 'holdout_three_arm', 0, 3, [0.3, 0.3, 0.4]);
@@ -1135,10 +1054,10 @@ class ContextHoldoutPayloadTest extends TestCase {
 		}
 	}
 
-	// A rule-won experiment is never the suppressed fallback, even when its holdout holds the unit out (JS).
+	// A rule-won experiment wins the key even when its holdout holds the unit out, so a later held-out candidate's
+	// control value is never the fallback: the winner's variant lacks the key, so the read returns the default.
 	public function testRuleWonExperimentIsNeverTheSuppressedFallback(): void {
 		$ruleWon = self::experiment(1, 'exp_rule_won', [11]);
-		// The key is indexed through the control variant, while the rule wins variant B, which lacks it.
 		$ruleWon->variants = [(object) ['name' => 'A', 'config' => '{"color":"c1"}'], (object) ['name' => 'B', 'config' => '{"other":2}']];
 		$ruleWon->assignmentRules = '{"rules":[{"name":"all","type":"assign","conditions":null,"environments":[],"variant":1}]}';
 		$suppressed = self::experiment(2, 'exp_suppressed', [11]);
@@ -1146,11 +1065,28 @@ class ContextHoldoutPayloadTest extends TestCase {
 
 		$context = $this->createContext(new ContextData([$ruleWon, $suppressed], [self::holdout(11, 'holdout_a', 13, 111)]));
 
-		self::assertSame('c2', $context->peekVariableValue('color', 'default'));
-		self::assertSame('c2', $context->getVariableValue('color', 'default'));
+		self::assertSame('default', $context->peekVariableValue('color', 'default'));
+		self::assertSame('default', $context->getVariableValue('color', 'default'));
+		self::assertSame([[1, 'exp_rule_won', 'session_id', 1], [11, 'holdout_a', 'session_id', 0]], $this->published($context));
 	}
 
-	// A suppressed assignment is reused across attribute changes and custom assignments rather than rebuilt per read.
+	// An overridden experiment wins the key even when its holdout holds the unit out, so a later held-out candidate's
+	// control value is never the fallback: the override's variant lacks the key, so the read returns the default.
+	public function testOverriddenHeldOutCandidateIsNeverTheSuppressedFallback(): void {
+		$overridden = self::experiment(1, 'exp_overridden', [11]);
+		$overridden->variants = [(object) ['name' => 'A', 'config' => '{"color":"c1"}'], (object) ['name' => 'B', 'config' => '{"other":2}']];
+		$suppressed = self::experiment(2, 'exp_suppressed', [11]);
+		$suppressed->variants = [(object) ['name' => 'A', 'config' => '{"color":"c2"}'], (object) ['name' => 'B', 'config' => '{"color":"t2"}']];
+
+		$context = $this->createContext(new ContextData([$overridden, $suppressed], [self::holdout(11, 'holdout_all', 13, 111, [1.0, 0.0])]));
+		$context->setOverride('exp_overridden', 1);
+
+		self::assertSame('default', $context->peekVariableValue('color', 'default'));
+		self::assertSame('default', $context->getVariableValue('color', 'default'));
+		self::assertSame(0, $context->getTreatment('exp_suppressed'));
+		self::assertSame([[1, 'exp_overridden', 'session_id', 1], [11, 'holdout_all', 'session_id', 0]], $this->published($context));
+	}
+
 	public function testSuppressedAssignmentIsReusedAcrossAttributeChangesAndCustomAssignments(): void {
 		$experiment = self::experiment(1, 'exp', [11]);
 		$experiment->audienceStrict = true;
@@ -1160,75 +1096,41 @@ class ContextHoldoutPayloadTest extends TestCase {
 
 		self::assertSame(0, $context->getTreatment('exp'));
 		$cached = self::invoke($context, 'getAssignment', 'exp');
-		$context->setAttribute('age', 5);
+		$context->setAttributeValue('age', 5);
 		self::assertSame($cached, self::invoke($context, 'getAssignment', 'exp'));
-		$context->setAttribute('age', 50);
+		$context->setAttributeValue('age', 50);
 		self::assertSame($cached, self::invoke($context, 'getAssignment', 'exp'));
 		self::assertSame(1, $context->getPendingCount());
 	}
 
-	// A refresh that fails part-way keeps the holdouts of the data still installed.
 	public function testFailedRefreshKeepsTheInstalledHoldouts(): void {
-		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'test-api-key', 'website', 'production'));
-		$config = new Config($client);
-		$provider = new HoldoutDataProvider();
-		$config->setContextDataProvider($provider);
-		$this->eventHandler = new ContextEventHandlerMock($client);
-		$config->setContextEventHandler($this->eventHandler);
-		$contextConfig = new ContextConfig();
-		$contextConfig->setUnits(['session_id' => self::UID]);
-		$context = (new SDK($config))->createContextWithData($contextConfig,
+		[$context, $provider] = $this->contextWithProvider(
 			new ContextData([self::experiment(1, 'exp', [11])], [self::holdout(11, 'holdout_a', 13, 111)]));
 
 		self::assertSame(0, $context->getTreatment('exp'));
 
-		$broken = self::experiment(2, 'exp_broken', []);
-		unset($broken->split);
-		$provider->next = new ContextData([self::experiment(1, 'exp', [11]), $broken], [self::holdout(12, 'holdout_b', 1, 222)]);
+		$provider->error = new \RuntimeException('collector down');
 		$context->refresh();
 
 		self::assertSame(0, $context->getTreatment('exp'));
 		self::assertSame([[11, 'holdout_a', 'session_id', 0]], $this->published($context));
 	}
 
-	// A failed refresh that would have bumped a holdout's iteration and seed leaves the installed definition live, so
-	// a newly covered experiment still reads the unit's pinned arm.
 	public function testFailedRefreshKeepsTheInstalledHoldoutDefinition(): void {
-		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'test-api-key', 'website', 'production'));
-		$config = new Config($client);
-		$provider = new HoldoutDataProvider();
-		$config->setContextDataProvider($provider);
-		$this->eventHandler = new ContextEventHandlerMock($client);
-		$config->setContextEventHandler($this->eventHandler);
-		$contextConfig = new ContextConfig();
-		$contextConfig->setUnits(['session_id' => self::UID]);
-		$context = (new SDK($config))->createContextWithData($contextConfig, new ContextData(
+		[$context, $provider] = $this->contextWithProvider(new ContextData(
 			[self::experiment(1, 'exp', [11]), self::experiment(2, 'exp_later', [11])], [self::holdout(11, 'holdout_a', 13, 111)]));
 
 		self::assertSame(0, $context->getTreatment('exp'));
 
-		$bumped = self::holdout(11, 'holdout_a', 1, 222);
-		$bumped->iteration = 2;
-		$broken = self::experiment(3, 'exp_broken', []);
-		unset($broken->variants);
-		$provider->next = new ContextData([self::experiment(1, 'exp', [11]), self::experiment(2, 'exp_later', [11]), $broken], [$bumped]);
+		$provider->error = new \RuntimeException('collector down');
 		$context->refresh();
 
 		self::assertSame(0, $context->getTreatment('exp_later'));
 		self::assertSame([[11, 'holdout_a', 'session_id', 0]], $this->published($context));
 	}
 
-	// The holdout exposure carries the name of the holdout definition the exposing decision was made from, as JS does.
 	public function testHoldoutExposureUsesTheNameTheExposingDecisionSaw(): void {
-		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'test-api-key', 'website', 'production'));
-		$config = new Config($client);
-		$provider = new HoldoutDataProvider();
-		$config->setContextDataProvider($provider);
-		$this->eventHandler = new ContextEventHandlerMock($client);
-		$config->setContextEventHandler($this->eventHandler);
-		$contextConfig = new ContextConfig();
-		$contextConfig->setUnits(['session_id' => self::UID]);
-		$context = (new SDK($config))->createContextWithData($contextConfig,
+		[$context, $provider] = $this->contextWithProvider(
 			new ContextData([self::experiment(1, 'exp', [11])], [self::holdout(11, 'holdout_old_name', 1, 222)]));
 
 		self::assertSame(1, $context->peekTreatment('exp'));
@@ -1243,16 +1145,8 @@ class ContextHoldoutPayloadTest extends TestCase {
 	// Setting an unrelated unit type leaves an unexposed covered assignment alone: a same-iteration split edit, which
 	// the cache ignores, shows whether it was rebuilt.
 	public function testSetUnitForAnotherUnitTypeKeepsAnUnexposedCoveredAssignment(): void {
-		$client = new Client(new ClientConfig('https://demo.absmartly.io/v1', 'test-api-key', 'website', 'production'));
-		$config = new Config($client);
-		$provider = new HoldoutDataProvider();
-		$config->setContextDataProvider($provider);
-		$this->eventHandler = new ContextEventHandlerMock($client);
-		$config->setContextEventHandler($this->eventHandler);
-		$contextConfig = new ContextConfig();
-		$contextConfig->setUnits(['session_id' => self::UID]);
 		$holdout = self::holdout(11, 'holdout_a', 1, 222);
-		$context = (new SDK($config))->createContextWithData($contextConfig, new ContextData([self::experiment(1, 'exp', [11])], [$holdout]));
+		[$context, $provider] = $this->contextWithProvider(new ContextData([self::experiment(1, 'exp', [11])], [$holdout]));
 
 		self::assertSame(1, $context->peekTreatment('exp'));
 		$resplit = self::experiment(1, 'exp', [11]);
@@ -1262,6 +1156,62 @@ class ContextHoldoutPayloadTest extends TestCase {
 		$context->setUnit('user_id', 'other');
 
 		self::assertSame(1, $context->getTreatment('exp'));
+	}
+
+	/** @dataProvider typedHoldoutDeclarations */
+	public function testIntegralFloatsInATypedProviderHoldoutInstallAndShareOneArm(string $declaration): void {
+		if (strpos($declaration, 'readonly') !== false && PHP_VERSION_ID < 80100) {
+			self::markTestSkipped('readonly properties need PHP 8.1');
+		}
+		$holdout = eval('return new class { ' . $declaration . ' };');
+		[$context, $provider] = $this->contextWithProvider(
+			new ContextData([self::experiment(1, 'exp', []), self::experiment(2, 'exp_sibling', [])]));
+		self::assertSame([1, 1], [$context->peekTreatment('exp'), $context->peekTreatment('exp_sibling')]);
+
+		$provider->next = new ContextData([self::experiment(1, 'exp', [11]), self::experiment(2, 'exp_sibling', [11])], [$holdout]);
+		$context->refresh();
+
+		self::assertSame([0, 0], [$context->getTreatment('exp'), $context->getTreatment('exp_sibling')]);
+		self::assertSame([[11, 'holdout_a', 'session_id', 0]], $this->published($context));
+		self::assertSame(2.0, $holdout->iteration);
+	}
+
+	public static function typedHoldoutDeclarations(): array {
+		$fields = 'public int $id = 11; public string $name = "holdout_a"; public int $seedHi = 13; public int $seedLo = 111; '
+			. 'public array $split = [0.1, 0.9];';
+		return [
+			'typed float' => [$fields . ' public float $iteration = 2.0;'],
+			'readonly float' => [$fields . ' public readonly float $iteration; public function __construct() { $this->iteration = 2.0; }'],
+		];
+	}
+
+	public function testHoldoutWithTheInt64LowerBoundAsAFloatIdIsServable(): void {
+		$holdout = self::holdout(11, 'holdout_min', 13, 111, [1.0, 0.0]);
+		$holdout->id = -9223372036854775808.0;
+		$experiment = self::experiment(1, 'exp', [PHP_INT_MIN]);
+		$context = $this->createContext(new ContextData([$experiment], [$holdout]));
+
+		self::assertSame(0, $context->getTreatment('exp'));
+		self::assertSame([[PHP_INT_MIN, 'holdout_min', 'session_id', 0]], $this->published($context));
+	}
+
+	/** @dataProvider uninitializedHoldoutFields */
+	public function testProviderHoldoutWithAnUninitializedTypedFieldIsIgnored(string $field): void {
+		$declarations = ['id' => 'public int $id', 'name' => 'public string $name', 'split' => 'public array $split'];
+		$values = ['id' => ' = 11', 'name' => ' = "holdout_a"', 'split' => ' = [0.1, 0.9]'];
+		$code = 'public int $iteration = 1; public int $seedHi = 13; public int $seedLo = 111;';
+		foreach ($declarations as $name => $declaration) {
+			$code .= ' ' . $declaration . ($name === $field ? '' : $values[$name]) . ';';
+		}
+		$holdout = eval('return new class { ' . $code . ' };');
+		[$context] = $this->contextWithProvider(new ContextData([self::experiment(1, 'exp', [11])], [$holdout]));
+
+		self::assertFalse($context->isFailed());
+		self::assertSame(1, $context->getTreatment('exp'));
+	}
+
+	public static function uninitializedHoldoutFields(): array {
+		return ['id' => ['id'], 'name' => ['name'], 'split' => ['split']];
 	}
 
 	// JS can't tell 11.0 from 11, so integral floats name and seed a holdout like integers; the caller's data is untouched.

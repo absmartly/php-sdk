@@ -1,6 +1,6 @@
 <?php
 
-namespace ABSmartly;
+namespace ABSmartly\SDK;
 
 use ABSmartly\SDK\Client\Client;
 use ABSmartly\SDK\Client\ClientConfig;
@@ -11,7 +11,6 @@ use ABSmartly\SDK\Context\ContextData;
 use ABSmartly\SDK\Context\ContextDataProvider;
 use ABSmartly\SDK\Context\ContextEventHandler;
 use ABSmartly\SDK\Context\ContextEventLogger;
-use ABSmartly\SDK\Config;
 use ABSmartly\SDK\Http\HTTPClient;
 use React\Promise\PromiseInterface;
 
@@ -21,7 +20,7 @@ use function React\Promise\resolve;
 /**
  * Entry point of the A/B Smartly PHP SDK.
  *
- * Also available under its former name, ABSmartly\SDK\SDK.
+ * Also available as ABSmartly\SDK, the name the 2.x line uses.
  */
 final class SDK {
 
@@ -183,4 +182,4 @@ final class SDK {
 	}
 }
 
-class_alias(SDK::class, 'ABSmartly\\SDK\\SDK');
+class_alias(SDK::class, 'ABSmartly\\SDK');

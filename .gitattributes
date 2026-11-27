@@ -9,3 +9,8 @@
 # Vendored platform fixtures are compared byte for byte (git blob and sha256): never convert line endings.
 /tests/Fixtures/switchback/*.json -text
 /tests/Fixtures/switchback-java/*.json -text
+/vendor            export-ignore
+/composer.lock     export-ignore
+/build             export-ignore
+/.phpunit.cache    export-ignore
+/.claude           export-ignore

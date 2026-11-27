@@ -6,12 +6,13 @@ use ABSmartly\SDK\Assignment;
 use ABSmartly\SDK\AudienceMatcher;
 use ABSmartly\SDK\Exception\InvalidArgumentException;
 use ABSmartly\SDK\Exception\LogicException;
+use ABSmartly\SDK\Exception\RuntimeException;
 use ABSmartly\SDK\Experiment;
 use ABSmartly\SDK\ExperimentVariables;
 use ABSmartly\SDK\Exposure;
 use ABSmartly\SDK\GoalAchievement;
 use ABSmartly\SDK\PublishEvent;
-use ABSmartly\SDK;
+use ABSmartly\SDK\SDK;
 use ABSmartly\SDK\Switchback\SwitchbackAssigner;
 use ABSmartly\SDK\Switchback\SwitchbackAttributePath;
 use ABSmartly\SDK\Switchback\SwitchbackServing;
@@ -32,7 +33,6 @@ use function array_slice;
 use function array_splice;
 use function array_values;
 use function count;
-use function floor;
 use function get_object_vars;
 use function gettype;
 use function hash;
@@ -43,6 +43,7 @@ use function is_int;
 use function is_object;
 use function is_string;
 use function json_decode;
+use function json_encode;
 use function ksort;
 use function sort;
 use function microtime;
@@ -52,6 +53,8 @@ use function spl_object_id;
 use function sprintf;
 use function strpos;
 use function trim;
+
+use const JSON_THROW_ON_ERROR;
 
 class Context {
 
@@ -66,10 +69,10 @@ class Context {
 	private array $units = [];
 	private bool $failed = false;
 
-	private ?ContextData $data;
+	private ?ContextData $data = null;
 
-	private array $index;
-	private array $indexVariables;
+	private array $index = [];
+	private array $indexVariables = [];
 
 
 	private array $hashedUnits;
@@ -108,8 +111,6 @@ class Context {
 	private array $ruleKeys = [];
 	/** @var array<string, array|null> null when the rules JSON is invalid. */
 	private array $parsedRules = [];
-	/** @var array<int, object> Servable holdouts of the installed data, by id. */
-	private array $holdoutsById = [];
 	/** @var array<string, object[]> Each covered experiment's holdouts, unique and sorted by id. */
 	private array $experimentHoldouts = [];
 	/** Whether any assignment may carry holdouts: set once some installed data covered an experiment. */
@@ -125,6 +126,26 @@ class Context {
 	 * while the holdout's iteration is unchanged, so a same-iteration seed or split edit never re-randomizes a unit.
 	 */
 	private array $holdoutAssignmentCache = [];
+	/**
+	 * @var array<string, true> Experiments whose decision is being made. A nested read from a callback (an audience
+	 * getter) builds its own decision rather than serving or exposing the unfinished one.
+	 */
+	private array $deciding = [];
+	/**
+	 * @var array<string, true> Experiments whose decision is already being made again because a callback installed new
+	 * data during it. A further install during that one serves the nested decision rather than revalidating again, so a
+	 * callback that refreshes on every read can't recurse without bound.
+	 */
+	private array $revalidating = [];
+	/** Counts data installs, so a decision can tell whether a callback installed new data after another was made. */
+	private int $installs = 0;
+	/**
+	 * @var array<string, array{0: Assignment, 1: int}> Latest completed decision and the install count it was read on,
+	 * by experiment. A nested read followed by a refresh must be distinguished from a refresh followed by that read.
+	 */
+	private array $decidedOn = [];
+	/** Set while the first load installs experiments, so a callback's refresh() can't be overwritten by the rest of it. */
+	private bool $firstLoadInProgress = false;
 	private ?Throwable $readyError = null;
 	/** @var array<string, SwitchbackSources> The installed switchback experiments, by name. Empty without switchbacks. */
 	private array $switchbackSources = [];
@@ -187,16 +208,10 @@ class Context {
 	public function getCustomFieldKeys(): array {
 		$this->checkReady();
 		$keys = [];
-		if (!empty($this->data->experiments)) {
-			foreach ($this->data->experiments as $experiment) {
-				if (empty($experiment->customFieldValues)) {
-					continue;
-				}
-
-				foreach ($experiment->customFieldValues as $field) {
-					if (isset($field->name)) {
-						$keys[$field->name] = true;
-					}
+		foreach ($this->index as $experimentVariables) {
+			foreach ($experimentVariables->data->customFieldValues ?? [] as $field) {
+				if (isset($field->name)) {
+					$keys[$field->name] = true;
 				}
 			}
 		}
@@ -247,9 +262,6 @@ class Context {
 
 		if ($pending) {
 			$this->ready = false;
-			$this->data = null;
-			$this->index = [];
-			$this->indexVariables = [];
 			return;
 		}
 
@@ -262,18 +274,12 @@ class Context {
 				$data = $contextData;
 			}
 
-			$this->setData($data);
+			$this->setData($data, true);
 			$this->logEvent(ContextEventLoggerEvent::Ready, $data);
 		}
 		catch (Exception $exception) {
 			$this->setDataFailed($exception);
-			error_log(sprintf(
-				'ABsmartly SDK CRITICAL: Context initialization failed: %s in %s:%d. Context is in failed state.',
-				$exception->getMessage(),
-				$exception->getFile(),
-				$exception->getLine()
-			));
-			$this->logError($exception, false);
+			$this->logError($exception);
 		}
 	}
 
@@ -287,72 +293,126 @@ class Context {
 		return $this;
 	}
 
-	private function setData(ContextData $data): void {
-		$this->data = $data;
-		$this->index = [];
-		$this->indexVariables = [];
-		$this->ruleKeys = [];
-		$this->parsedRules = [];
-		$this->holdoutsById = [];
-		$this->experimentHoldouts = [];
-		$previousSwitchbacks = $this->switchbackSources;
-		$this->switchbackSources = [];
+	/**
+	 * Indexes $data. The initial load ($initial) installs each experiment as it goes, as in 1.1.0, so an Error callback
+	 * for a malformed experiment reads the experiments loaded before it. A refresh builds the indexes aside and installs
+	 * them only once all of the data is processed, so that callback still reads the previous data (or none, on a pending
+	 * context), and a failure (or a logger that throws) leaves the previous data and its decisions in use.
+	 */
+	private function setData(ContextData $data, bool $initial = false): void {
+		// Restored, not cleared, so a nested initial load from a callback leaves the outer one's flag set.
+		$wasInProgress = $this->firstLoadInProgress;
+		$this->firstLoadInProgress = $wasInProgress || $initial;
+		try {
+			$this->indexData($data, $initial);
+		}
+		finally {
+			$this->firstLoadInProgress = $wasInProgress;
+		}
+	}
+
+	private function indexData(ContextData $data, bool $initial): void {
+		$index = [];
+		$indexVariables = [];
+		$ruleKeys = [];
+		$experimentHoldouts = [];
+		$hasHoldouts = $this->hasHoldouts;
+		if ($initial) {
+			$this->data = $data;
+			$this->index = &$index;
+			$this->indexVariables = &$indexVariables;
+			$this->ruleKeys = &$ruleKeys;
+			$this->parsedRules = [];
+			$this->experimentHoldouts = &$experimentHoldouts;
+			$this->hasHoldouts = &$hasHoldouts;
+		}
+		$holdoutsById = [];
 		$environment = $this->sdk->getClient()->getEnvironment();
 
-		foreach ($data->holdouts as $holdout) {
+		$holdouts = property_exists($data, 'holdouts') && is_array($data->holdouts) ? $data->holdouts : [];
+		foreach ($holdouts as $holdout) {
 			if (($servable = self::servableHoldout($holdout)) !== null) {
-				$this->holdoutsById[$servable->id] = $servable;
+				$holdoutsById[$servable->id] = $servable;
 			}
 		}
 
 		foreach ($data->experiments as $experiment) {
 			$experimentVariables = new ExperimentVariables();
-			$experimentVariables->data = new Experiment($experiment);
-			$experimentVariables->variables = [];
+			$variableKeys = [];
+			try {
+				$experimentVariables->data = new Experiment($experiment);
+				$experimentVariables->variables = [];
 
-			foreach ($experiment->variants as $variant) {
-				if (empty($variant->config)) {
-					$experimentVariables->variables[] = (object) [];
-					continue;
-				}
+				foreach ($experiment->variants as $variant) {
+					$parsed = empty($variant->config) ? null : $this->variableParser->parse($experiment->name, $variant->config);
+					if (!$parsed) {
+						$experimentVariables->variables[] = (object) [];
+						continue;
+					}
 
-				$parsed = $this->variableParser->parse($experiment->name, $variant->config);
-				if (!$parsed) {
-					$experimentVariables->variables[] = (object) [];
-					continue;
+					foreach (get_object_vars($parsed) as $key => $val) {
+						$variableKeys[] = $key;
+					}
+					$experimentVariables->variables[] = $parsed;
 				}
-
-				foreach (get_object_vars($parsed) as $key => $val) {
-					$this->addVariableExperiment($key, $experimentVariables);
-				}
-				$experimentVariables->variables[] = $parsed;
+			}
+			catch (RuntimeException | JsonException | \TypeError $exception) {
+				// Logged unchanged: v1.0.3 reported a malformed audience as this same JsonException.
+				$this->logError($exception);
+				continue;
 			}
 
-			$this->index[$experiment->name] = $experimentVariables;
+			foreach ($variableKeys as $key) {
+				self::addVariableExperiment($indexVariables, $key, $experimentVariables);
+			}
+			$index[$experiment->name] = $experimentVariables;
 			if ($experimentVariables->data->assignmentRules !== null) {
-				$this->ruleKeys[$experiment->name] = $experimentVariables->data->assignmentRules . ':' . $environment;
+				$ruleKeys[$experiment->name] = $experimentVariables->data->assignmentRules . ':' . $environment;
 			}
-			if ($experimentVariables->data->randomizationType === 'switchback') {
-				$this->installSwitchback($experiment->name, $experimentVariables->data, $previousSwitchbacks[$experiment->name] ?? null);
+			if (($experimentVariables->data->randomizationType ?? null) === 'switchback') {
+				continue;
 			}
-			elseif (!empty($experimentVariables->data->holdoutIds) && $this->holdoutsById !== []) {
+			$holdoutIds = null;
+			try {
+				$holdoutIds = $experimentVariables->data->holdoutIds;
+			}
+			catch (\Error $exception) {
+			}
+			if (is_array($holdoutIds) && $holdoutIds !== [] && $holdoutsById !== []) {
 				$holdouts = [];
-				foreach ($experimentVariables->data->holdoutIds as $holdoutId) {
-					if (isset($this->holdoutsById[$holdoutId])) {
-						$holdouts[$holdoutId] = $this->holdoutsById[$holdoutId];
+				foreach ($holdoutIds as $holdoutId) {
+					if (isset($holdoutsById[$holdoutId])) {
+						$holdouts[$holdoutId] = $holdoutsById[$holdoutId];
 					}
 				}
 				if ($holdouts !== []) {
 					ksort($holdouts);
-					$this->experimentHoldouts[$experiment->name] = array_values($holdouts);
-					$this->hasHoldouts = true;
+					$experimentHoldouts[$experiment->name] = array_values($holdouts);
+					$hasHoldouts = true;
 				}
 			}
 		}
 
-		// Last, so a refresh that throws above leaves the marks as they were. Only an exposed cached assignment can queue
-		// a dropped arm again (a new assignment queues its arms anyway), so a mark whose arm no cached assignment pins
-		// any more is forgotten.
+		$hasHoldouts = $hasHoldouts || $this->hasHoldouts;
+		++$this->installs;
+		unset($this->index, $this->indexVariables, $this->ruleKeys, $this->experimentHoldouts, $this->hasHoldouts);
+		$this->data = $data;
+		$this->index = $index;
+		$this->indexVariables = $indexVariables;
+		$this->ruleKeys = $ruleKeys;
+		$this->parsedRules = [];
+		$this->experimentHoldouts = $experimentHoldouts;
+		$this->hasHoldouts = $hasHoldouts;
+		$previousSwitchbacks = $this->switchbackSources;
+		$this->switchbackSources = [];
+		foreach ($index as $name => $variables) {
+			if (($variables->data->randomizationType ?? null) === 'switchback') {
+				$this->installSwitchback($name, $variables->data, $previousSwitchbacks[$name] ?? null);
+			}
+		}
+
+		// Only an exposed cached assignment can queue a dropped arm again (a new assignment queues its arms anyway), so a
+		// mark whose arm no cached assignment pins any more is forgotten.
 		if ($this->droppedHoldoutArms !== []) {
 			$pinned = [];
 			foreach ($this->assignmentCache ?? [] as $assignment) {
@@ -388,27 +448,26 @@ class Context {
 	/**
 	 * A holdout entry is used only when it has the fields its arm is drawn from and a non-empty numeric split, as in
 	 * JS (`holdout.split && holdout.split.length > 0`); anything else gives null, so experiments it would have
-	 * covered assign normally. Integral floats (`11.0`) count as integers, since JS can't tell them apart; such an
-	 * entry is copied with integer fields rather than changed in place. Unknown fields are ignored.
+	 * covered assign normally. Integral floats (`11.0`) count as integers, since JS can't tell them apart. The result
+	 * is a plain copy the SDK owns, so a provider's typed or readonly properties never constrain it and the caller's
+	 * object is never changed. Unknown fields are ignored.
 	 */
 	private static function servableHoldout($holdout): ?object {
 		if (!is_object($holdout)) {
 			return null;
 		}
 
-		$integers = [];
+		$servable = [];
 		foreach (['id', 'iteration', 'seedHi', 'seedLo'] as $field) {
-			$value = property_exists($holdout, $field) ? self::integralValue($holdout->{$field}) : null;
+			$value = isset($holdout->{$field}) ? Utils::integralValue($holdout->{$field}) : null;
 			if ($value === null) {
 				return null;
 			}
-			if (!is_int($holdout->{$field})) {
-				$integers[$field] = $value;
-			}
+			$servable[$field] = $value;
 		}
 
-		if (!property_exists($holdout, 'name') || !is_string($holdout->name)
-			|| !property_exists($holdout, 'split') || !is_array($holdout->split) || $holdout->split === []) {
+		if (!isset($holdout->name, $holdout->split) || !is_string($holdout->name) || !is_array($holdout->split)
+			|| $holdout->split === []) {
 			return null;
 		}
 
@@ -418,43 +477,22 @@ class Context {
 			}
 		}
 
-		if ($integers === []) {
-			return $holdout;
-		}
-
-		$copy = clone $holdout;
-		foreach ($integers as $field => $value) {
-			$copy->{$field} = $value;
-		}
-		return $copy;
-	}
-
-	/**
-	 * $value as an int when it is an integer or an integral float within the int range (JSON `11.0`), else null.
-	 *
-	 * @param mixed $value
-	 */
-	private static function integralValue($value): ?int {
-		if (is_int($value)) {
-			return $value;
-		}
-		if (is_float($value) && floor($value) === $value && $value >= -9.2233720368547758E18 && $value < 9.2233720368547758E18) {
-			return (int) $value;
-		}
-		return null;
+		$servable['name'] = $holdout->name;
+		$servable['split'] = $holdout->split;
+		return (object) $servable;
 	}
 
 	/**
 	 * Indexes $experimentVariables under $key, keeping the per-key list sorted and unique by experiment id, as the
-	 * JS SDK's _resolveVariableValue does (insertUniqueSorted by data->id).
+	 * JS SDK does (insertUniqueSorted by data->id), so resolveVariableValue visits the candidates by ascending id.
 	 */
-	private function addVariableExperiment(string $key, ExperimentVariables $experimentVariables): void {
-		if (!isset($this->indexVariables[$key])) {
-			$this->indexVariables[$key] = [$experimentVariables];
+	private static function addVariableExperiment(array &$indexVariables, string $key, ExperimentVariables $experimentVariables): void {
+		if (!isset($indexVariables[$key])) {
+			$indexVariables[$key] = [$experimentVariables];
 			return;
 		}
 
-		$list = $this->indexVariables[$key];
+		$list = $indexVariables[$key];
 		$id = $experimentVariables->data->id;
 		$insertAt = count($list);
 		foreach ($list as $i => $existing) {
@@ -468,13 +506,12 @@ class Context {
 		}
 
 		array_splice($list, $insertAt, 0, [$experimentVariables]);
-		$this->indexVariables[$key] = $list;
+		$indexVariables[$key] = $list;
 	}
 
 	private function setDataFailed(?Throwable $exception = null): void {
 		$this->indexVariables = [];
 		$this->index = [];
-		$this->holdoutsById = [];
 		$this->experimentHoldouts = [];
 		$this->switchbackSources = [];
 		$this->data = new ContextData();
@@ -512,7 +549,7 @@ class Context {
 		}
 
 		try {
-			$this->setData($contextData);
+			$this->setData($contextData, true);
 			$this->failed = false;
 			$this->ready = true;
 			$this->logEvent(ContextEventLoggerEvent::Ready, $contextData);
@@ -544,11 +581,8 @@ class Context {
 	public function getExperiments(): array {
 		$this->checkReady(false);
 		$return = [];
-
-		if (!empty($this->data->experiments)) {
-			foreach ($this->data->experiments as $experiment) {
-				$return[] = $experiment->name;
-			}
+		foreach ($this->index as $experimentVariables) {
+			$return[] = $experimentVariables->data->name;
 		}
 
 		return $return;
@@ -713,7 +747,7 @@ class Context {
 			return ['variant' => $experiment->fullOnVariant, 'isMissingUnit' => true];
 		}
 
-		$variant = $experiment->randomizationType === 'switchback'
+		$variant = ($experiment->randomizationType ?? null) === 'switchback'
 			? SwitchbackAssigner::assignUnit($uid, $action['split'], $experiment->seedHi, $experiment->seedLo)
 			: $this->getVariantAssigner($unitType, $uid)->assign($action['split'], $experiment->seedHi, $experiment->seedLo);
 		return [
@@ -741,6 +775,15 @@ class Context {
 		return false;
 	}
 
+	private function initializeAssignmentState(Assignment $assignment): void {
+		foreach (['served' => false, 'suppressed' => false, 'holdouts' => null, 'holdoutAssignments' => null,
+			'holdoutArmCount' => 0] as $name => $value) {
+			if (!(property_exists($assignment, $name) && (new \ReflectionProperty($assignment, $name))->isInitialized($assignment))) {
+				try { $assignment->{$name} = $value; } catch (\TypeError $exception) { }
+			}
+		}
+	}
+
 	private function getAssignment(string $experimentName): Assignment {
 		$experiment = $this->getExperiment($experimentName);
 
@@ -753,7 +796,7 @@ class Context {
 			}
 		}
 
-		if (isset($this->assignmentCache[$experimentName])) {
+		if (isset($this->assignmentCache[$experimentName]) && !isset($this->deciding[$experimentName])) {
 			$assignment = $this->assignmentCache[$experimentName];
 			if (array_key_exists($experimentName, $this->overrides)) {
 				$override = $this->overrides[$experimentName];
@@ -770,7 +813,8 @@ class Context {
 			else if ($experiment === null) {
 				// A rule-won assignment is not "assigned" either, but its variant came from the
 				// experiment's rules, so it must be rebuilt once the experiment is gone.
-				if (!$assignment->assigned && !$assignment->ruleOverride) {
+				if (!$assignment->assigned && !$assignment->ruleOverride
+					&& (!$this->hasHoldouts || $assignment->id === 0 || $assignment->served)) {
 					// previously not-running experiment
 					return $assignment;
 				}
@@ -788,14 +832,68 @@ class Context {
 					&& $experimentData->fullOnVariant === $assignment->fullOnVariant
 					&& $experimentData->trafficSplit === $assignment->trafficSplit
 					&& $this->audienceMatches($experimentData, $assignment)
-					&& (!$this->hasHoldouts || $this->holdoutSetMatches($experimentName, $assignment))) {
+					&& (!$this->hasHoldouts || $this->holdoutSetMatches($experimentName, $assignment))
+					// An audience getter that set the unit evicted this assignment while it was being checked (only an
+					// assignment with holdout arms is evicted for a late unit, see invalidateAssignmentsMissingUnit).
+					&& (!$this->hasHoldouts || ($this->assignmentCache[$experimentName] ?? null) === $assignment)) {
 					// assignment up-to-date
 					return $assignment;
 				}
 			}
+
+			// A nested read during the check above (an audience getter) may have cached its own decision; validate that
+			// one instead of replacing it, so its exposure isn't lost or queued twice.
+			if (isset($this->assignmentCache[$experimentName]) && $this->assignmentCache[$experimentName] !== $assignment) {
+				return $this->revalidateNested($experimentName, $this->assignmentCache[$experimentName]);
+			}
 		}
 
+		// With holdouts, a callback during the cache check above (an audience getter) may have refreshed: build from the
+		// installed experiment, so it and the holdouts read below come from the same data.
+		if ($this->hasHoldouts) {
+			$experiment = $this->getExperiment($experimentName);
+		}
 		$this->assignmentCache[$experimentName] = $assignment = new Assignment();
+		$this->initializeAssignmentState($assignment);
+		$nested = isset($this->deciding[$experimentName]);
+		$this->deciding[$experimentName] = true;
+		try {
+			$decided = $this->decide($experimentName, $experiment, $assignment);
+			if ($nested) {
+				$this->decidedOn[$experimentName] = [$decided, $this->installs];
+			}
+			return $decided;
+		}
+		catch (Throwable $exception) {
+			// An aborted decision (a throwing audience getter) must not be served, or supply holdout arms, later.
+			if (($this->assignmentCache[$experimentName] ?? null) === $assignment) {
+				unset($this->assignmentCache[$experimentName]);
+			}
+			throw $exception;
+		}
+		finally {
+			if (!$nested) {
+				unset($this->deciding[$experimentName]);
+			}
+		}
+	}
+
+	private function revalidateNested(string $experimentName, Assignment $cached): Assignment {
+		$stamp = $this->decidedOn[$experimentName] ?? null;
+		$cachedOn = $stamp !== null && $stamp[0] === $cached ? $stamp[1] : -1;
+		if ($cachedOn === $this->installs || isset($this->revalidating[$experimentName])) {
+			return $cached;
+		}
+		$this->revalidating[$experimentName] = true;
+		try {
+			return $this->getAssignment($experimentName);
+		}
+		finally {
+			unset($this->revalidating[$experimentName]);
+		}
+	}
+
+	private function decide(string $experimentName, ?ExperimentVariables $experiment, Assignment $assignment): Assignment {
 
 		$assignment->name = $experimentName;
 		$assignment->eligible = true;
@@ -829,11 +927,7 @@ class Context {
 				$assignment->variant = $rule['variant'];
 				$assignment->ruleOverride = true;
 			}
-			elseif ($assignment->suppressed) {
-				// Held out: control and not assigned; the audience, full-on, traffic and custom assignment are skipped.
-				$assignment->variant = 0;
-			}
-			else {
+			elseif (!($assignment->suppressed ?? false)) {
 				if (!empty($experiment->data->audience) && !empty((array) $experiment->data->audience)) {
 					$result = $this->audienceMatcher->evaluate($experiment->data->audience, $this->getEvaluationAttributes());
 					if (is_bool($result)) {
@@ -846,7 +940,7 @@ class Context {
 				}
 				else if (empty($experiment->data->fullOnVariant)) {
 					// Not a full-on experiment: assign via the traffic split only when the unit is present.
-					// A missing unit leaves the assignment unassigned (control) so it falls through, as in JS.
+					// A missing unit leaves the assignment unassigned (control), so it never wins a variable key.
 					if (($uid = $this->units[$experiment->data->unitType] ?? null) !== null) {
 						$assigner = $this->getVariantAssigner($unitType, $uid);
 
@@ -895,6 +989,22 @@ class Context {
 			$assignment->variables = $experiment->variables[$assignment->variant];
 		}
 
+		// A callback during the decision (an audience getter) may have read this experiment itself: use its decision
+		// (and its exposure), unless the callback installed new data after that decision was made, when it is validated
+		// like any cached one, once: if a callback installs new data again during that, the nested decision is used and
+		// the next read decides again. The callback may also have evicted this one, or set the unit after the holdout arms
+		// were drawn without it (all arms share the experiment's unit type, and this assignment had no unit type yet for
+		// setUnit() to match): decide again with the unit.
+		$cached = $this->assignmentCache[$experimentName] ?? null;
+		if ($cached !== null && $cached !== $assignment) {
+			return $this->revalidateNested($experimentName, $cached);
+		}
+		if ($cached === null || ($assignment->holdoutAssignments !== null && $assignment->holdoutAssignments[0] === null
+			&& isset($this->units[$experiment->data->unitType]))) {
+			unset($this->assignmentCache[$experimentName]);
+			return $this->getAssignment($experimentName);
+		}
+
 		$assignment->attrsSeq = $this->attrsSeq;
 
 		return $assignment;
@@ -922,7 +1032,7 @@ class Context {
 		}
 
 		$cached = $this->assignmentCache[$cacheKey] ?? null;
-		if ($cached !== null && $cached->switchback === null) {
+		if ($cached !== null && ($cached->switchback ?? null) === null) {
 			// A unit experiment's assignment left on the bare-name slot by a refresh.
 			$cached = null;
 		}
@@ -966,7 +1076,7 @@ class Context {
 		}
 
 		$nested = $this->assignmentCache[$cacheKey] ?? null;
-		if ($nested !== null && $nested !== $cached && $nested->switchback !== null
+		if ($nested !== null && $nested !== $cached && ($nested->switchback ?? null) !== null
 			&& ($this->switchbackSources[$experimentName]->generation ?? null) === $sources->generation
 			&& $this->switchbackAssignmentCurrent($experimentName, $nested, $experiment)) {
 			$nested->switchback->readAt = $now;
@@ -1122,7 +1232,7 @@ class Context {
 		if ($sources->paths === null) {
 			return SwitchbackServing::legacy($experiment->unitType, $this->units);
 		}
-		return SwitchbackServing::resolve($sources->types, $sources->paths, $experiment->switchbackClusterValues, $this->units,
+		return SwitchbackServing::resolve($sources->types, $sources->paths, $experiment->switchbackClusterValues ?? null, $this->units,
 			function (SwitchbackAttributePath $path) use ($now) {
 				$attribute = $this->latestAttribute($path->rootKey(), $now);
 				return $attribute !== null ? $path->resolveAttribute($attribute->value) : null;
@@ -1180,7 +1290,7 @@ class Context {
 
 	/** The assignmentCache key $assignment is cached under. */
 	private static function assignmentCacheKey(Assignment $assignment): string {
-		$period = $assignment->switchback !== null ? $assignment->switchback->period : null;
+		$period = ($assignment->switchback ?? null) !== null ? $assignment->switchback->period : null;
 		return $period === null ? $assignment->name : $assignment->name . self::SWITCHBACK_KEY_SEPARATOR . $period;
 	}
 
@@ -1212,28 +1322,19 @@ class Context {
 	 * The arm count comes from the split, never from holdoutType.
 	 */
 	private static function isHeldOutBy(int $holdoutVariant, int $holdoutArmCount, int $fullOnVariant): bool {
-		if ($holdoutVariant === 0) {
-			return true;
-		}
-
-		if ($holdoutArmCount === 3 && $holdoutVariant === 1) {
-			return $fullOnVariant === 0;
-		}
-
-		return false;
+		return $holdoutVariant === 0
+			|| ($holdoutArmCount === 3 && $holdoutVariant === 1 && $fullOnVariant === 0);
 	}
 
 	/**
 	 * The unit's arm of $holdout, hashed with the covered experiment's unit type (not the holdout's own), or null when
-	 * that unit is not set. One arm is kept per holdout and unit type until the holdout's iteration changes.
+	 * that unit is not set. Requires an installed definition from experimentHoldouts. One arm is kept per holdout and
+	 * unit type until the holdout's iteration changes.
 	 */
 	private function getHoldoutAssignment(object $holdout, string $unitType): ?Assignment {
-		// $holdout may predate a refresh; prefer the live definition.
-		$live = $this->holdoutsById[$holdout->id] ?? $holdout;
-
-		$cacheKey = $live->id . ':' . $unitType;
+		$cacheKey = $holdout->id . ':' . $unitType;
 		$cached = $this->holdoutAssignmentCache[$cacheKey] ?? null;
-		if ($cached !== null && $cached->iteration === $live->iteration) {
+		if ($cached !== null && $cached->iteration === $holdout->iteration) {
 			return $cached;
 		}
 
@@ -1243,14 +1344,15 @@ class Context {
 		}
 
 		$assignment = new Assignment();
-		$assignment->id = $live->id;
-		$assignment->name = $live->name;
-		$assignment->iteration = $live->iteration;
+		$this->initializeAssignmentState($assignment);
+		$assignment->id = $holdout->id;
+		$assignment->name = $holdout->name;
+		$assignment->iteration = $holdout->iteration;
 		$assignment->unitType = $unitType;
-		$assignment->variant = $this->getVariantAssigner($unitType, $uid)->assign($live->split, $live->seedHi, $live->seedLo);
+		$assignment->variant = $this->getVariantAssigner($unitType, $uid)->assign($holdout->split, $holdout->seedHi, $holdout->seedLo);
 		$assignment->assigned = true;
 		$assignment->eligible = true;
-		$assignment->holdoutArmCount = count($live->split);
+		$assignment->holdoutArmCount = count($holdout->split);
 
 		return $this->holdoutAssignmentCache[$cacheKey] = $assignment;
 	}
@@ -1261,19 +1363,11 @@ class Context {
 	 */
 	private function holdoutSetMatches(string $experimentName, Assignment $assignment): bool {
 		$pinned = $assignment->holdouts;
-		if ($pinned === null) {
-			return !isset($this->experimentHoldouts[$experimentName]);
-		}
-
 		$fresh = $this->experimentHoldouts[$experimentName] ?? null;
 		if ($fresh === $pinned) {
 			return true;
 		}
-		if ($fresh === null) {
-			return false;
-		}
-
-		if (count($fresh) !== count($pinned)) {
+		if ($fresh === null || $pinned === null || count($fresh) !== count($pinned)) {
 			return false;
 		}
 
@@ -1292,7 +1386,7 @@ class Context {
 	 * dropped. Callers skip exposed assignments while nothing is dropped, as in JS.
 	 */
 	private function triggerExposures(Assignment $assignment): void {
-		if ($assignment->switchback !== null) {
+		if (($assignment->switchback ?? null) !== null) {
 			// Stamped with the reading that resolved this call's period (java-sdk), since analysis derives the period from
 			// exposedAt. It is kept on the slot rather than the context, so a nested SDK call cannot change it.
 			// A callback in the read (a logger, a cluster attribute's serializer) may have closed the context.
@@ -1320,21 +1414,10 @@ class Context {
 		}
 		else {
 			$assignment->exposed = true;
+			$assignment->served = true;
 		}
 
-		$holdoutError = $this->triggerHoldoutExposures($assignment);
-		if (($error ?? $holdoutError) !== null) {
-			throw $error ?? $holdoutError;
-		}
-	}
-
-	/**
-	 * Queues each pinned holdout arm's exposure, once per holdout and unit type, and returns the first event logger
-	 * error. Uses the arms pinned when the assignment was resolved, never a live re-resolution, so a refresh in
-	 * between cannot publish another epoch.
-	 */
-	private function triggerHoldoutExposures(Assignment $assignment): ?Throwable {
-		$error = null;
+		// Use the pinned arms, never a live re-resolution: an exposure callback may install a different decision epoch.
 		foreach ($assignment->holdoutAssignments as $i => $holdoutAssignment) {
 			if ($holdoutAssignment !== null) {
 				$holdoutAssignment->name = $assignment->holdouts[$i]->name;
@@ -1347,7 +1430,9 @@ class Context {
 			}
 		}
 
-		return $error;
+		if ($error !== null) {
+			throw $error;
+		}
 	}
 
 	public function getVariableValue(string $key, $defaultValue = null) {
@@ -1361,117 +1446,77 @@ class Context {
 	}
 
 	/**
-	 * Ports the JS SDK `_resolveVariableValue`: walks the experiments that define $key in ascending id order. For
-	 * each one it computes the assignment; when the variant has variables, getVariableValue (not peek) queues the
-	 * exposure the first time, and if $key is present and the unit is assigned, overridden or rule-assigned it returns
-	 * that value.
-	 * Otherwise it falls through to the next experiment, and finally to $default.
+	 * Resolves $key as the Java SDK's Context.getVariableAssignment does. The candidates are the experiments whose
+	 * variants define $key, in ascending id order; the winner is the first one the unit is assigned, overridden or
+	 * rule-assigned to. Only the winner is exposed (by getVariableValue, not peek), and when its variant lacks $key the
+	 * default is returned: resolution never falls through to a later experiment because of the arm the unit got.
+	 * With no winner, the first candidate a holdout held out supplies its control value (JS); a held-out candidate
+	 * that does not win still queues its holdouts' exposures.
 	 */
-	private function resolveVariableValue(string $key, $default, bool $exposeAssignments) {
-		$indexVariables = $this->indexVariables;
-		$experiments = $indexVariables[$key] ?? [];
+	private function resolveVariableValue(string $key, $default, bool $exposeAssignment) {
+		$candidates = $this->indexVariables[$key] ?? [];
 		$error = null;
-		if (!$this->hasHoldouts && !$this->hasSwitchbacks) {
-			// Data that never had holdouts or switchbacks keeps main's loop: nothing is suppressed and no exposure has
-			// holdout arms or a switchback slot. If a logger refreshes in the first holdout coverage or switchback, the
-			// unvisited candidates (only those) take the walk below, carrying any error that logger threw.
-			foreach ($experiments as $i => $experimentVariables) {
-				$assignment = $this->getAssignment($experimentVariables->data->name);
-
-				if ($assignment->variables !== null) {
-					if ($exposeAssignments && empty($assignment->exposed)) {
-						try {
-							$this->queueExposure($assignment);
-						}
-						catch (Throwable $exception) {
-							if (!$this->hasHoldouts && !$this->hasSwitchbacks) {
-								throw $exception;
-							}
-							$error = $exception;
-						}
-					}
-
-					if (property_exists($assignment->variables, $key)
-						&& ($assignment->assigned || $assignment->overridden || $assignment->ruleOverride)) {
-						if ($error !== null) {
-							throw $error;
-						}
-						return $assignment->variables->{$key};
-					}
-				}
-
-				if ($this->hasHoldouts || $this->hasSwitchbacks) {
-					$experiments = array_slice($experiments, $i + 1);
-					break;
-				}
-			}
-
-			if (!$this->hasHoldouts && !$this->hasSwitchbacks) {
-				return $default;
-			}
-		}
-
-		// A held-out unit reads the control value, not $default, when nothing else wins. The first suppressed
-		// experiment is kept even if it lacks the key, so a later suppressed one can't win (JS).
-		$suppressedFallback = null;
-		// A throwing logger must not stop the walk: later candidates and their holdouts are still exposed (Java), and
-		// the first logger error is re-thrown once the winner is found.
-
-		// Set once a logger refreshes mid-walk: the names that still define $key in the live data.
+		$selectedVariables = null;
 		$liveCandidates = null;
-		foreach ($experiments as $experimentVariables) {
-			$name = $experimentVariables->data->name;
-			if ($this->indexVariables !== $indexVariables) {
-				$indexVariables = $this->indexVariables;
-				$liveCandidates = [];
-				foreach ($indexVariables[$key] ?? [] as $live) {
-					$liveCandidates[$live->data->name] = true;
-				}
+		foreach ($candidates as $experimentVariables) {
+			// Once a callback closes the context, a read already committed to throwing evaluates nothing more.
+			if ($error !== null && $this->isClosed()) {
+				throw $error;
 			}
-			if ($liveCandidates !== null && !isset($liveCandidates[$name]) && !array_key_exists($name, $this->overrides)) {
-				// A candidate the refresh removed, or that no longer defines $key, must not supply a value or a holdout
-				// exposure. An override still applies, as on main and in JS.
-				continue;
+			$name = $experimentVariables->data->name;
+			// With holdouts, a refresh by a callback earlier in the walk drops the candidates it removed or that no longer
+			// define $key (an overridden one stays); without them the walk keeps main's snapshot of the candidates.
+			if ($this->hasHoldouts || $this->hasSwitchbacks) {
+				// Unchanged unless a callback refreshed: the same array compares identical without a scan.
+				if (($this->indexVariables[$key] ?? []) !== $candidates) {
+					$candidates = $this->indexVariables[$key] ?? [];
+					$liveCandidates = self::candidateNames($candidates);
+				}
+				if ($liveCandidates !== null && !isset($liveCandidates[$name]) && !array_key_exists($name, $this->overrides)) {
+					continue;
+				}
 			}
 			try {
-				$assignment = $this->getAssignment($experimentVariables->data->name);
+				$assignment = $this->getAssignment($name);
 			}
 			catch (Throwable $exception) {
 				throw $error ?? $exception;
 			}
-
-			if ($assignment->variables !== null) {
-				// A switchback is exposed when the key reaches it assigned, overridden or rule-assigned, as java-sdk does, even
-				// if its arm lacks the key (a control arm with no config must still be recorded); a strict mismatch records
-				// nothing. Unit experiments keep the JS behaviour of exposing every candidate.
-				if ($exposeAssignments && !$this->closed && (!$assignment->exposed || $this->droppedHoldoutArms !== [])
-					&& (!$this->hasSwitchbacks || $assignment->switchback === null
-						|| $assignment->assigned || $assignment->overridden || $assignment->ruleOverride)) {
-					try {
-						$this->triggerExposures($assignment);
-					}
-					catch (Throwable $exception) {
-						$error = $error ?? $exception;
-						if ($this->isClosed()) {
-							throw $error;
-						}
-					}
+			// An audience getter may have refreshed while this candidate was decided: skip it, with no exposures, if the
+			// installed data no longer has it define $key (unless overridden).
+			if (($this->hasHoldouts || $this->hasSwitchbacks) && ($this->indexVariables[$key] ?? []) !== $candidates) {
+				$candidates = $this->indexVariables[$key] ?? [];
+				$liveCandidates = self::candidateNames($candidates);
+				if (!isset($liveCandidates[$name]) && !array_key_exists($name, $this->overrides)) {
+					continue;
 				}
+			}
 
-				// property_exists (not isset) so a present key whose value is null is still returned,
-				// matching JS: a lower-id experiment that defines $key=null shadows a later competitor.
-				if (property_exists($assignment->variables, $key)
-					&& ($assignment->assigned || $assignment->overridden || $assignment->ruleOverride)) {
-					if ($error !== null) {
-						throw $error;
-					}
-					return $assignment->variables->{$key};
+			$wins = $assignment->assigned || $assignment->overridden || $assignment->ruleOverride;
+			// A held-out candidate that does not win queues only its holdouts' exposures (never its own), so they count
+			// the unit even when a later candidate wins. A logger error is deferred until the walk ends or reaches the
+			// winner, so later held-out candidates are still queued.
+			if ($exposeAssignment && !($this->closed && $this->hasSwitchbacks) && ($wins || ($assignment->suppressed ?? false))
+				&& (!$assignment->exposed || ($this->hasHoldouts && $this->droppedHoldoutArms !== []))) {
+				try {
+					$this->triggerExposures($assignment);
 				}
+				catch (Throwable $exception) {
+					$error = $error ?? $exception;
+				}
+			}
 
-				if ($assignment->suppressed && !$assignment->overridden && !$assignment->ruleOverride
-					&& $suppressedFallback === null) {
-					$suppressedFallback = $assignment->variables;
-				}
+			if ($wins) {
+				$selectedVariables = $assignment->variables ?? null;
+				break;
+			}
+			// Passed over by an exposing read: as without holdouts, a later unit doesn't switch the key's winner.
+			if ($exposeAssignment) {
+				$assignment->served = true;
+			}
+
+			if (($assignment->suppressed ?? false) && $assignment->variables !== null && $selectedVariables === null) {
+				$selectedVariables = $assignment->variables;
 			}
 		}
 
@@ -1479,11 +1524,23 @@ class Context {
 			throw $error;
 		}
 
-		if ($suppressedFallback !== null && property_exists($suppressedFallback, $key)) {
-			return $suppressedFallback->{$key};
+		if ($selectedVariables !== null && property_exists($selectedVariables, $key)) {
+			return $selectedVariables->{$key};
 		}
 
 		return $default;
+	}
+
+	/**
+	 * @param ExperimentVariables[] $candidates
+	 * @return array<string, true>
+	 */
+	private static function candidateNames(array $candidates): array {
+		$names = [];
+		foreach ($candidates as $candidate) {
+			$names[$candidate->data->name] = true;
+		}
+		return $names;
 	}
 
 	public function getVariableKeys(): array {
@@ -1497,8 +1554,18 @@ class Context {
 		return $return;
 	}
 
-	public function setAttribute(string $name, $value): Context {
-		$this->checkNotClosed();
+	public function setAttribute(string $name, string $value): Context {
+		return $this->setAttributeValue($name, $value);
+	}
+
+	/** Sets an attribute without converting its value to a string. */
+	public function setAttributeValue(string $name, $value): Context {
+		// Every attribute is published, so a value the payload cannot hold (INF, NaN, a resource) would fail every
+		// later publish. Strings are accepted unchecked, as in v1.0.3, including invalid UTF-8.
+		if (!is_string($value)) {
+			self::assertPublishable(sprintf('Attribute "%s" value', $name), $value);
+		}
+
 		$this->attributes[] = (object) [
 			'name' => $name,
 			'value' => $value,
@@ -1509,11 +1576,36 @@ class Context {
 		return $this;
 	}
 
+	/**
+	 * @param mixed $value
+	 */
+	private static function assertPublishable(string $what, $value): void {
+		try {
+			// A publish adds three levels (event, list, record) above the value, within json_encode's default 512.
+			json_encode($value, JSON_THROW_ON_ERROR, 509);
+		}
+		catch (Throwable $exception) {
+			throw new InvalidArgumentException(sprintf('%s cannot be published: %s', $what, $exception->getMessage()), 0, $exception);
+		}
+	}
+
 	public function setAttributes(array $attributes): Context {
 		foreach ($attributes as $key => $value) {
 			$this->setAttribute($key, $value);
 		}
 
+		return $this;
+	}
+
+	/** Sets typed attributes, routing strings through the legacy extension hook. */
+	public function setAttributeValues(array $attributes): Context {
+		foreach ($attributes as $key => $value) {
+			if (is_string($value)) {
+				$this->setAttribute($key, $value);
+			} else {
+				$this->setAttributeValue($key, $value);
+			}
+		}
 		return $this;
 	}
 
@@ -1580,13 +1672,7 @@ class Context {
 	public function getTreatment(string $experimentName): int {
 		$this->checkReady();
 		$assignment = $this->getAssignment($experimentName);
-		if (!$this->hasHoldouts && $assignment->switchback === null) {
-			// Data that never had holdouts keeps main's read path: no assignment can carry holdout arms.
-			if (empty($assignment->exposed)) {
-				$this->queueExposure($assignment);
-			}
-		}
-		else if (!$assignment->exposed || $this->droppedHoldoutArms !== []) {
+		if (!$assignment->exposed || ($this->hasHoldouts && $this->droppedHoldoutArms !== [])) {
 			$this->triggerExposures($assignment);
 		}
 
@@ -1596,7 +1682,7 @@ class Context {
 	private function queueExposure(Assignment $assignment, ?int $exposedAt = null): void {
 		// With holdouts, a logger can close the context between an experiment's exposure and its holdouts'; nothing
 		// queued after that could be published. Without holdouts this keeps main's (and JS's) queueing.
-		if (!empty($assignment->exposed) || ($this->closed && $this->hasHoldouts)) {
+		if (!empty($assignment->exposed) || ($this->closed && ($this->hasHoldouts || $this->hasSwitchbacks))) {
 			return;
 		}
 
@@ -1606,6 +1692,7 @@ class Context {
 
 		$exposure = new Exposure();
 		$assignment->exposed = true;
+		$assignment->served = true;
 		$assignment->isUnitPinnedMissing = $assignment->isUnitPinnedMissing || $assignment->isRuleMissingUnit;
 		$exposure->ingestAssignment($assignment);
 		if ($exposedAt !== null) {
@@ -1628,20 +1715,11 @@ class Context {
 	}
 
 	/**
-	 * Reports an error to the event logger. Without one it falls back to error_log(), unless the caller has
-	 * already written its own error_log() line ($fallbackToErrorLog false), so each error is logged once.
+	 * Reports an error to the event logger as an Error event. Without an event logger nothing is written, as in
+	 * v1.0.3.
 	 */
-	private function logError(Throwable $throwable, bool $fallbackToErrorLog = true): void {
+	private function logError(Throwable $throwable): void {
 		if (!isset($this->eventLogger)) {
-			if (!$fallbackToErrorLog) {
-				return;
-			}
-			error_log(sprintf(
-				'ABsmartly SDK Error: %s in %s:%d',
-				$throwable->getMessage(),
-				$throwable->getFile(),
-				$throwable->getLine()
-			));
 			return;
 		}
 
@@ -1661,6 +1739,14 @@ class Context {
 
 	public function setUnits(array $units): Context {
 		foreach ($units as $unitType => $uid) {
+			if (is_int($uid) || is_float($uid)) {
+				// Numbers are stored as their string form; other non-strings keep the v1.0.3 error.
+				$uid = (string) $uid;
+			}
+			if (!is_string($uid)) {
+				throw new InvalidArgumentException(
+					sprintf('Unit set value with key "%s" must be of type string, %s passed', $unitType, gettype($uid)));
+			}
 			$this->setUnit((string) $unitType, $uid);
 		}
 
@@ -1720,13 +1806,7 @@ class Context {
 		return $this->cassignments[$experimentName] ?? null;
 	}
 
-	/**
-	 * Numeric UIDs are accepted and stored as strings.
-	 *
-	 * @param string|int|float $uid
-	 */
-	public function setUnit(string $unitType, $uid): Context {
-		$this->checkNotClosed();
+	public function setUnit(string $unitType, string $uid): Context {
 		$uid = self::validateUnit($unitType, $uid);
 
 		if (array_key_exists($unitType, $this->units)) {
@@ -1747,7 +1827,7 @@ class Context {
 	 */
 	private function invalidateAssignmentsMissingUnit(string $unitType): void {
 		foreach ($this->assignmentCache ?? [] as $experimentName => $assignment) {
-			if ($assignment->switchback !== null) {
+			if (($assignment->switchback ?? null) !== null) {
 				// A switchback resolved before any linked unit was set is resolved again now that one may be. Only an
 				// override published anything, so only an exposed override is kept.
 				if ($assignment->switchback->serving->status === SwitchbackServing::ABSENT
@@ -1761,26 +1841,16 @@ class Context {
 				continue;
 			}
 
-			// Holdout arms are drawn with the assignment's own unit type, so while it was missing every arm is null.
+			// Holdout arms are drawn with the assignment's own unit type, so while it was missing every arm is null. A served
+			// decision is kept even if the cap dropped its exposure, which only makes the exposure retryable.
 			if (($assignment->isRuleMissingUnit && !$assignment->isUnitPinnedMissing)
-				|| (!$assignment->exposed && $assignment->holdoutAssignments !== null)) {
+				|| (!$assignment->served && $assignment->holdoutAssignments !== null)) {
 				unset($this->assignmentCache[$experimentName]);
 			}
 		}
 	}
 
-	/**
-	 * @param mixed $uid
-	 */
-	private static function validateUnit(string $unitType, $uid): string {
-		if (is_int($uid) || is_float($uid)) {
-			return (string) $uid;
-		}
-
-		if (!is_string($uid)) {
-			throw new InvalidArgumentException(sprintf('Unit "%s" must be a string or a number', $unitType));
-		}
-
+	private static function validateUnit(string $unitType, string $uid): string {
 		if (trim($uid) === '') {
 			throw new InvalidArgumentException(sprintf('Unit "%s" UID must not be blank', $unitType));
 		}
@@ -1856,18 +1926,7 @@ class Context {
 		}
 
 		if ($this->isFailed()) {
-			$errorMsg = sprintf(
-				'ABsmartly SDK Warning: Discarding %d exposures and %d goals due to failed context state',
-				count($this->exposures),
-				count($this->achievements)
-			);
-			error_log($errorMsg);
-			if (isset($this->eventLogger)) {
-				$this->eventLogger->handleEvent($this, new ContextEventLoggerEvent(
-					ContextEventLoggerEvent::Error,
-					new \RuntimeException($errorMsg)
-				));
-			}
+			// A failed load remains marked failed even if refresh later applies data; drop events as in v1.0.3.
 			$this->exposures = [];
 			$this->exposureAssignments = [];
 			$this->achievements = [];
@@ -1940,6 +1999,14 @@ class Context {
 	/** Keeps the queued events for a retry, capped, and re-throws when $rethrow is true (close()). */
 	private function publishFailed(Exception $exception, bool $rethrow): void {
 		$this->switchbackPublishFailed = true;
+		if (!$this->hasSwitchbacks) {
+			$this->logError($exception);
+			$this->capRetainedEvents();
+			if ($rethrow) {
+				throw $exception;
+			}
+			return;
+		}
 		error_log(sprintf(
 			'ABsmartly SDK Error: Failed to publish %d exposures and %d goals: %s. Events preserved for retry.',
 			count($this->exposures) - count($this->inFlightExposures),
@@ -1959,13 +2026,7 @@ class Context {
 			$this->logEvent(ContextEventLoggerEvent::Publish, $event);
 		}
 		catch (Throwable $exception) {
-			// Not a publish failure: report it without re-entering the logger that just threw.
-			error_log(sprintf(
-				'ABsmartly SDK Error: Event logger failed handling Publish: %s in %s:%d',
-				$exception->getMessage(),
-				$exception->getFile(),
-				$exception->getLine()
-			));
+			// Not a publish failure, and re-entering the logger that just threw could loop: ignore it.
 		}
 	}
 
@@ -2033,8 +2094,7 @@ class Context {
 			$droppedExposures,
 			$droppedGoals
 		);
-		error_log($errorMsg);
-		$this->logError(new \RuntimeException($errorMsg), false);
+		$this->logError(new \RuntimeException($errorMsg));
 	}
 
 	private function buildPublishEvent(): PublishEvent {
@@ -2130,21 +2190,30 @@ class Context {
 	 */
 	private function publishedEarlier(int $i): bool {
 		$assignment = $this->exposureAssignments[$i];
-		return $assignment->switchback !== null && $assignment->switchback->serving->status !== SwitchbackServing::ABSENT
+		return ($assignment->switchback ?? null) !== null && $assignment->switchback->serving->status !== SwitchbackServing::ABSENT
 			&& !isset($this->inFlightExposures[spl_object_id($this->exposures[$i])]);
 	}
 
 	/**
 	 * @param object|array|null $properties any object, or an associative array
 	 */
-	public function track(string $goalName, $properties = null): void {
+	public function track(string $goalName, ?object $properties = null): void {
 		$this->checkNotClosed();
-		$properties = $this->validateGoal($goalName, $properties);
 		$achievement = new GoalAchievement($goalName, static::getTime(), $properties);
 		$this->achievements[] = $achievement;
 		++$this->pendingCount;
 
 		$this->logEvent(ContextEventLoggerEvent::Goal, $achievement);
+	}
+
+	/** @param object|array|null $properties an object or associative array */
+	public function trackWithProperties(string $goalName, $properties = null): void {
+		$this->checkNotClosed();
+		$properties = $this->validateGoal($goalName, $properties);
+		if ($properties !== null) {
+			self::assertPublishable(sprintf("Goal '%s' properties", $goalName), $properties);
+		}
+		$this->track($goalName, $properties);
 	}
 
 	/**
@@ -2179,64 +2248,28 @@ class Context {
 
 	public function refresh(): void {
 		$this->checkNotClosed();
-
-		// A context whose initial load failed stays failed: refresh() is a no-op that neither fetches nor
-		// applies data and emits no refresh/error event, matching the JS SDK's `_refresh` (`if (!this._failed)`).
-		if ($this->isFailed()) {
+		if ($this->firstLoadInProgress) {
 			return;
 		}
 
-		$oldData = $this->data;
-		$oldIndex = $this->index;
-		$oldIndexVariables = $this->indexVariables;
-		$oldRuleKeys = $this->ruleKeys;
-		$oldParsedRules = $this->parsedRules;
-		$oldHoldoutsById = $this->holdoutsById;
-		$oldExperimentHoldouts = $this->experimentHoldouts;
-		$oldSwitchbackSources = $this->switchbackSources;
-		$oldHasHoldouts = $this->hasHoldouts;
-		$oldHasSwitchbacks = $this->hasSwitchbacks;
+		// setData() installs nothing until all of the data is processed, so a failure, including a TypeError from a
+		// mistyped field or an Error logger that throws, keeps the previous data and its decisions in use.
 		try {
 			$data = $this->dataProvider->getContextData();
 			$this->setData($data);
 		}
-		// Throwable, not Exception: a TypeError from a mistyped field must roll back too, since setData() has already
-		// cleared the indexes.
 		catch (Throwable $exception) {
-			$this->data = $oldData;
-			$this->index = $oldIndex;
-			$this->indexVariables = $oldIndexVariables;
-			$this->ruleKeys = $oldRuleKeys;
-			$this->parsedRules = $oldParsedRules;
-			$this->holdoutsById = $oldHoldoutsById;
-			$this->experimentHoldouts = $oldExperimentHoldouts;
-			$this->switchbackSources = $oldSwitchbackSources;
-			$this->hasHoldouts = $oldHasHoldouts;
-			$this->hasSwitchbacks = $oldHasSwitchbacks;
-			error_log(sprintf(
-				'ABsmartly SDK Error: Failed to refresh context, keeping existing data: %s in %s:%d',
-				$exception->getMessage(),
-				$exception->getFile(),
-				$exception->getLine()
-			));
-			$this->logError($exception, false);
+			$this->logError($exception);
 			return;
 		}
 
-		$this->failed = false;
-
 		// The data is installed, so a throwing logger no longer rolls it back: assignments a Refresh handler built from
-		// it must stay consistent with the data in use (the JS SDK swallows logger errors the same way).
+		// it must stay consistent with the data in use. Re-entering the logger that just threw could loop, so the error
+		// is ignored, as for Publish (the JS SDK swallows logger errors the same way).
 		try {
 			$this->logEvent(ContextEventLoggerEvent::Refresh, $data);
 		}
 		catch (Throwable $exception) {
-			error_log(sprintf(
-				'ABsmartly SDK Error: Event logger failed handling Refresh: %s in %s:%d',
-				$exception->getMessage(),
-				$exception->getFile(),
-				$exception->getLine()
-			));
 		}
 	}
 
