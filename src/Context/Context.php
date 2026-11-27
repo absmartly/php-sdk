@@ -1439,12 +1439,14 @@ class Context {
 
 	public function getVariableValue(string $key, $defaultValue = null) {
 		$this->checkReady();
-		return $this->resolveVariableValue($key, $defaultValue, true);
+		return $this->hasSwitchbacks ? $this->resolveSwitchbackVariableValue($key, $defaultValue, true)
+			: $this->resolveVariableValue($key, $defaultValue, true);
 	}
 
 	public function peekVariableValue(string $key, $default) {
 		$this->checkReady(false);
-		return $this->resolveVariableValue($key, $default, false);
+		return $this->hasSwitchbacks ? $this->resolveSwitchbackVariableValue($key, $default, false)
+			: $this->resolveVariableValue($key, $default, false);
 	}
 
 	/**
@@ -1456,14 +1458,16 @@ class Context {
 	 * that does not win still queues its holdouts' exposures.
 	 */
 	private function resolveVariableValue(string $key, $default, bool $exposeAssignment) {
-		if ($this->hasSwitchbacks) {
-			return $this->resolveSwitchbackVariableValue($key, $default, $exposeAssignment);
-		}
 		$candidates = $walk = $this->indexVariables[$key] ?? [];
 		$error = null;
 		$selectedVariables = null;
 		$liveCandidates = null;
-		foreach ($walk as $experimentVariables) {
+		foreach ($walk as $index => $experimentVariables) {
+			// A callback installed the first switchback: the rest of the walk continues with this walk's state.
+			if ($this->hasSwitchbacks) {
+				return $this->resolveSwitchbackVariableValue($key, $default, $exposeAssignment, array_slice($walk, $index),
+					$error, $selectedVariables);
+			}
 			// Once a callback closes the context, a read already committed to throwing evaluates nothing more.
 			if ($error !== null && $this->isClosed()) {
 				throw $error;
@@ -1522,11 +1526,6 @@ class Context {
 
 			if ($assignment->suppressed && $assignment->variables !== null && $selectedVariables === null) {
 				$selectedVariables = $assignment->variables;
-			}
-			// A callback installed the first switchback: the rest of the walk continues with this walk's state.
-			if ($this->hasSwitchbacks) {
-				return $this->resolveSwitchbackVariableValue($key, $default, $exposeAssignment,
-					array_slice($walk, (int) array_search($experimentVariables, $walk, true) + 1), $error, $selectedVariables);
 			}
 		}
 
@@ -2086,21 +2085,7 @@ class Context {
 	/** Keeps the queued events for a retry, capped, and re-throws when $rethrow is true (close()). */
 	private function publishFailed(Exception $exception, bool $rethrow): void {
 		$this->switchbackPublishFailed = true;
-		if (!$this->hasSwitchbacks) {
-			$this->logError($exception);
-			$this->capRetainedEvents();
-			if ($rethrow) {
-				throw $exception;
-			}
-			return;
-		}
-		error_log(sprintf(
-			'ABsmartly SDK Error: Failed to publish %d exposures and %d goals: %s. Events preserved for retry.',
-			count($this->exposures) - count($this->inFlightExposures),
-			count($this->achievements),
-			$exception->getMessage()
-		));
-		$this->logError($exception, false);
+		$this->logError($exception);
 		$this->capRetainedEvents();
 
 		if ($rethrow) {

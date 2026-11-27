@@ -2310,19 +2310,14 @@ class ContextSwitchbackTest extends TestCase {
 				@$context->publish();
 			}
 		};
-		$log = tempnam(sys_get_temp_dir(), 'sdklog');
-		$previous = ini_set('error_log', $log);
-		try {
-			$context->publish();
-		}
-		finally {
-			ini_set('error_log', $previous === false ? '' : $previous);
-			$logged = file_get_contents($log);
-			unlink($log);
-		}
-		// The failed nested send held only the goal; the early exposure was not part of it.
-		self::assertStringContainsString('Failed to publish 0 exposures and 1 goals', $logged);
-		self::assertStringNotContainsString('Retained event queue exceeded', $logged);
+		$context->publish();
+		$errors = array_map(static function ($event) {
+			return $event->getData()->getMessage();
+		}, array_values(array_filter($this->logger->events ?? [], static function ($event) {
+			return $event->getEvent() === \ABSmartly\SDK\Context\ContextEventLoggerEvent::Error;
+		})));
+		// The failed nested send held only the goal; the early exposure in flight did not count towards the cap.
+		self::assertSame(['collector down'], $errors);
 		self::assertSame(0, $context->getPendingCount());
 		self::assertSame([
 			[[self::$UNIT_TYPE], ['exp_sb'], 0],
