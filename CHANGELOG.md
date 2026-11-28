@@ -1,5 +1,50 @@
 # Changelog
 
+## 1.3.0
+
+### Added
+
+- **Switchback experiments** (R33, cluster-defined), as in released Java 1.10.0 and JavaScript 1.14.1. An
+  experiment with `randomizationType: "switchback"` is randomized over clusters and time: `Experiment` gains
+  `$randomizationType`, `$switchbackClusters` (unit type => attribute path, in the served order, which is kept), `$switchbackClusterValues`, `$switchbackStartAt`, `$switchbackPeriodMs`,
+  `$switchbackCarryoverDurationMs`, `$switchbackBurnInDurationMs`, `$switchbackBurnOutDurationMs`,
+  `$switchbackDesignType` and `$switchbackEstimand`, all optional. The first context unit, in the
+  declared order, whose attribute path gives a value serves the experiment, and that raw value (a non-empty string
+  as-is, an integer as its decimal text; floats such as `3.0`, booleans, objects, arrays, `""` and null give none) is
+  the cluster key of the platform's balanced-block draw for the period `floor((now - switchbackStartAt) /
+  switchbackPeriodMs)`. Units that disagree, a value outside `switchbackClusterValues` or a missing value give a
+  control that records no exposure; a pre-anchor read or an unservable schedule replaces only the period draw, after
+  overrides, rules, strict audiences and full-on, so otherwise also a silent control. Overrides, assignment rules, strict
+  audiences, full-on, traffic and custom assignments apply as for a unit experiment, with the serving unit's traffic
+  and split-rule draws hashed with the platform murmur3 on every runtime. Holdouts never apply to a switchback. The
+  serving unit and cluster key are read once per period, and each period exposes once, stamped with the clock reading
+  of the exposing call. `getVariableValue()` exposes the winning switchback when it is assigned, overridden or
+  rule-assigned, even when its arm lacks the key; a strict mismatch records nothing.
+  Callers must set cluster attributes before a period's first read and keep them unchanged through its exposure and
+  any re-queue: a change within a period is not supported, the cached variant is kept and the change takes effect
+  from the next period (the same constraint as every SDK's switchbacks). A switchback exposure queued before a unit
+  was added is published first, in its own batch with the units it was served with, since the collector resolves the
+  serving unit again from a publish's units; that `publish()` calls the event handler once per batch. Exposures and
+  the publish payload carry no new fields. Payloads without switchbacks keep the 1.2.0 read paths; cached
+  variable reads (`getVariableValue()` and `peekVariableValue()`) measured about 3-8% slower than 1.2.0 with
+  opcache (about 20-40 ns/call in synthetic warmed benchmarks; `getTreatment()` within about 1%). See the README's *Switchback Experiments*.
+  Set cluster attributes as strings or integers: a float attribute is published as JSON (`3.0` as `3`), so the
+  collector, which resolves the cluster again from the published attributes, could key it where the SDK did not.
+
+### Changed
+
+- `X-Agent` changes from `absmartly-php-sdk/1.2.0` to `absmartly-php-sdk/1.3.0` for all callers, including
+  non-switchback contexts. Update exact-version agent filters in exports or dashboards if used.
+- **Switchback experiments are served as switchbacks.** PHP 1.2.0 served `randomizationType: "switchback"`
+  as sticky unit experiments. PHP 1.3.0 assigns them by cluster and period, so running switchbacks can change
+  treatment and publish one exposure per period under the serving unit. Upgrade every SDK serving a switchback.
+- With switchback data installed, publishing drains the current queue plus at most one pass of callback work.
+  A nested `close()` requests completion from the outer publish; callback work left after the final pass remains
+  queued and the context stays open. Check `isClosed()` and retry `close()` to finish. A failed top-level
+  `close()` followed by `publish()` does not close the context, as for unit data.
+- Non-switchback PHP 1.2.0 runtime, public model API and serialization are retained, including holdouts,
+  assignment rules, shared variable lookup, and PHP 7.4 support.
+
 ## 1.2.0
 
 ### Added

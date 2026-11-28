@@ -2,12 +2,19 @@
 
 namespace ABSmartly\SDK;
 
+use function array_keys;
+use function array_map;
+use function array_values;
+use function count;
 use function get_object_vars as get_object_varsAlias;
 use function is_array;
+use function is_int;
+use function is_object;
 use function is_string;
 use function json_decode;
 
 use function property_exists;
+use function range;
 
 use const JSON_THROW_ON_ERROR;
 
@@ -34,7 +41,19 @@ class Experiment extends DynamicModel {
 	/** @var int[]|null Ids of the holdouts in ContextData::$holdouts that cover this experiment. */
 
 	/** The holdout's type ("full", "all_full_on") when this entry is a holdout; never read, arity comes from split. */
-
+	/** Switchback fields by name, and the kind of value each holds. */
+	private const SWITCHBACK_FIELDS = [
+		'randomizationType' => 'string',
+		'switchbackClusters' => 'map',
+		'switchbackClusterValues' => 'list',
+		'switchbackStartAt' => 'int',
+		'switchbackPeriodMs' => 'int',
+		'switchbackCarryoverDurationMs' => 'int',
+		'switchbackBurnInDurationMs' => 'int',
+		'switchbackBurnOutDurationMs' => 'int',
+		'switchbackDesignType' => 'string',
+		'switchbackEstimand' => 'string',
+	];
 
 	public function __construct(object $data) {
 		$holdoutIds = null;
@@ -83,11 +102,57 @@ class Experiment extends DynamicModel {
 			elseif ($field === 'holdoutType') {
 				$holdoutType = is_string($value) ? $value : null;
 			}
+			elseif (isset(self::SWITCHBACK_FIELDS[$field])) {
+				if (property_exists($this, $field)) {
+					$this->{$field} = $value;
+				}
+				else {
+					$this->setSwitchbackField($field, $value);
+				}
+			}
 			elseif (property_exists($this, $field) && $field !== 'audience') {
 				$this->{$field} = $value;
 			}
 		}
 		if (!(property_exists($this, 'holdoutIds') && (new \ReflectionProperty($this, 'holdoutIds'))->isInitialized($this))) { try { $this->holdoutIds = $holdoutIds; } catch (\Throwable $e) { } }
 		if (!(property_exists($this, 'holdoutType') && (new \ReflectionProperty($this, 'holdoutType'))->isInitialized($this))) { try { $this->holdoutType = $holdoutType; } catch (\Throwable $e) { } }
+	}
+
+	/**
+	 * A malformed switchback value is dropped rather than failing the whole context: a cluster map that is not an
+	 * object takes the legacy path, and an instant or duration that is not a whole number leaves the schedule
+	 * unservable. Integral floats (1.0) count as integers, as for holdoutIds.
+	 *
+	 * @param mixed $value
+	 */
+	private function setSwitchbackField(string $field, $value): void {
+		switch (self::SWITCHBACK_FIELDS[$field]) {
+			case 'string':
+				$this->{$field} = is_string($value) ? $value : null;
+				return;
+			case 'int':
+				$this->{$field} = Utils::integralValue($value);
+				return;
+			case 'map':
+				// Iterating keeps the served key order; never sort it.
+				$clusters = null;
+				// A JSON array is not a cluster map; an associative PHP array (a hand-built payload) is.
+				if (is_object($value) || (is_array($value) && ($value === [] || array_keys($value) !== range(0, count($value) - 1)))) {
+					$clusters = [];
+					foreach ($value as $unitType => $path) {
+						$clusters[$unitType] = $path;
+					}
+				}
+				$this->switchbackClusters = $clusters;
+				return;
+			default:
+				// Whole numbers are kept as their decimal text, as Jackson reads them into java-sdk's String[]; any other
+				// non-string entry is kept and never matches, so a malformed list never widens to "every value".
+				$this->switchbackClusterValues = is_array($value)
+					? array_map(static function ($allowed) {
+						return is_int($allowed) ? (string) $allowed : $allowed;
+					}, array_values($value))
+					: null;
+		}
 	}
 }

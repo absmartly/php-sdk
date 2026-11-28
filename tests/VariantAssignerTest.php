@@ -6,6 +6,16 @@ use ABSmartly\SDK\VariantAssigner;
 use PHPUnit\Framework\TestCase;
 
 class VariantAssignerTest extends TestCase {
+	/**
+	 * Unit experiments keep v1.0.3's buckets on every runtime: before PHP 8.1 lastguest/murmurhash puts these units in
+	 * the other bucket from native murmur3. Switchbacks use SwitchbackAssigner::assignUnit() instead.
+	 */
+	public function testUnitBucketsStayAsReleasedOnEachRuntime(): void {
+		$legacy = PHP_VERSION_ID < 80100;
+		self::assertSame($legacy ? 1 : 0, (new VariantAssigner('store-32476'))->assign([0.5, 0.5], 1, 2));
+		self::assertSame($legacy ? 0 : 1, (new VariantAssigner('store-52503'))->assign([0.5, 0.5], 1, 2));
+	}
+
 	public static function assignmentProvider(): array {
 		return [
 			['bleh@absmartly.com', [0.5, 0.5], 0x00000000, 0x00000000, 0],

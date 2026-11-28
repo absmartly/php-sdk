@@ -329,6 +329,61 @@ $contextData = new ContextData($payload->experiments, $payload->holdouts ?? []);
 $context = $sdk->createContextWithData($contextConfig, $contextData);
 ```
 
+### Switchback Experiments
+
+A switchback experiment is randomized over clusters (for example, a store's region) and time: every unit in the same
+cluster sees the same variant within a period, and the variant changes on a fixed time grid. Switchbacks arrive with
+the context data (`randomizationType: "switchback"`); nothing needs configuring in the SDK except the units and the
+attributes that hold the cluster values.
+
+```php
+$contextConfig = new ContextConfig();
+$contextConfig->setUnit('store_id', 'store-42');
+$context = $sdk->createContext($contextConfig);
+
+// The experiment links store_id to the attribute path "geo/region".
+$context->setAttributeValue('geo', ['region' => 'lisbon']);
+
+$treatment = $context->getTreatment('exp_delivery_fee'); // this period's variant for the "lisbon" cluster
+```
+
+- `switchbackClusters` lists the linked unit types and, for each, the attribute path of its cluster value, in the
+  served order: the first unit in that order with a value serves the experiment. Paths use `/` (`geo/region`,
+  `items/0/city`); a quoted segment (`'a/b'`) is a literal key, and a path with a `.` is unreadable.
+- A cluster value is a non-empty string, used as-is, or an integer, used as its decimal text. Floats (including
+  `3.0`), booleans, arrays, objects, `""` and null give no value. Set cluster attributes as strings or integers: a
+  float is published as JSON (`3.0` as `3`), which the collector, resolving the cluster from the published
+  attributes, could read as a value.
+- With no value, units that disagree, or a value outside `switchbackClusterValues`, the unit gets control (variant 0)
+  and no exposure is sent. Before `switchbackStartAt`, or with an unservable schedule, only the period draw is
+  unavailable: an override, matching rule, strict audience mismatch or full-on still applies first; otherwise the unit
+  gets control with no exposure. Without a unit of a linked type, the experiment does not apply.
+- Overrides, assignment rules, strict audiences, full-on, traffic and custom assignments apply as for a unit
+  experiment, and the exposure carries the same flags. Holdouts never apply to a switchback.
+- `getTreatment()` sends one exposure per period, stamped with the time that chose the period. The serving unit and
+  cluster key are read once per period, so a `setAttribute()` later in the period takes effect from the next period.
+  `peekTreatment()` and `peekVariableValue()` send nothing.
+- **Caller constraint:** set a context's cluster attributes before a period's first read (a peek, or any call) and
+  keep them unchanged through that period's exposure and any re-queue. Changing a cluster attribute within a period is
+  not supported: the SDK keeps the variant it cached at the first read, and the change takes effect from the next
+  period. This applies to every SDK's switchbacks (java-sdk included), since the collector resolves the cluster from
+  the published attributes at the exposure's time.
+- `getVariableValue()` exposes the winning switchback when it is assigned, overridden or rule-assigned, even if
+  its arm lacks the key; a strict audience mismatch it passes over records nothing. Unit experiments retain the
+  PHP 1.2.0 shared-variable winner and holdout behavior described above.
+- Attributes are published with their timestamps, as before: the collector resolves the cluster again from them.
+- The collector also resolves the serving unit again from the published units. A switchback exposure queued before a
+  unit was added with `setUnit()` is published first, in its own batch with the units it was served with, so the new
+  unit cannot drop it or move it to another unit; the other events follow with the current units. That `publish()`
+  then calls the event handler, and logs `Publish`, once per batch. A `publish()` from inside the handler while such a
+  batch is being sent leaves that batch's exposures to it, so they are never sent twice. A `close()` from inside the
+  handler then requests closure but leaves the context open, since the batch being sent may still fail. The active
+  publisher drains accepted work, including work queued by callbacks during the last send, before closing. Work a
+  callback queues during that extra pass stays queued for the next `publish()` or `close()`, so a callback that queues
+  on every send cannot keep a publish running; a `close()` that leaves work queued returns with the context open. After
+  a failure, the next `publish()` or `close()` retries the drain. `Close` runs with the context sealed: it cannot queue
+  more work, and a throwing Close logger leaves the request retryable without resending accepted batches.
+
 ### Semantic Version Conditions
 
 Audience and rule conditions can compare versions with `semver_eq`, `semver_gt`, `semver_gte`, `semver_lt` and
