@@ -3321,4 +3321,34 @@ class ContextSwitchbackTest extends TestCase {
 		self::assertTrue(self::privateValue($context, 'hasSwitchbacks'));
 	}
 
+	/**
+	 * As in 1.2.0, an Error logger that throws while a publish failure is reported escapes publish(). The switchback
+	 * publish state must not stay wedged: the next publish sends the early and the main batch, and close() completes.
+	 */
+	public function testAThrowingErrorLoggerLeavesTheSwitchbackPublishRetryable(): void {
+		$context = $this->contextWithAnEarlierUnitExposure();
+		$context->trackWithProperties('purchase');
+		$throw = true;
+		$this->setLogger($context, self::onContextEvent(static function ($context, $event) use (&$throw) {
+			if ($throw && $event === 'Error') {
+				throw new \LogicException('logger failed');
+			}
+		}));
+		$this->failFirst(1);
+		try {
+			$context->publish();
+			self::fail('the logger error escapes, as in 1.2.0');
+		}
+		catch (\LogicException $exception) {
+			self::assertSame('logger failed', $exception->getMessage());
+		}
+		self::assertSame(2, $context->getPendingCount());
+		$throw = false;
+		$context->publish();
+		self::assertSame(0, $context->getPendingCount());
+		self::assertSame([[[self::$UNIT_TYPE], ['exp_sb'], 0], [[self::$UNIT_TYPE, 'user_id'], [], 1]], $this->publishedBatches());
+		$context->close();
+		self::assertTrue($context->isClosed());
+	}
+
 }
