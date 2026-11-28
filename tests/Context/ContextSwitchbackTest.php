@@ -3255,6 +3255,54 @@ class ContextSwitchbackTest extends TestCase {
 		self::assertCount(3, $this->eventHandler->submitted);
 	}
 
+	/**
+	 * A failed main-batch send (a failed close(), or an Error logger that throws while reporting it) must not leave the
+	 * publish marked as still sending: the next publish keeps its one extra pass for callback work.
+	 *
+	 * @dataProvider failedMainBatches
+	 */
+	public function testAFailedMainBatchKeepsTheNextPublishsExtraPass(string $failure): void {
+		$context = $this->createContext(self::dataOf(self::switchback(2)));
+		$context->trackWithProperties('g');
+		$this->failFirst(1);
+		if ($failure === 'logger') {
+			$this->setLogger($context, self::onContextEvent(static function ($context, $event) {
+				if ($event === 'Error') {
+					throw new \Error('logger failed');
+				}
+			}));
+		}
+		try {
+			$failure === 'logger' ? $context->publish() : $context->close();
+			self::fail('the failure escapes');
+		}
+		catch (\Throwable $exception) {
+			self::assertSame($failure === 'logger' ? 'logger failed' : 'collector down', $exception->getMessage());
+		}
+		self::assertFalse($context->isClosed());
+		$this->setLogger($context, self::onContextEvent(static function () {
+		}));
+		$context->getTreatment('exp_sb');
+		$context->setUnit('extra0', 'u0');
+		$calls = 0;
+		$this->eventHandler->prerun = static function () use ($context, &$calls) {
+			if (++$calls > 4) {
+				throw new \RuntimeException('unbounded drain');
+			}
+			$context->setOverride('exp_sb', $calls % 2);
+			$context->getTreatment('exp_sb');
+			$context->setUnit('extra' . $calls, 'u' . $calls);
+			$context->publish();
+		};
+		$context->publish();
+		self::assertSame(3, $calls);
+		self::assertSame(1, $context->getPendingCount());
+	}
+
+	public function failedMainBatches(): array {
+		return ['failed close' => ['close'], 'throwing Error logger' => ['logger']];
+	}
+
 	/** No per-event identity map is needed when the accepted main batch still is the complete queue. */
 	public function testUnchangedMainBatchAvoidsPerEventRemovalAllocation(): void {
 		if (!function_exists('memory_reset_peak_usage')) {
