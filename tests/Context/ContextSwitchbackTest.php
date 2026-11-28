@@ -3324,14 +3324,16 @@ class ContextSwitchbackTest extends TestCase {
 	/**
 	 * As in 1.2.0, an Error logger that throws while a publish failure is reported escapes publish(). The switchback
 	 * publish state must not stay wedged: the next publish sends the early and the main batch, and close() completes.
+	 *
+	 * @dataProvider loggerFailures
 	 */
-	public function testAThrowingErrorLoggerLeavesTheSwitchbackPublishRetryable(): void {
+	public function testAThrowingErrorLoggerLeavesTheSwitchbackPublishRetryable(string $class): void {
 		$context = $this->contextWithAnEarlierUnitExposure();
 		$context->trackWithProperties('purchase');
 		$throw = true;
-		$this->setLogger($context, self::onContextEvent(static function ($context, $event) use (&$throw) {
+		$this->setLogger($context, self::onContextEvent(static function ($context, $event) use (&$throw, $class) {
 			if ($throw && $event === 'Error') {
-				throw new \LogicException('logger failed');
+				throw new $class('logger failed');
 			}
 		}));
 		$this->failFirst(1);
@@ -3339,7 +3341,8 @@ class ContextSwitchbackTest extends TestCase {
 			$context->publish();
 			self::fail('the logger error escapes, as in 1.2.0');
 		}
-		catch (\LogicException $exception) {
+		catch (\Throwable $exception) {
+			self::assertInstanceOf($class, $exception);
 			self::assertSame('logger failed', $exception->getMessage());
 		}
 		self::assertSame(2, $context->getPendingCount());
@@ -3349,6 +3352,10 @@ class ContextSwitchbackTest extends TestCase {
 		self::assertSame([[[self::$UNIT_TYPE], ['exp_sb'], 0], [[self::$UNIT_TYPE, 'user_id'], [], 1]], $this->publishedBatches());
 		$context->close();
 		self::assertTrue($context->isClosed());
+	}
+
+	public function loggerFailures(): array {
+		return ['exception' => [\LogicException::class], 'error' => [\Error::class]];
 	}
 
 }
